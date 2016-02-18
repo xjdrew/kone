@@ -1,6 +1,12 @@
 # KONE
 K1 (K1 chronometer made by Larcum Kendall)
 
+# test
+add iptables for local test:
+```
+iptables -t nat -A OUTPUT -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 12345
+```
+
 # documents
 [tun](https://www.kernel.org/doc/Documentation/networking/tuntap.txt)
 [Tun/Tap interface tutorial](http://backreference.org/2010/03/26/tuntap-interface-tutorial/)
