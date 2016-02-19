@@ -24,14 +24,6 @@ var (
 
 const SO_ORIGINAL_DST = 80
 
-func getsockopt(s int, level int, name int, val uintptr, vallen *uint32) (err error) {
-	_, _, e1 := syscall.Syscall6(syscall.SYS_GETSOCKOPT, uintptr(s), uintptr(level), uintptr(name), uintptr(val), uintptr(unsafe.Pointer(vallen)), 0)
-	if e1 != 0 {
-		err = e1
-	}
-	return
-}
-
 // realServerAddress returns an intercepted connection's original destination.
 func realServerAddress(conn *net.TCPConn) (string, error) {
 	file, err := conn.File()
@@ -43,7 +35,7 @@ func realServerAddress(conn *net.TCPConn) (string, error) {
 
 	var addr syscall.RawSockaddr
 	size := uint32(unsafe.Sizeof(addr))
-	err = getsockopt(int(fd), syscall.SOL_IP, SO_ORIGINAL_DST, uintptr(unsafe.Pointer(&addr)), &size)
+	err = getsockopt(int(fd), syscall.SOL_IP, SO_ORIGINAL_DST, unsafe.Pointer(&addr), &size)
 	if err != nil {
 		return "", err
 	}
