@@ -1,3 +1,10 @@
+//
+//   date  : 2016-02-19
+//   author: xjdrew
+//
+
+// +build darwin dragonfly freebsd linux,!386 netbsd openbsd
+
 package main
 
 import (
