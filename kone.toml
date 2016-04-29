@@ -1,0 +1,37 @@
+# syntax: https://github.com/toml-lang/toml
+
+[General]
+# tun ip address
+ip = "10.16.0.1"
+
+# virtual network, for polluted domains
+subnet = "10.17.0.0/16" 
+
+# backend dns
+dns = ["172.16.100.200", "172.16.100.202"]
+
+[Proxy]
+ProxyA = "socks5://TK1.proxy.ejoy.com:3080"
+ProxyB = "http://TK1.proxy.ejoy.com:4228"
+
+[[Rules]]
+proxy = "ProxyA"
+type = "DOMAIN" # suffix match
+value = [
+    "google.com",
+    "facebook.com",
+]
+
+[[Rules]]
+proxy = "DIRECT"
+type = "COUNTRY"
+# COUNTRY CODE(ISO 3166-1 alpha-2): https://en.wikipedia.org/wiki/ISO_3166-1_alpha-2
+value = ["CN",]
+
+[[Rules]]
+proxy = "DIRECT"
+type = "SUBNET"
+value = ["172.16.0.0/16",]
+
+[[Rules]]
+proxy = "DIRECT"

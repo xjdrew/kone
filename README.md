@@ -11,6 +11,10 @@ iptables -t nat -A OUTPUT -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 12345
 [tun](https://www.kernel.org/doc/Documentation/networking/tuntap.txt)
 [Tun/Tap interface tutorial](http://backreference.org/2010/03/26/tuntap-interface-tutorial/)
 
+# enable ip forwarding
+```
+sysctl -w net.ipv4.ip_forward=1
+```
 # tun
 ```
 # create/delete tun
