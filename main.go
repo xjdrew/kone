@@ -48,5 +48,5 @@ func main() {
 		logger.Error(err.Error())
 		os.Exit(1)
 	}
-	logger.Infof("%v", one.Run())
+	logger.Errorf("quit: %v", one.Serve())
 }
