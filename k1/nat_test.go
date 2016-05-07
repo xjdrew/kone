@@ -5,9 +5,10 @@ import (
 	"math/rand"
 	"net"
 	"testing"
+	"time"
 )
 
-func TestNat(t *testing.T) {
+func TestNatAlloc(t *testing.T) {
 	var from uint16 = 10
 	var to uint16 = 20
 	nat := newNat(from, to)
@@ -25,9 +26,8 @@ func TestNat(t *testing.T) {
 	}
 
 	// release all sessions
-	for i := from; i < to; i++ {
-		nat.releaseSession(i)
-	}
+	now := time.Now().Unix() + NatSessionLifeSeconds
+	nat.clearExpiredSessions(now)
 	if nat.count() != 0 {
 		t.Error("release session failed")
 		return
@@ -67,9 +67,8 @@ func BenchmarkNat(b *testing.B) {
 	}
 
 	// release all sessions
-	for i := from; i < to; i++ {
-		nat.releaseSession(i)
-	}
+	now := time.Now().Unix() + NatSessionLifeSeconds
+	nat.clearExpiredSessions(now)
 	if nat.count() != 0 {
 		b.Error("release session failed")
 	}

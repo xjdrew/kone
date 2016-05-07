@@ -41,20 +41,8 @@ func (f *tcpForwarder) handleConn(conn *net.TCPConn) {
 		return
 	}
 
-	done := make(chan bool)
-	go func() {
-		forward(tunnel.(*net.TCPConn), conn)
-		done <- true
-	}()
-
-	go func() {
-		forward(conn, tunnel.(*net.TCPConn))
-		done <- true
-	}()
-
-	<-done
-	<-done
-	f.nat.releaseSession(remotePort)
+	go forward(tunnel.(*net.TCPConn), conn)
+	go forward(conn, tunnel.(*net.TCPConn))
 }
 
 func (f *tcpForwarder) Serve() error {
