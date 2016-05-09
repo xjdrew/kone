@@ -34,7 +34,7 @@ func main() {
 	if configFile == "" {
 		configFile = flag.Arg(0)
 	}
-	logger.Infof("using config file: %+v", configFile)
+	logger.Infof("using config file: %v", configFile)
 
 	cfg, err := k1.ParseConfig(configFile)
 	logger.Debugf("config: %+v", cfg)

@@ -26,9 +26,9 @@ type ProxyConfig struct {
 }
 
 type PatternConfig struct {
-	Proxy string
-	Type  string
-	V     string
+	Proxy  string
+	Scheme string
+	V      []string
 }
 
 type RuleConfig struct {
