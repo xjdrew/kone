@@ -9,7 +9,7 @@ import (
 	"github.com/xjdrew/kone/tcpip"
 )
 
-type tcpForwarder struct {
+type TCPForwarder struct {
 	nat           *Nat
 	proxies       *Proxies
 	forwarderIP   net.IP
@@ -23,7 +23,7 @@ func forward(src *net.TCPConn, dst *net.TCPConn) {
 	src.CloseRead()
 }
 
-func (f *tcpForwarder) handleConn(conn *net.TCPConn) {
+func (f *TCPForwarder) handleConn(conn *net.TCPConn) {
 	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
 	remotePort := uint16(remoteAddr.Port)
 	session := f.nat.getSession(remotePort)
@@ -45,14 +45,14 @@ func (f *tcpForwarder) handleConn(conn *net.TCPConn) {
 	go forward(conn, tunnel.(*net.TCPConn))
 }
 
-func (f *tcpForwarder) Serve() error {
+func (f *TCPForwarder) Serve() error {
 	addr := &net.TCPAddr{IP: f.forwarderIP, Port: int(f.forwarderPort)}
 	ln, err := net.ListenTCP("tcp4", addr)
 	if err != nil {
 		return err
 	}
 
-	logger.Infof("listen on: %v", addr)
+	logger.Infof("[tcpForwarder] listen on %v", addr)
 
 	for {
 		conn, err := ln.AcceptTCP()
@@ -65,7 +65,7 @@ func (f *tcpForwarder) Serve() error {
 }
 
 // redirect tcp packet to forwarder
-func (f *tcpForwarder) Filter(p *tcpip.IPv4Packet) bool {
+func (f *TCPForwarder) Filter(p *tcpip.IPv4Packet) bool {
 	ipPacket := *p
 	tcpPacket := tcpip.TCPPacket(ipPacket.Payload())
 
@@ -105,4 +105,19 @@ func (f *tcpForwarder) Filter(p *tcpip.IPv4Packet) bool {
 	ipPacket.ResetChecksum()
 	p = &ipPacket
 	return true
+}
+
+func NewTCPForwarder(general GeneralConfig, proxy map[string]*ProxyConfig) (*TCPForwarder, error) {
+	proxies, err := NewProxies(proxy)
+	if err != nil {
+		return nil, err
+	}
+
+	forwarder := new(TCPForwarder)
+	forwarder.nat = NewNat(general.NatFromPort, general.NatToPort)
+	forwarder.proxies = proxies
+	forwarder.forwarderIP = net.ParseIP(general.IP).To4()
+	forwarder.forwarderPort = general.ForwarderPort
+
+	return forwarder, nil
 }

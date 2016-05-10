@@ -52,18 +52,28 @@ func (tun *TunDriver) Serve() error {
 	}
 }
 
-func (tun *TunDriver) SetRoute(subnet *net.IPNet) error {
-	return setRoute(tun.ifce.Name(), subnet)
+func (tun *TunDriver) AddRoute(subnet *net.IPNet) error {
+	return addRoute(tun.ifce.Name(), subnet)
 }
 
-func newTunDriver(name string, ip net.IP, filters map[tcpip.IPProtocol]PacketFilter) (*TunDriver, error) {
-	ifce, err := newTun(name)
+func NewTunDriver(general GeneralConfig, filters map[tcpip.IPProtocol]PacketFilter) (*TunDriver, error) {
+	ifce, err := newTun(general.Tun)
 	if err != nil {
 		return nil, err
 	}
 
+	ip := net.ParseIP(general.IP).To4()
+	logger.Infof("[tun] ip:%s", ip)
+
 	err = setTunIP(ifce, ip)
 	if err != nil {
+		return nil, err
+	}
+
+	_, subnet, _ := net.ParseCIDR(general.Network)
+	logger.Infof("[tun] add route:%s", subnet)
+
+	if err = addRoute(ifce.Name(), subnet); err != nil {
 		return nil, err
 	}
 	return &TunDriver{ifce: ifce, filters: filters}, nil

@@ -38,7 +38,7 @@ func setTunIP(ifce *water.Interface, ip net.IP) error {
 	return execCommand("ip", sargs)
 }
 
-func setRoute(name string, subnet *net.IPNet) error {
+func addRoute(name string, subnet *net.IPNet) error {
 	sargs := fmt.Sprintf("route add %s dev %s", subnet, name)
 	return execCommand("ip", sargs)
 }

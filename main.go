@@ -37,7 +37,6 @@ func main() {
 	logger.Infof("using config file: %v", configFile)
 
 	cfg, err := k1.ParseConfig(configFile)
-	logger.Debugf("config: %+v", cfg)
 	if err != nil {
 		logger.Error(err.Error())
 		os.Exit(1)

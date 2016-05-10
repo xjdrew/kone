@@ -136,7 +136,7 @@ func (nat *Nat) count() int {
 	return nat.tbl.Count()
 }
 
-func newNat(from, to uint16) *Nat {
+func NewNat(from, to uint16) *Nat {
 	count := to - from
 	tbl := &NatTable{
 		from:   from,

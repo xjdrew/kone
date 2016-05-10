@@ -1,9 +1,6 @@
 package k1
 
 import (
-	"fmt"
-	"net"
-
 	. "github.com/xjdrew/kone/internal"
 	"github.com/xjdrew/kone/tcpip"
 )
@@ -11,13 +8,18 @@ import (
 var logger = GetLogger()
 
 type One struct {
-	tun          *TunDriver
 	rule         *Rule
-	tcpForwarder *tcpForwarder
+	dns          *Dns
+	tcpForwarder *TCPForwarder
+	tun          *TunDriver
 }
 
 func (one *One) Serve() error {
 	done := make(chan error)
+	go func() {
+		done <- one.dns.Serve()
+	}()
+
 	go func() {
 		done <- one.tcpForwarder.Serve()
 	}()
@@ -30,36 +32,9 @@ func (one *One) Serve() error {
 }
 
 func NewOne(cfg *KoneConfig) (one *One, err error) {
-	ip := net.ParseIP(cfg.General.IP).To4()
-	if ip == nil {
-		err = fmt.Errorf("invalid ipv4 address: %s", cfg.General.IP)
-		return
-	}
-
-	logger.Debugf("tun ip: %s", ip)
-
-	_, subnet, err := net.ParseCIDR(cfg.General.Network)
+	tcpForwarder, err := NewTCPForwarder(cfg.General, cfg.Proxy)
 	if err != nil {
 		return
-	}
-
-	logger.Debugf("subnet: %s", subnet)
-
-	if subnet.Contains(ip) {
-		err = fmt.Errorf("subnet(%s) should not contain tun address(%s)", subnet, ip)
-		return
-	}
-
-	proxies, err := NewProxies(cfg.Proxy)
-	if err != nil {
-		return
-	}
-
-	tcpForwarder := &tcpForwarder{
-		nat:           newNat(cfg.General.NatFromPort, cfg.General.NatToPort),
-		proxies:       proxies,
-		forwarderIP:   ip,
-		forwarderPort: cfg.General.ForwarderPort,
 	}
 
 	udpFilter := &udpFilter{}
@@ -69,12 +44,13 @@ func NewOne(cfg *KoneConfig) (one *One, err error) {
 		tcpip.UDP:  udpFilter,
 	}
 
-	tun, err := newTunDriver(cfg.General.Tun, ip, filters)
+	tun, err := NewTunDriver(cfg.General, filters)
 	if err != nil {
 		return
 	}
 
-	if err = tun.SetRoute(subnet); err != nil {
+	dns, err := NewDns(cfg.General, cfg.Dns)
+	if err != nil {
 		return
 	}
 
@@ -82,6 +58,7 @@ func NewOne(cfg *KoneConfig) (one *One, err error) {
 		tun:          tun,
 		tcpForwarder: tcpForwarder,
 		rule:         NewRule(cfg.Rule, cfg.Pattern),
+		dns:          dns,
 	}
 	return
 }

@@ -10,7 +10,7 @@ var logger = logging.MustGetLogger("kone")
 
 func InitLogger(debug bool) {
 	format := logging.MustStringFormatter(
-		`%{color}%{time:06-01-02 15:04:05.000} %{shortfunc} ▶ %{level:.4s} %{id:03x}%{color:reset} %{message}`,
+		`%{color}%{time:06-01-02 15:04:05.000} %{level:.4s} @%{shortfile}%{color:reset} %{message}`,
 	)
 	logging.SetFormatter(format)
 	logging.SetBackend(logging.NewLogBackend(os.Stdout, "", 0))
