@@ -9,6 +9,13 @@ import (
 	"github.com/xjdrew/kone/tcpip"
 )
 
+const (
+	schemeDomainSuffix  = "DOMAIN-SUFFIX"
+	schemeDomainKeyword = "DOMAIN-KEYWORD"
+	schemeIPCountry     = "IP-COUNTRY"
+	schemeIPCIDR        = "IP-CIDR"
+)
+
 type Pattern interface {
 	Proxy() string
 	Match(val interface{}) bool
@@ -48,7 +55,9 @@ func NewDomainSuffixPattern(proxy string, vals []string) Pattern {
 	p.proxy = proxy
 	p.vals = make(map[string]bool)
 	for _, val := range vals {
-		p.vals[val] = true
+		if len(val) > 0 { // ignore empty suffix
+			p.vals[val] = true
+		}
 	}
 	return p
 }
@@ -81,7 +90,9 @@ func NewDomainKeywordPattern(proxy string, vals []string) Pattern {
 	p.proxy = proxy
 	p.vals = make(map[string]bool)
 	for _, val := range vals {
-		p.vals[val] = true
+		if len(val) > 0 { // ignore empty keyword
+			p.vals[val] = true
+		}
 	}
 	return p
 }
@@ -113,7 +124,9 @@ func NewIPCountryPattern(proxy string, vals []string) Pattern {
 	p.proxy = proxy
 	p.vals = make(map[string]bool)
 	for _, val := range vals {
-		p.vals[val] = true
+		if len(val) > 0 { // ignore empty country
+			p.vals[val] = true
+		}
 	}
 	return p
 }
@@ -192,10 +205,10 @@ var patternSchemes map[string]func(string, []string) Pattern
 
 func init() {
 	patternSchemes = make(map[string]func(string, []string) Pattern)
-	patternSchemes["DOMAIN-SUFFIX"] = NewDomainSuffixPattern
-	patternSchemes["DOMAIN-KEYWORD"] = NewDomainKeywordPattern
-	patternSchemes["IP-COUNTRY"] = NewIPCountryPattern
-	patternSchemes["IP-CIDR"] = NewIPCIDRPattern
+	patternSchemes[schemeDomainSuffix] = NewDomainSuffixPattern
+	patternSchemes[schemeDomainKeyword] = NewDomainKeywordPattern
+	patternSchemes[schemeIPCountry] = NewIPCountryPattern
+	patternSchemes[schemeIPCIDR] = NewIPCIDRPattern
 }
 
 func IsExistPatternScheme(scheme string) bool {

@@ -12,6 +12,7 @@ var logger = GetLogger()
 
 type One struct {
 	tun          *TunDriver
+	rule         *Rule
 	tcpForwarder *tcpForwarder
 }
 
@@ -49,7 +50,7 @@ func NewOne(cfg *KoneConfig) (one *One, err error) {
 		return
 	}
 
-	proxies, err := newProxyContainer(cfg.Proxies)
+	proxies, err := NewProxies(cfg.Proxy)
 	if err != nil {
 		return
 	}
@@ -60,6 +61,7 @@ func NewOne(cfg *KoneConfig) (one *One, err error) {
 		forwarderIP:   ip,
 		forwarderPort: cfg.General.ForwarderPort,
 	}
+
 	udpFilter := &udpFilter{}
 	filters := map[tcpip.IPProtocol]PacketFilter{
 		tcpip.ICMP: PacketFilterFunc(icmpFilterFunc),
@@ -79,6 +81,7 @@ func NewOne(cfg *KoneConfig) (one *One, err error) {
 	one = &One{
 		tun:          tun,
 		tcpForwarder: tcpForwarder,
+		rule:         NewRule(cfg.Rule, cfg.Pattern),
 	}
 	return
 }

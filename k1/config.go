@@ -2,6 +2,7 @@ package k1
 
 import (
 	"fmt"
+	"net"
 
 	"gopkg.in/gcfg.v1"
 )
@@ -37,11 +38,19 @@ type RuleConfig struct {
 }
 
 type KoneConfig struct {
-	General  GeneralConfig
-	Dns      DnsConfig
-	Proxies  map[string]*ProxyConfig
-	Patterns map[string]*PatternConfig
-	Rules    RuleConfig
+	General GeneralConfig
+	Dns     DnsConfig
+	Proxy   map[string]*ProxyConfig
+	Pattern map[string]*PatternConfig
+	Rule    RuleConfig
+}
+
+func (cfg *KoneConfig) isValidProxy(proxy string) bool {
+	if proxy == "" {
+		return true
+	}
+	_, ok := cfg.Proxy[proxy]
+	return ok
 }
 
 func (cfg *KoneConfig) checkGeneral() error {
@@ -59,8 +68,47 @@ func (cfg *KoneConfig) checkGeneral() error {
 	return nil
 }
 
+func (cfg *KoneConfig) checkRule() error {
+	patterns := cfg.Pattern
+	for name, patternConfig := range patterns {
+		scheme := patternConfig.Scheme
+		if !IsExistPatternScheme(scheme) {
+			return fmt.Errorf("[pattern(%s)] invalid scheme: %s", name, scheme)
+		}
+
+		proxy := patternConfig.Proxy
+		if !cfg.isValidProxy(proxy) {
+			return fmt.Errorf("[pattern(%s)] invalid proxy: %s", name, proxy)
+		}
+
+		for _, val := range patternConfig.V {
+			if scheme == schemeIPCIDR {
+				if _, _, err := net.ParseCIDR(val); err != nil {
+					return fmt.Errorf("[pattern(%s)] invalid value: %s", name, val)
+				}
+			}
+		}
+	}
+
+	rule := cfg.Rule
+	if !cfg.isValidProxy(rule.Final) {
+		return fmt.Errorf("[rule] invalid final proxy: %s", rule.Final)
+	}
+
+	for _, pattern := range rule.Pattern {
+		if _, ok := patterns[pattern]; !ok {
+			return fmt.Errorf("[rule] invalid pattern: %s", pattern)
+		}
+	}
+	return nil
+}
+
 func (cfg *KoneConfig) check() error {
 	if err := cfg.checkGeneral(); err != nil {
+		return err
+	}
+
+	if err := cfg.checkRule(); err != nil {
 		return err
 	}
 	return nil

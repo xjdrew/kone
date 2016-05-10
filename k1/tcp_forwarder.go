@@ -11,7 +11,7 @@ import (
 
 type tcpForwarder struct {
 	nat           *Nat
-	proxies       *proxyContainer
+	proxies       *Proxies
 	forwarderIP   net.IP
 	forwarderPort uint16
 }
