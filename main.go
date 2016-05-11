@@ -42,7 +42,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	one, err := k1.NewOne(cfg)
+	one, err := k1.FromConfig(cfg)
 	if err != nil {
 		logger.Error(err.Error())
 		os.Exit(1)

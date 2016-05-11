@@ -11,7 +11,7 @@ import (
 func TestNatAlloc(t *testing.T) {
 	var from uint16 = 10
 	var to uint16 = 20
-	nat := newNat(from, to)
+	nat := NewNat(from, to)
 
 	srcIP := net.ParseIP("127.0.0.1")
 	dstIP := srcIP
@@ -53,7 +53,7 @@ func TestNatAlloc(t *testing.T) {
 func BenchmarkNat(b *testing.B) {
 	var from uint16 = 10000
 	var to uint16 = 60000
-	nat := newNat(from, to)
+	nat := NewNat(from, to)
 
 	srcIP := net.ParseIP("127.0.0.1")
 	dstIP := srcIP

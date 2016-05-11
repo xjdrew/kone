@@ -21,13 +21,13 @@ func checkCases(t *testing.T, proxy string, pattern Pattern, cases map[interface
 
 func TestDomainSuffixPattern(t *testing.T) {
 	proxy := "A"
-	pattern := NewDomainSuffixPattern(proxy, []string{
+	pattern := NewDomainSuffixPattern("domin-suffix", proxy, []string{
 		"example.com",
-		"hk",
+		"Hk",
 	})
 
 	cases := map[interface{}]bool{
-		"example.com":     true,
+		"Example.com":     true,
 		"api.example.com": true,
 		"1example.com":    false,
 		"example.hk":      true,
@@ -38,14 +38,14 @@ func TestDomainSuffixPattern(t *testing.T) {
 
 func TestDomainKeywordPattern(t *testing.T) {
 	proxy := "B"
-	pattern := NewDomainKeywordPattern(proxy, []string{
+	pattern := NewDomainKeywordPattern("domin-keyword", proxy, []string{
 		"example.com",
-		"hk",
+		"Hk",
 	})
 
 	cases := map[interface{}]bool{
 		"hk.com":          true,
-		"example.com":     true,
+		"Example.com":     true,
 		"api.example.com": true,
 		"1example.com":    true,
 		"example.hk":      true,
@@ -57,7 +57,7 @@ func TestDomainKeywordPattern(t *testing.T) {
 
 func TestIPCountryPattern(t *testing.T) {
 	proxy := "C"
-	pattern := NewIPCountryPattern(proxy, []string{
+	pattern := NewIPCountryPattern("ip-country", proxy, []string{
 		"HK",
 		"US",
 	})
@@ -73,7 +73,7 @@ func TestIPCountryPattern(t *testing.T) {
 
 func TestIPCIDRPattern(t *testing.T) {
 	proxy := "D"
-	pattern := NewIPCIDRPattern(proxy, []string{
+	pattern := NewIPCIDRPattern("ip-cidr", proxy, []string{
 		"192.168.100.1/16",
 		"10.18.0.1/24",
 		"172.16.0.1/32",

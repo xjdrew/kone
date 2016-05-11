@@ -24,3 +24,7 @@ func ConvertIPv4ToUint32(ip net.IP) uint32 {
 	v += uint32(ip[3])
 	return v
 }
+
+func ConvertUint32ToIPv4(v uint32) net.IP {
+	return net.IPv4(byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
+}

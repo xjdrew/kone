@@ -1,6 +1,8 @@
 package k1
 
 import (
+	"net"
+
 	. "github.com/xjdrew/kone/internal"
 	"github.com/xjdrew/kone/tcpip"
 )
@@ -9,6 +11,7 @@ var logger = GetLogger()
 
 type One struct {
 	rule         *Rule
+	dnsCache     *DnsCache
 	dns          *Dns
 	tcpForwarder *TCPForwarder
 	tun          *TunDriver
@@ -16,6 +19,11 @@ type One struct {
 
 func (one *One) Serve() error {
 	done := make(chan error)
+
+	go func() {
+		done <- one.dnsCache.Serve()
+	}()
+
 	go func() {
 		done <- one.dns.Serve()
 	}()
@@ -31,34 +39,42 @@ func (one *One) Serve() error {
 	return <-done
 }
 
-func NewOne(cfg *KoneConfig) (one *One, err error) {
-	tcpForwarder, err := NewTCPForwarder(cfg.General, cfg.Proxy)
-	if err != nil {
-		return
+func FromConfig(cfg *KoneConfig) (*One, error) {
+
+	general := cfg.General
+	name := general.Tun
+	ip := net.ParseIP(general.IP).To4()
+	_, subnet, _ := net.ParseCIDR(general.Network)
+
+	logger.Infof("[tun] ip:%s, subnet: %s", ip, subnet)
+
+	one := new(One)
+	// new rule
+	one.rule = NewRule(cfg.Rule, cfg.Pattern)
+
+	// new dns cache
+	one.dnsCache = NewDnsCache(subnet)
+
+	var err error
+
+	// new dns
+	if one.dns, err = NewDns(one, cfg.General, cfg.Dns); err != nil {
+		return nil, err
 	}
 
-	udpFilter := &udpFilter{}
+	if one.tcpForwarder, err = NewTCPForwarder(one, general, cfg.Proxy); err != nil {
+		return nil, err
+	}
+
 	filters := map[tcpip.IPProtocol]PacketFilter{
 		tcpip.ICMP: PacketFilterFunc(icmpFilterFunc),
-		tcpip.TCP:  tcpForwarder,
-		tcpip.UDP:  udpFilter,
+		tcpip.TCP:  one.tcpForwarder,
+		tcpip.UDP:  &udpFilter{},
 	}
 
-	tun, err := NewTunDriver(cfg.General, filters)
-	if err != nil {
-		return
+	if one.tun, err = NewTunDriver(name, ip, subnet, filters); err != nil {
+		return nil, err
 	}
 
-	dns, err := NewDns(cfg.General, cfg.Dns)
-	if err != nil {
-		return
-	}
-
-	one = &One{
-		tun:          tun,
-		tcpForwarder: tcpForwarder,
-		rule:         NewRule(cfg.Rule, cfg.Pattern),
-		dns:          dns,
-	}
-	return
+	return one, nil
 }

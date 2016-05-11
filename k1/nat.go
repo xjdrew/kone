@@ -73,7 +73,6 @@ type NatSession struct {
 	dstIP     net.IP
 	srcPort   uint16
 	dstPort   uint16
-	dstHost   string
 	lastTouch int64
 }
 
@@ -106,7 +105,6 @@ func (nat *Nat) allocSession(srcIP, dstIP net.IP, srcPort, dstPort uint16) uint1
 			dstIP:     dstIP,
 			srcPort:   srcPort,
 			dstPort:   dstPort,
-			dstHost:   dstIP.String(),
 			lastTouch: now,
 		}
 		nat.sessions[port-tbl.from] = session

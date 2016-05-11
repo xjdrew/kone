@@ -56,21 +56,17 @@ func (tun *TunDriver) AddRoute(subnet *net.IPNet) error {
 	return addRoute(tun.ifce.Name(), subnet)
 }
 
-func NewTunDriver(general GeneralConfig, filters map[tcpip.IPProtocol]PacketFilter) (*TunDriver, error) {
-	ifce, err := newTun(general.Tun)
+func NewTunDriver(name string, ip net.IP, subnet *net.IPNet, filters map[tcpip.IPProtocol]PacketFilter) (*TunDriver, error) {
+	ifce, err := newTun(name)
 	if err != nil {
 		return nil, err
 	}
-
-	ip := net.ParseIP(general.IP).To4()
-	logger.Infof("[tun] ip:%s", ip)
 
 	err = setTunIP(ifce, ip)
 	if err != nil {
 		return nil, err
 	}
 
-	_, subnet, _ := net.ParseCIDR(general.Network)
 	logger.Infof("[tun] add route:%s", subnet)
 
 	if err = addRoute(ifce.Name(), subnet); err != nil {

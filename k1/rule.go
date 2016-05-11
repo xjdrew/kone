@@ -8,9 +8,12 @@ type Rule struct {
 func (rule *Rule) Proxy(val interface{}) string {
 	for _, pattern := range rule.patterns {
 		if pattern.Match(val) {
-			return pattern.Proxy()
+			proxy := pattern.Proxy()
+			logger.Debugf("[rule] %v -> %s: proxy %q", val, pattern.Name(), proxy)
+			return proxy
 		}
 	}
+	logger.Debugf("[rule] %v -> final: proxy %q", val, rule.final)
 	return rule.final
 }
 
@@ -19,7 +22,7 @@ func NewRule(config RuleConfig, patterns map[string]*PatternConfig) *Rule {
 	rule.final = config.Final
 	for _, name := range config.Pattern {
 		if patternConfig, ok := patterns[name]; ok {
-			if pattern := CreatePattern(patternConfig); pattern != nil {
+			if pattern := CreatePattern(name, patternConfig); pattern != nil {
 				rule.patterns = append(rule.patterns, pattern)
 			}
 		}

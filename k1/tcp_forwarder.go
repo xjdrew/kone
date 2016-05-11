@@ -10,6 +10,7 @@ import (
 )
 
 type TCPForwarder struct {
+	one           *One
 	nat           *Nat
 	proxies       *Proxies
 	forwarderIP   net.IP
@@ -23,18 +24,34 @@ func forward(src *net.TCPConn, dst *net.TCPConn) {
 	src.CloseRead()
 }
 
-func (f *TCPForwarder) handleConn(conn *net.TCPConn) {
-	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
-	remotePort := uint16(remoteAddr.Port)
-	session := f.nat.getSession(remotePort)
+func (f *TCPForwarder) realRemoteHost(port uint16) (addr string, proxy string) {
+	session := f.nat.getSession(port)
 	if session == nil {
-		conn.Close()
-		logger.Debugf("no session: %s", conn.RemoteAddr())
 		return
 	}
 
-	addr := fmt.Sprintf("%s:%d", session.dstHost, session.dstPort)
-	tunnel, err := f.proxies.DefaultDial(addr)
+	var host string
+	record := f.one.dnsCache.GetByIP(session.dstIP)
+	if record == nil {
+		host = session.dstIP.String()
+	} else {
+		host = record.domain
+	}
+	return fmt.Sprintf("%s:%d", host, session.dstPort), record.proxy
+}
+
+func (f *TCPForwarder) handleConn(conn *net.TCPConn) {
+	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
+	remotePort := uint16(remoteAddr.Port)
+
+	addr, proxy := f.realRemoteHost(remotePort)
+	if addr == "" {
+		conn.Close()
+		logger.Debugf("no session: %s", remoteAddr)
+		return
+	}
+
+	tunnel, err := f.proxies.Dial(proxy, addr)
 	if err != nil {
 		conn.Close()
 		logger.Errorf("dial tunnel failed:%s", err)
@@ -107,13 +124,14 @@ func (f *TCPForwarder) Filter(p *tcpip.IPv4Packet) bool {
 	return true
 }
 
-func NewTCPForwarder(general GeneralConfig, proxy map[string]*ProxyConfig) (*TCPForwarder, error) {
+func NewTCPForwarder(one *One, general GeneralConfig, proxy map[string]*ProxyConfig) (*TCPForwarder, error) {
 	proxies, err := NewProxies(proxy)
 	if err != nil {
 		return nil, err
 	}
 
 	forwarder := new(TCPForwarder)
+	forwarder.one = one
 	forwarder.nat = NewNat(general.NatFromPort, general.NatToPort)
 	forwarder.proxies = proxies
 	forwarder.forwarderIP = net.ParseIP(general.IP).To4()
