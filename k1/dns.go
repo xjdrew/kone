@@ -11,9 +11,11 @@ import (
 )
 
 const (
-	dnsDefaultPort       = 53
-	dnsDefaultTtl        = 600
-	dnsDefaultPacketSize = 4096
+	dnsDefaultPort         = 53
+	dnsDefaultTtl          = 600
+	dnsDefaultPacketSize   = 4096
+	dnsDefaultReadTimeout  = 5 * time.Second
+	dnsDefaultWriteTimeout = 5 * time.Second
 )
 
 var resolveErr = errors.New("resolve error")
@@ -29,8 +31,10 @@ func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
 	msgCh := make(chan *dns.Msg, 1)
 
 	c := &dns.Client{
-		Net:     "udp",
-		UDPSize: dnsDefaultPacketSize,
+		Net:          "udp",
+		UDPSize:      dnsDefaultPacketSize,
+		ReadTimeout:  dnsDefaultReadTimeout,
+		WriteTimeout: dnsDefaultWriteTimeout,
 	}
 
 	qname := r.Question[0].Name
@@ -180,8 +184,8 @@ func NewDns(one *One, general GeneralConfig, dnsConfig DnsConfig) (*Dns, error) 
 		Addr:         fmt.Sprintf("%s:%d", general.IP, dnsConfig.DnsPort),
 		Handler:      dns.HandlerFunc(d.ServeDNS),
 		UDPSize:      dnsDefaultPacketSize,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 5 * time.Second,
+		ReadTimeout:  dnsDefaultReadTimeout,
+		WriteTimeout: dnsDefaultWriteTimeout,
 	}
 
 	d.server = server
