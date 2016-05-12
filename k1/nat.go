@@ -93,7 +93,7 @@ func (nat *Nat) getSession(port uint16) *NatSession {
 	return session
 }
 
-func (nat *Nat) allocSession(srcIP, dstIP net.IP, srcPort, dstPort uint16) uint16 {
+func (nat *Nat) allocSession(srcIP, dstIP net.IP, srcPort, dstPort uint16) (bool, uint16) {
 	now := time.Now().Unix()
 	nat.clearExpiredSessions(now)
 
@@ -109,7 +109,7 @@ func (nat *Nat) allocSession(srcIP, dstIP net.IP, srcPort, dstPort uint16) uint1
 		}
 		nat.sessions[port-tbl.from] = session
 	}
-	return port
+	return isNew, port
 }
 
 func (nat *Nat) clearExpiredSessions(now int64) {

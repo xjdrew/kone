@@ -5,16 +5,17 @@ type Rule struct {
 	final    string
 }
 
-func (rule *Rule) Proxy(val interface{}) string {
+// match a proxy for target `val`
+func (rule *Rule) Proxy(val interface{}) (bool, string) {
 	for _, pattern := range rule.patterns {
 		if pattern.Match(val) {
 			proxy := pattern.Proxy()
 			logger.Debugf("[rule] %v -> %s: proxy %q", val, pattern.Name(), proxy)
-			return proxy
+			return true, proxy
 		}
 	}
 	logger.Debugf("[rule] %v -> final: proxy %q", val, rule.final)
-	return rule.final
+	return false, rule.final
 }
 
 func NewRule(config RuleConfig, patterns map[string]*PatternConfig) *Rule {

@@ -69,7 +69,7 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 	filters := map[tcpip.IPProtocol]PacketFilter{
 		tcpip.ICMP: PacketFilterFunc(icmpFilterFunc),
 		tcpip.TCP:  one.tcpForwarder,
-		tcpip.UDP:  &udpFilter{},
+		//tcpip.UDP:  &udpFilter{},
 	}
 
 	if one.tun, err = NewTunDriver(name, ip, subnet, filters); err != nil {

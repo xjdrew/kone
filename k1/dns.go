@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	dnsDefaultPort = 53
-
-	dnsDefaultTtl = 600
+	dnsDefaultPort       = 53
+	dnsDefaultTtl        = 600
+	dnsDefaultPacketSize = 4096
 )
 
 var resolveErr = errors.New("resolve error")
@@ -29,7 +29,8 @@ func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
 	msgCh := make(chan *dns.Msg, 1)
 
 	c := &dns.Client{
-		Net: "udp",
+		Net:     "udp",
+		UDPSize: dnsDefaultPacketSize,
 	}
 
 	qname := r.Question[0].Name
@@ -39,12 +40,13 @@ func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
 
 		r, rtt, err := c.Exchange(r, ns)
 		if err != nil {
+			logger.Errorf("[dns] resolve %s on %s failed: %v", qname, ns, err)
 			return
 		}
 
 		if r != nil && r.Rcode != dns.RcodeSuccess {
 			if r.Rcode == dns.RcodeServerFailure {
-				logger.Errorf("[dns] resolve %s on %s failedd", qname, ns)
+				logger.Errorf("[dns] resolve %s on %s failed", qname, ns)
 				return
 			}
 		}
@@ -73,6 +75,7 @@ func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
 	}
 
 	wg.Wait()
+
 	select {
 	case r := <-msgCh:
 		return r, nil
@@ -97,11 +100,11 @@ func (d *Dns) doIPv4Query(r *dns.Msg) (*dns.Msg, error) {
 		return record.Answer(r), nil
 	}
 
-	// test domain
-	proxy := one.rule.Proxy(domain)
+	// match by domain
+	matched, proxy := one.rule.Proxy(domain)
 
 	// if domain use proxy
-	if proxy != "" {
+	if matched && proxy != "" {
 		if record := one.dnsCache.Set(domain, proxy); record != nil {
 			return record.Answer(r), nil
 		}
@@ -109,29 +112,29 @@ func (d *Dns) doIPv4Query(r *dns.Msg) (*dns.Msg, error) {
 
 	// resolve
 	msg, err := d.resolve(r)
-	if len(msg.Answer) == 0 || err != nil {
+	if err != nil || len(msg.Answer) == 0 {
 		return msg, err
 	}
 
-	var answer *dns.A
-	var ok bool
-	if answer, ok = msg.Answer[0].(*dns.A); !ok {
-		logger.Noticef("[dns] unexpected response %s -> %v", domain, msg.Answer[0])
-		return msg, err
-	}
+	// match by ip
+	if !matched {
+		if answer, ok := msg.Answer[0].(*dns.A); ok {
+			// test ip
+			_, proxy = one.rule.Proxy(answer.A)
 
-	// test ip
-	proxy = one.rule.Proxy(answer.A)
-
-	// if ip use proxy
-	if proxy != "" {
-		if record := one.dnsCache.Set(domain, proxy); record != nil {
-			return record.Answer(r), nil
+			// if ip use proxy
+			if proxy != "" {
+				if record := one.dnsCache.Set(domain, proxy); record != nil {
+					return record.Answer(r), nil
+				}
+			}
+		} else {
+			logger.Noticef("[dns] unexpected response %s -> %v", domain, msg.Answer[0])
 		}
 	}
 
 	// set domain as a non-proxy-domain
-	one.dnsCache.SetNonProxyDomain(domain, answer.Header().Ttl)
+	one.dnsCache.SetNonProxyDomain(domain, msg.Answer[0].Header().Ttl)
 
 	// final
 	return msg, err
@@ -176,7 +179,7 @@ func NewDns(one *One, general GeneralConfig, dnsConfig DnsConfig) (*Dns, error) 
 		Net:          "udp",
 		Addr:         fmt.Sprintf("%s:%d", general.IP, dnsConfig.DnsPort),
 		Handler:      dns.HandlerFunc(d.ServeDNS),
-		UDPSize:      4096,
+		UDPSize:      dnsDefaultPacketSize,
 		ReadTimeout:  5 * time.Second,
 		WriteTimeout: 5 * time.Second,
 	}

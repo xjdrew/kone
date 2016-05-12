@@ -29,7 +29,6 @@ func (tun *TunDriver) Serve() error {
 
 	buffer := make([]byte, MTU)
 	for {
-		logger.Debug("read packet")
 		n, err := ifce.Read(buffer)
 		if err != nil {
 			return err
@@ -41,7 +40,7 @@ func (tun *TunDriver) Serve() error {
 			protocol := ipPacket.Protocol()
 			filter := filters[protocol]
 			if filter == nil {
-				logger.Debugf("ipv4 protocol: %d", protocol)
+				logger.Noticef("%v > %v protocol %d unsupport", ipPacket.SourceIP(), ipPacket.DestinationIP(), protocol)
 				continue
 			}
 

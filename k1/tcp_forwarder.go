@@ -31,13 +31,14 @@ func (f *TCPForwarder) realRemoteHost(port uint16) (addr string, proxy string) {
 	}
 
 	var host string
-	record := f.one.dnsCache.GetByIP(session.dstIP)
-	if record == nil {
-		host = session.dstIP.String()
-	} else {
+	if record := f.one.dnsCache.GetByIP(session.dstIP); record != nil {
 		host = record.domain
+		proxy = record.proxy
+	} else {
+		host = session.dstIP.String()
 	}
-	return fmt.Sprintf("%s:%d", host, session.dstPort), record.proxy
+	addr = fmt.Sprintf("%s:%d", host, session.dstPort)
+	return
 }
 
 func (f *TCPForwarder) handleConn(conn *net.TCPConn) {
@@ -54,7 +55,7 @@ func (f *TCPForwarder) handleConn(conn *net.TCPConn) {
 	tunnel, err := f.proxies.Dial(proxy, addr)
 	if err != nil {
 		conn.Close()
-		logger.Errorf("dial tunnel failed:%s", err)
+		logger.Errorf("proxy %q failed:%s", proxy, err)
 		return
 	}
 
@@ -91,7 +92,7 @@ func (f *TCPForwarder) Filter(p *tcpip.IPv4Packet) bool {
 	srcPort := tcpPacket.SourcePort()
 	dstPort := tcpPacket.DestinationPort()
 
-	logger.Debugf("tcp: %s:%d -> %s:%d", srcIP, srcPort, dstIP, dstPort)
+	// logger.Debugf("tcp: %s:%d -> %s:%d", srcIP, srcPort, dstIP, dstPort)
 
 	if bytes.Equal(srcIP, f.forwarderIP) && srcPort == f.forwarderPort {
 		// from forwarder
@@ -107,15 +108,17 @@ func (f *TCPForwarder) Filter(p *tcpip.IPv4Packet) bool {
 		}
 	} else {
 		// redirect to forwarder
-		port := f.nat.allocSession(srcIP, dstIP, srcPort, dstPort)
+		isNew, port := f.nat.allocSession(srcIP, dstIP, srcPort, dstPort)
 
 		ipPacket.SetSourceIP(dstIP)
 		tcpPacket.SetSourcePort(port)
 		ipPacket.SetDestinationIP(f.forwarderIP)
 		tcpPacket.SetDestinationPort(f.forwarderPort)
 
-		logger.Debugf("shape from(%s:%d -> %s:%d) to (%s:%d -> %s:%d)",
-			srcIP, srcPort, dstIP, dstPort, dstIP, port, f.forwarderIP, f.forwarderPort)
+		if isNew {
+			logger.Debugf("shape from(%s:%d -> %s:%d) to (%s:%d -> %s:%d)",
+				srcIP, srcPort, dstIP, dstPort, dstIP, port, f.forwarderIP, f.forwarderPort)
+		}
 	}
 
 	tcpPacket.ResetChecksum(ipPacket.PseudoSum())
