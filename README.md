@@ -1,32 +1,13 @@
 # KONE
-K1 (K1 chronometer made by Larcum Kendall)
+The project aims to improve the experience of accessing internet in home/enterprise network.
 
-# test
-add iptables for local test:
-```
-iptables -t nat -A OUTPUT -p tcp -m tcp --dport 80 -j REDIRECT --to-ports 12345
-```
+KONE equals to `k1`, a chronometer made by Larcum Kendall and played a important role in Captain Cook's voyage.
 
-# documents
-[tun](https://www.kernel.org/doc/Documentation/networking/tuntap.txt)
-[Tun/Tap interface tutorial](http://backreference.org/2010/03/26/tuntap-interface-tutorial/)
+By now, it supports:
+* linux
 
-# enable ip forwarding
-```
-sysctl -w net.ipv4.ip_forward=1
-```
-# tun
-```
-# create/delete tun
-$ ip tuntap add dev tun0 mode tun
-$ ip tuntap del dev tun0 mode tun
+# Use
+Try finding how to use it by reading [example.ini](https://github.com/xjdrew/kone/blob/master/example.ini)!
 
-# up/down tun
-$ ip link set tun0 up
-$ ip link set tun0 down
-
-# alloc ip
-$ ip addr add 10.0.0.1/24 dev tun0
-
-```
-
+# License
+The MIT License (MIT) Copyright (c) 2016 xjdrew
