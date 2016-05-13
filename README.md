@@ -1,7 +1,7 @@
 # KONE
 The project aims to improve the experience of accessing internet in home/enterprise network.
 
-KONE equals to `k1`, a chronometer made by Larcum Kendall and played a important role in Captain Cook's voyage.
+The name "KONE" comes from [k1](https://en.wikipedia.org/wiki/Larcum_Kendall#K1), a chronometer made by Larcum Kendall and played a important role in Captain Cook's voyage.
 
 By now, it supports:
 * linux
