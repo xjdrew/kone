@@ -12,7 +12,6 @@ import (
 type TCPForwarder struct {
 	one           *One
 	nat           *Nat
-	proxies       *Proxies
 	forwarderIP   net.IP
 	forwarderPort uint16
 }
@@ -38,6 +37,7 @@ func (f *TCPForwarder) realRemoteHost(port uint16) (addr string, proxy string) {
 		host = session.dstIP.String()
 	}
 	addr = fmt.Sprintf("%s:%d", host, session.dstPort)
+	logger.Debugf("[tcpForwarder] %s:%d > %s proxy %q", session.srcIP, session.srcPort, addr, proxy)
 	return
 }
 
@@ -48,14 +48,15 @@ func (f *TCPForwarder) handleConn(conn *net.TCPConn) {
 	addr, proxy := f.realRemoteHost(remotePort)
 	if addr == "" {
 		conn.Close()
-		logger.Debugf("no session: %s", remoteAddr)
+		logger.Errorf("[tcpForwarder] no session: %s", remoteAddr)
 		return
 	}
 
-	tunnel, err := f.proxies.Dial(proxy, addr)
+	proxies := f.one.proxies
+	tunnel, err := proxies.Dial(proxy, addr)
 	if err != nil {
 		conn.Close()
-		logger.Errorf("proxy %q failed:%s", proxy, err)
+		logger.Errorf("[tcpForwarder] proxy %q failed: %s", proxy, err)
 		return
 	}
 
@@ -77,7 +78,6 @@ func (f *TCPForwarder) Serve() error {
 		if err != nil {
 			return err
 		}
-		logger.Infof("new connection from %s", conn.RemoteAddr())
 		go f.handleConn(conn)
 	}
 }
@@ -91,8 +91,6 @@ func (f *TCPForwarder) Filter(p *tcpip.IPv4Packet) bool {
 	dstIP := ipPacket.DestinationIP()
 	srcPort := tcpPacket.SourcePort()
 	dstPort := tcpPacket.DestinationPort()
-
-	// logger.Debugf("tcp: %s:%d -> %s:%d", srcIP, srcPort, dstIP, dstPort)
 
 	if bytes.Equal(srcIP, f.forwarderIP) && srcPort == f.forwarderPort {
 		// from forwarder
@@ -116,7 +114,7 @@ func (f *TCPForwarder) Filter(p *tcpip.IPv4Packet) bool {
 		tcpPacket.SetDestinationPort(f.forwarderPort)
 
 		if isNew {
-			logger.Debugf("shape from(%s:%d -> %s:%d) to (%s:%d -> %s:%d)",
+			logger.Debugf("[tcpForwarder] shape from(%s:%d > %s:%d) to (%s:%d > %s:%d)",
 				srcIP, srcPort, dstIP, dstPort, dstIP, port, f.forwarderIP, f.forwarderPort)
 		}
 	}
@@ -127,18 +125,12 @@ func (f *TCPForwarder) Filter(p *tcpip.IPv4Packet) bool {
 	return true
 }
 
-func NewTCPForwarder(one *One, general GeneralConfig, proxy map[string]*ProxyConfig) (*TCPForwarder, error) {
-	proxies, err := NewProxies(proxy)
-	if err != nil {
-		return nil, err
-	}
-
+func NewTCPForwarder(one *One, cfg NatConfig) (*TCPForwarder, error) {
 	forwarder := new(TCPForwarder)
 	forwarder.one = one
-	forwarder.nat = NewNat(general.NatFromPort, general.NatToPort)
-	forwarder.proxies = proxies
-	forwarder.forwarderIP = net.ParseIP(general.IP).To4()
-	forwarder.forwarderPort = general.ForwarderPort
+	forwarder.nat = NewNat(cfg.NatPortStart, cfg.NatPortEnd)
+	forwarder.forwarderIP = one.ip
+	forwarder.forwarderPort = cfg.ListenPort
 
 	return forwarder, nil
 }

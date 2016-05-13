@@ -1,15 +1,19 @@
 package k1
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"strings"
 
 	"github.com/xjdrew/kone/proxy"
 )
 
+var errNoProxy = errors.New("no proxy")
+
 type Proxies struct {
-	proxies map[string]proxy.Dialer
-	dft     proxy.Dialer
+	proxies map[string]*proxy.Proxy
+	dft     string
 }
 
 func (p *Proxies) Dial(proxy string, addr string) (net.Conn, error) {
@@ -25,24 +29,37 @@ func (p *Proxies) Dial(proxy string, addr string) (net.Conn, error) {
 }
 
 func (p *Proxies) DefaultDial(addr string) (net.Conn, error) {
-	return p.dft.Dial("tcp", addr)
+	dialer := p.proxies[p.dft]
+	if dialer == nil {
+		return nil, errNoProxy
+	}
+	return dialer.Dial("tcp", addr)
 }
 
-func NewProxies(config map[string]*ProxyConfig) (*Proxies, error) {
+func NewProxies(one *One, config map[string]*ProxyConfig) (*Proxies, error) {
 	p := &Proxies{}
 
-	proxies := make(map[string]proxy.Dialer)
+	proxies := make(map[string]*proxy.Proxy)
 	for name, item := range config {
-		dailer, err := proxy.FromUrl(item.Url)
+		proxy, err := proxy.FromUrl(item.Url)
 		if err != nil {
 			return nil, err
 		}
 
-		if item.Default || p.dft == nil {
-			p.dft = dailer
+		if item.Default || p.dft == "" {
+			p.dft = name
 		}
-		proxies[name] = dailer
+		proxies[name] = proxy
+
+		// don't hijack proxy domain
+		host := proxy.Url.Host
+		index := strings.IndexByte(proxy.Url.Host, ':')
+		if index > 0 {
+			host = proxy.Url.Host[:index]
+		}
+		one.rule.DirectDomain(host)
 	}
 	p.proxies = proxies
+	logger.Infof("[proxies] default proxy: %q", p.dft)
 	return p, nil
 }

@@ -10,9 +10,15 @@ import (
 var logger = GetLogger()
 
 type One struct {
+	// tun ip
+	ip net.IP
+	// tun virtual network
+	subnet *net.IPNet
+
 	rule         *Rule
 	dnsCache     *DnsCache
 	dns          *Dns
+	proxies      *Proxies
 	tcpForwarder *TCPForwarder
 	tun          *TunDriver
 }
@@ -40,7 +46,6 @@ func (one *One) Serve() error {
 }
 
 func FromConfig(cfg *KoneConfig) (*One, error) {
-
 	general := cfg.General
 	name := general.Tun
 	ip := net.ParseIP(general.IP).To4()
@@ -48,7 +53,11 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 
 	logger.Infof("[tun] ip:%s, subnet: %s", ip, subnet)
 
-	one := new(One)
+	one := &One{
+		ip:     ip,
+		subnet: subnet,
+	}
+
 	// new rule
 	one.rule = NewRule(cfg.Rule, cfg.Pattern)
 
@@ -58,11 +67,15 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 	var err error
 
 	// new dns
-	if one.dns, err = NewDns(one, cfg.General, cfg.Dns); err != nil {
+	if one.dns, err = NewDns(one, cfg.Dns); err != nil {
 		return nil, err
 	}
 
-	if one.tcpForwarder, err = NewTCPForwarder(one, general, cfg.Proxy); err != nil {
+	if one.proxies, err = NewProxies(one, cfg.Proxy); err != nil {
+		return nil, err
+	}
+
+	if one.tcpForwarder, err = NewTCPForwarder(one, cfg.TCP); err != nil {
 		return nil, err
 	}
 

@@ -175,13 +175,13 @@ func (d *Dns) Serve() error {
 	return d.server.ListenAndServe()
 }
 
-func NewDns(one *One, general GeneralConfig, dnsConfig DnsConfig) (*Dns, error) {
+func NewDns(one *One, dnsConfig DnsConfig) (*Dns, error) {
 	d := new(Dns)
 	d.one = one
 
 	server := &dns.Server{
 		Net:          "udp",
-		Addr:         fmt.Sprintf("%s:%d", general.IP, dnsConfig.DnsPort),
+		Addr:         fmt.Sprintf("%s:%d", one.ip, dnsConfig.DnsPort),
 		Handler:      dns.HandlerFunc(d.ServeDNS),
 		UDPSize:      dnsDefaultPacketSize,
 		ReadTimeout:  dnsDefaultReadTimeout,

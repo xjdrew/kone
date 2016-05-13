@@ -58,16 +58,20 @@ func (p *DomainSuffixPattern) Match(val interface{}) bool {
 	return false
 }
 
+func (p *DomainSuffixPattern) AddDomain(val string) {
+	if len(val) > 0 { // ignore empty suffix
+		val = strings.ToLower(val)
+		p.vals[val] = true
+	}
+}
+
 func NewDomainSuffixPattern(name string, proxy string, vals []string) Pattern {
 	p := new(DomainSuffixPattern)
 	p.name = name
 	p.proxy = proxy
 	p.vals = make(map[string]bool)
 	for _, val := range vals {
-		val = strings.ToLower(val)
-		if len(val) > 0 { // ignore empty suffix
-			p.vals[val] = true
-		}
+		p.AddDomain(val)
 	}
 	return p
 }

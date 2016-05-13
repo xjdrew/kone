@@ -9,12 +9,15 @@ import (
 )
 
 type GeneralConfig struct {
-	Tun           string // tun name
-	IP            string // tun ip
-	Network       string // dns network
-	ForwarderPort uint16 `gcfg:"forwarder-port"`
-	NatFromPort   uint16 `gcfg:"nat-from-port"`
-	NatToPort     uint16 `gcfg:"nat-to-port"`
+	Tun     string // tun name
+	IP      string // tun ip
+	Network string // dns network
+}
+
+type NatConfig struct {
+	ListenPort   uint16 `gcfg:"listen-port"`
+	NatPortStart uint16 `gcfg:"nat-port-start"`
+	NatPortEnd   uint16 `gcfg:"nat-port-end"`
 }
 
 type DnsConfig struct {
@@ -40,6 +43,8 @@ type RuleConfig struct {
 
 type KoneConfig struct {
 	General GeneralConfig
+	TCP     NatConfig
+	UDP     NatConfig
 	Dns     DnsConfig
 	Proxy   map[string]*ProxyConfig
 	Pattern map[string]*PatternConfig
@@ -72,14 +77,29 @@ func (cfg *KoneConfig) checkGeneral() error {
 		return fmt.Errorf("[check general] subnet(%s) should not contain address(%s)", subnet, ip)
 	}
 
-	// nat port range
-	if general.NatFromPort >= general.NatToPort {
-		return fmt.Errorf("[check general] invalid nat port range [%d, %d)", general.NatFromPort, general.NatToPort)
+	return nil
+}
+
+func (cfg *KoneConfig) checkNat() error {
+	check := func(nat NatConfig) error {
+		// nat port range
+		if nat.NatPortStart >= nat.NatPortEnd {
+			return fmt.Errorf("invalid nat port range [%d, %d)", nat.NatPortStart, nat.NatPortEnd)
+		}
+
+		// listen-port should not in nat port range
+		if nat.ListenPort >= nat.NatPortStart && nat.ListenPort < nat.NatPortEnd {
+			return fmt.Errorf("nat port range should not contain listen port(%d)", nat.ListenPort)
+		}
+		return nil
 	}
 
-	// forwarder-port should not in nat port range
-	if general.ForwarderPort >= general.NatFromPort && general.ForwarderPort < general.NatToPort {
-		return fmt.Errorf("[check general] nat port range should not contain forwarder port(%d)", general.ForwarderPort)
+	if err := check(cfg.TCP); err != nil {
+		fmt.Errorf("[check nat] tcp: %v", err)
+	}
+
+	if err := check(cfg.UDP); err != nil {
+		fmt.Errorf("[check nat] udp: %v", err)
 	}
 	return nil
 }
@@ -145,19 +165,23 @@ func (cfg *KoneConfig) fixDns() error {
 	return nil
 }
 
-func (cfg *KoneConfig) check() error {
-	if err := cfg.checkGeneral(); err != nil {
-		return err
+func (cfg *KoneConfig) check() (err error) {
+	if err = cfg.checkGeneral(); err != nil {
+		return
 	}
 
-	if err := cfg.checkRule(); err != nil {
-		return err
+	if err = cfg.checkNat(); err != nil {
+		return
 	}
 
-	if err := cfg.fixDns(); err != nil {
-		return err
+	if err = cfg.checkRule(); err != nil {
+		return
 	}
-	return nil
+
+	if err = cfg.fixDns(); err != nil {
+		return
+	}
+	return
 }
 
 func ParseConfig(filename string) (*KoneConfig, error) {
@@ -167,9 +191,13 @@ func ParseConfig(filename string) (*KoneConfig, error) {
 	cfg.General.IP = "10.16.0.1"
 	cfg.General.Network = "10.17.0.0/16"
 
-	cfg.General.ForwarderPort = 82
-	cfg.General.NatFromPort = 10000
-	cfg.General.NatToPort = 60000
+	cfg.TCP.ListenPort = 82
+	cfg.TCP.NatPortStart = 10000
+	cfg.TCP.NatPortEnd = 60000
+
+	cfg.TCP.ListenPort = 82
+	cfg.TCP.NatPortStart = 10000
+	cfg.TCP.NatPortEnd = 60000
 
 	cfg.Dns.DnsPort = dnsDefaultPort
 
