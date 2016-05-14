@@ -1,3 +1,8 @@
+//
+//   date  : 2016-05-13
+//   author: xjdrew
+//
+
 package k1
 
 import (
@@ -26,22 +31,16 @@ type One struct {
 func (one *One) Serve() error {
 	done := make(chan error)
 
-	go func() {
-		done <- one.dnsCache.Serve()
-	}()
+	runAndWait := func(f func() error) {
+		select {
+		case done <- f():
+		}
+	}
 
-	go func() {
-		done <- one.dns.Serve()
-	}()
-
-	go func() {
-		done <- one.tcpForwarder.Serve()
-	}()
-
-	go func() {
-		done <- one.tun.Serve()
-	}()
-
+	go runAndWait(one.dnsCache.Serve)
+	go runAndWait(one.dns.Serve)
+	go runAndWait(one.tcpForwarder.Serve)
+	go runAndWait(one.tun.Serve)
 	return <-done
 }
 

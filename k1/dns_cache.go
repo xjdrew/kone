@@ -1,3 +1,8 @@
+//
+//   date  : 2016-05-13
+//   author: xjdrew
+//
+
 package k1
 
 import (
@@ -54,9 +59,11 @@ func NewIPv4Space(subnet *net.IPNet) *IPv4Space {
 }
 
 type DomainRecord struct {
-	ip     net.IP
-	domain string
-	proxy  string
+	ip     net.IP // nat ip
+	domain string // domain name
+	proxy  string // proxy
+
+	realIP net.IP // real domin ip
 
 	answer *dns.A // cache dns answer
 

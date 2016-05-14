@@ -1,3 +1,8 @@
+//
+//   date  : 2016-05-13
+//   author: xjdrew
+//
+
 package k1
 
 import (
@@ -14,8 +19,8 @@ const (
 	dnsDefaultPort         = 53
 	dnsDefaultTtl          = 600
 	dnsDefaultPacketSize   = 4096
-	dnsDefaultReadTimeout  = 5 * time.Second
-	dnsDefaultWriteTimeout = 5 * time.Second
+	dnsDefaultReadTimeout  = 5
+	dnsDefaultWriteTimeout = 5
 )
 
 var resolveErr = errors.New("resolve error")
@@ -23,6 +28,7 @@ var resolveErr = errors.New("resolve error")
 type Dns struct {
 	one         *One
 	server      *dns.Server
+	client      *dns.Client
 	nameservers []string
 }
 
@@ -30,19 +36,12 @@ func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
 	var wg sync.WaitGroup
 	msgCh := make(chan *dns.Msg, 1)
 
-	c := &dns.Client{
-		Net:          "udp",
-		UDPSize:      dnsDefaultPacketSize,
-		ReadTimeout:  dnsDefaultReadTimeout,
-		WriteTimeout: dnsDefaultWriteTimeout,
-	}
-
 	qname := r.Question[0].Name
 
 	Q := func(ns string) {
 		defer wg.Done()
 
-		r, rtt, err := c.Exchange(r, ns)
+		r, rtt, err := d.client.Exchange(r, ns)
 		if err != nil {
 			logger.Errorf("[dns] resolve %s on %s failed: %v", qname, ns, err)
 			return
@@ -175,20 +174,28 @@ func (d *Dns) Serve() error {
 	return d.server.ListenAndServe()
 }
 
-func NewDns(one *One, dnsConfig DnsConfig) (*Dns, error) {
+func NewDns(one *One, cfg DnsConfig) (*Dns, error) {
 	d := new(Dns)
 	d.one = one
 
 	server := &dns.Server{
 		Net:          "udp",
-		Addr:         fmt.Sprintf("%s:%d", one.ip, dnsConfig.DnsPort),
+		Addr:         fmt.Sprintf("%s:%d", one.ip, cfg.DnsPort),
 		Handler:      dns.HandlerFunc(d.ServeDNS),
-		UDPSize:      dnsDefaultPacketSize,
-		ReadTimeout:  dnsDefaultReadTimeout,
-		WriteTimeout: dnsDefaultWriteTimeout,
+		UDPSize:      int(cfg.DnsPacketSize),
+		ReadTimeout:  time.Duration(cfg.DnsReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.DnsWriteTimeout) * time.Second,
+	}
+
+	client := &dns.Client{
+		Net:          "udp",
+		UDPSize:      cfg.DnsPacketSize,
+		ReadTimeout:  time.Duration(cfg.DnsReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.DnsWriteTimeout) * time.Second,
 	}
 
 	d.server = server
-	d.nameservers = dnsConfig.Nameserver
+	d.client = client
+	d.nameservers = cfg.Nameserver
 	return d, nil
 }

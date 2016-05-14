@@ -1,3 +1,8 @@
+//
+//   date  : 2016-05-13
+//   author: xjdrew
+//
+
 package geoip
 
 import (

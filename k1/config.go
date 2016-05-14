@@ -1,3 +1,8 @@
+//
+//   date  : 2016-05-13
+//   author: xjdrew
+//
+
 package k1
 
 import (
@@ -21,8 +26,12 @@ type NatConfig struct {
 }
 
 type DnsConfig struct {
-	DnsPort    uint16   `gcfg:"dns-port"` // dns port
-	Nameserver []string // backend dns
+	DnsPort         uint16   `gcfg:"dns-port"`
+	DnsTtl          uint     `gcfg:"dns-ttl"`
+	DnsPacketSize   uint16   `gcfg:"dns-packet-size"`
+	DnsReadTimeout  uint     `gcfg:"dns-read-timeout"`
+	DnsWriteTimeout uint     `gcfg:"dns-write-timeout"`
+	Nameserver      []string // backend dns
 }
 
 type ProxyConfig struct {
@@ -200,6 +209,10 @@ func ParseConfig(filename string) (*KoneConfig, error) {
 	cfg.TCP.NatPortEnd = 60000
 
 	cfg.Dns.DnsPort = dnsDefaultPort
+	cfg.Dns.DnsTtl = dnsDefaultTtl
+	cfg.Dns.DnsPacketSize = dnsDefaultPacketSize
+	cfg.Dns.DnsReadTimeout = dnsDefaultReadTimeout
+	cfg.Dns.DnsWriteTimeout = dnsDefaultWriteTimeout
 
 	// decode config value
 	err := gcfg.ReadFileInto(cfg, filename)
