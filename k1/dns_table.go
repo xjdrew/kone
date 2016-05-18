@@ -58,17 +58,35 @@ func NewIPv4Space(subnet *net.IPNet) *IPv4Space {
 	return space
 }
 
+// hijacked domain
 type DomainRecord struct {
-	ip     net.IP // nat ip
 	domain string // domain name
 	proxy  string // proxy
 
-	realIP net.IP // real domin ip
+	ip     net.IP // nat ip
+	realIP net.IP // real ip
 
 	answer *dns.A // cache dns answer
 
 	touch time.Time
 	hit   int
+}
+
+func (record *DomainRecord) SetRealIP(msg *dns.Msg) {
+	if record.realIP != nil {
+		return
+	}
+
+	var ip net.IP
+	for _, item := range msg.Answer {
+		switch answer := item.(type) {
+		case *dns.A:
+			ip = answer.A
+			break
+		}
+	}
+	record.realIP = ip
+	logger.Debugf("[dns] %s real ip: %s", record.domain, ip)
 }
 
 func (record *DomainRecord) Answer(request *dns.Msg) *dns.Msg {
@@ -83,7 +101,7 @@ func (record *DomainRecord) Touch() {
 	record.touch = time.Now()
 }
 
-type DnsCache struct {
+type DnsTable struct {
 	// dns ip space
 	ipSpace *IPv4Space
 
@@ -103,7 +121,7 @@ type DnsCache struct {
 	npdLock sync.Mutex
 }
 
-func (c *DnsCache) get(domain string) *DomainRecord {
+func (c *DnsTable) get(domain string) *DomainRecord {
 	record := c.records[domain]
 	if record != nil {
 		record.Touch()
@@ -111,7 +129,7 @@ func (c *DnsCache) get(domain string) *DomainRecord {
 	return record
 }
 
-func (c *DnsCache) GetByIP(ip net.IP) *DomainRecord {
+func (c *DnsTable) GetByIP(ip net.IP) *DomainRecord {
 	c.recordsLock.Lock()
 	defer c.recordsLock.Unlock()
 	if domain, ok := c.ip2Domain[ip.String()]; ok {
@@ -120,7 +138,7 @@ func (c *DnsCache) GetByIP(ip net.IP) *DomainRecord {
 	return nil
 }
 
-func (c *DnsCache) Get(domain string) *DomainRecord {
+func (c *DnsTable) Get(domain string) *DomainRecord {
 	c.recordsLock.Lock()
 	defer c.recordsLock.Unlock()
 	return c.get(domain)
@@ -134,7 +152,7 @@ func forgeIPv4Answer(domain string, ip net.IP) *dns.A {
 	return rr
 }
 
-func (c *DnsCache) Set(domain string, proxy string) *DomainRecord {
+func (c *DnsTable) Set(domain string, proxy string) *DomainRecord {
 	c.recordsLock.Lock()
 	defer c.recordsLock.Unlock()
 	record := c.records[domain]
@@ -163,21 +181,21 @@ func (c *DnsCache) Set(domain string, proxy string) *DomainRecord {
 	return record
 }
 
-func (c *DnsCache) IsNonProxyDomain(domain string) bool {
+func (c *DnsTable) IsNonProxyDomain(domain string) bool {
 	c.npdLock.Lock()
 	defer c.npdLock.Unlock()
 	_, ok := c.nonProxyDomains[domain]
 	return ok
 }
 
-func (c *DnsCache) SetNonProxyDomain(domain string, ttl uint32) {
+func (c *DnsTable) SetNonProxyDomain(domain string, ttl uint32) {
 	c.npdLock.Lock()
 	defer c.npdLock.Unlock()
 	c.nonProxyDomains[domain] = time.Now().Add(time.Duration(ttl) * time.Second)
 	logger.Debugf("[dns] set non proxy domain: %s, ttl: %d", domain, ttl)
 }
 
-func (c *DnsCache) clearExpiredNonProxyDomain(now time.Time) {
+func (c *DnsTable) clearExpiredNonProxyDomain(now time.Time) {
 	c.npdLock.Lock()
 	defer c.npdLock.Unlock()
 	for domain, expired := range c.nonProxyDomains {
@@ -188,7 +206,7 @@ func (c *DnsCache) clearExpiredNonProxyDomain(now time.Time) {
 	}
 }
 
-func (c *DnsCache) clearExpiredDomain(now time.Time) {
+func (c *DnsTable) clearExpiredDomain(now time.Time) {
 	c.recordsLock.Lock()
 	defer c.recordsLock.Unlock()
 
@@ -204,7 +222,7 @@ func (c *DnsCache) clearExpiredDomain(now time.Time) {
 	}
 }
 
-func (c *DnsCache) Serve() error {
+func (c *DnsTable) Serve() error {
 	tick := time.Tick(60 * time.Second)
 	for now := range tick {
 		c.clearExpiredDomain(now)
@@ -213,8 +231,8 @@ func (c *DnsCache) Serve() error {
 	return nil
 }
 
-func NewDnsCache(subnet *net.IPNet) *DnsCache {
-	c := new(DnsCache)
+func NewDnsTable(subnet *net.IPNet) *DnsTable {
+	c := new(DnsTable)
 	c.ipSpace = NewIPv4Space(subnet)
 	c.records = make(map[string]*DomainRecord)
 	c.ip2Domain = make(map[string]string)

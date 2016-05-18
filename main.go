@@ -47,5 +47,5 @@ func main() {
 		logger.Error(err.Error())
 		os.Exit(1)
 	}
-	logger.Errorf("quit: %v", one.Serve())
+	logger.Errorf("one quit: %v", one.Serve())
 }

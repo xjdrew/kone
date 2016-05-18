@@ -20,12 +20,14 @@ type One struct {
 	// tun virtual network
 	subnet *net.IPNet
 
-	rule         *Rule
-	dnsCache     *DnsCache
-	dns          *Dns
-	proxies      *Proxies
-	tcpForwarder *TCPForwarder
-	tun          *TunDriver
+	rule     *Rule
+	dnsTable *DnsTable
+	proxies  *Proxies
+
+	dns      *Dns
+	tcpRelay *TCPRelay
+	udpRelay *UDPRelay
+	tun      *TunDriver
 }
 
 func (one *One) Serve() error {
@@ -37,9 +39,10 @@ func (one *One) Serve() error {
 		}
 	}
 
-	go runAndWait(one.dnsCache.Serve)
+	go runAndWait(one.dnsTable.Serve)
 	go runAndWait(one.dns.Serve)
-	go runAndWait(one.tcpForwarder.Serve)
+	go runAndWait(one.tcpRelay.Serve)
+	go runAndWait(one.udpRelay.Serve)
 	go runAndWait(one.tun.Serve)
 	return <-done
 }
@@ -61,7 +64,7 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 	one.rule = NewRule(cfg.Rule, cfg.Pattern)
 
 	// new dns cache
-	one.dnsCache = NewDnsCache(subnet)
+	one.dnsTable = NewDnsTable(subnet)
 
 	var err error
 
@@ -74,14 +77,13 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 		return nil, err
 	}
 
-	if one.tcpForwarder, err = NewTCPForwarder(one, cfg.TCP); err != nil {
-		return nil, err
-	}
+	one.tcpRelay = NewTCPRelay(one, cfg.TCP)
+	one.udpRelay = NewUDPRelay(one, cfg.UDP)
 
 	filters := map[tcpip.IPProtocol]PacketFilter{
 		tcpip.ICMP: PacketFilterFunc(icmpFilterFunc),
-		tcpip.TCP:  one.tcpForwarder,
-		//tcpip.UDP:  &udpFilter{},
+		tcpip.TCP:  one.tcpRelay,
+		tcpip.UDP:  one.udpRelay,
 	}
 
 	if one.tun, err = NewTunDriver(name, ip, subnet, filters); err != nil {

@@ -6,18 +6,22 @@
 package k1
 
 import (
+	"io"
+
 	"github.com/xjdrew/kone/tcpip"
 )
 
-type udpFilter struct {
+type PacketFilter interface {
+	Filter(wr io.Writer, p tcpip.IPv4Packet)
 }
 
-func (uf *udpFilter) Filter(p *tcpip.IPv4Packet) bool {
-	return false
+type PacketFilterFunc func(wr io.Writer, p tcpip.IPv4Packet)
+
+func (f PacketFilterFunc) Filter(wr io.Writer, p tcpip.IPv4Packet) {
+	f(wr, p)
 }
 
-func icmpFilterFunc(p *tcpip.IPv4Packet) bool {
-	ipPacket := *p
+func icmpFilterFunc(wr io.Writer, ipPacket tcpip.IPv4Packet) {
 	icmpPacket := tcpip.ICMPPacket(ipPacket.Payload())
 	if icmpPacket.Type() == tcpip.ICMPRequest && icmpPacket.Code() == 0 {
 		logger.Debugf("icmp echo request: %s -> %s", ipPacket.SourceIP(), ipPacket.DestinationIP())
@@ -30,10 +34,8 @@ func icmpFilterFunc(p *tcpip.IPv4Packet) bool {
 
 		icmpPacket.ResetChecksum()
 		ipPacket.ResetChecksum()
-		p = &ipPacket
-		return true
+		wr.Write(ipPacket)
 	} else {
 		logger.Debugf("icmp: %s -> %s", ipPacket.SourceIP(), ipPacket.DestinationIP())
-		return false
 	}
 }

@@ -13,16 +13,6 @@ import (
 	"github.com/xjdrew/kone/tcpip"
 )
 
-type PacketFilter interface {
-	Filter(p *tcpip.IPv4Packet) bool
-}
-
-type PacketFilterFunc func(p *tcpip.IPv4Packet) bool
-
-func (f PacketFilterFunc) Filter(p *tcpip.IPv4Packet) bool {
-	return f(p)
-}
-
 type TunDriver struct {
 	ifce    *water.Interface
 	filters map[tcpip.IPProtocol]PacketFilter
@@ -49,9 +39,7 @@ func (tun *TunDriver) Serve() error {
 				continue
 			}
 
-			if filter.Filter(&ipPacket) {
-				ifce.Write(ipPacket)
-			}
+			filter.Filter(ifce, ipPacket)
 		}
 	}
 }

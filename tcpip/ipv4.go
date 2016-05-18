@@ -45,7 +45,10 @@ func (p IPv4Packet) SourceIP() net.IP {
 }
 
 func (p IPv4Packet) SetSourceIP(ip net.IP) {
-	copy(p[12:16], ip)
+	ip = ip.To4()
+	if ip != nil {
+		copy(p[12:16], ip)
+	}
 }
 
 func (p IPv4Packet) DestinationIP() net.IP {
@@ -53,7 +56,10 @@ func (p IPv4Packet) DestinationIP() net.IP {
 }
 
 func (p IPv4Packet) SetDestinationIP(ip net.IP) {
-	copy(p[16:20], ip)
+	ip = ip.To4()
+	if ip != nil {
+		copy(p[16:20], ip)
+	}
 }
 
 func (p IPv4Packet) Checksum() uint16 {

@@ -204,9 +204,9 @@ func ParseConfig(filename string) (*KoneConfig, error) {
 	cfg.TCP.NatPortStart = 10000
 	cfg.TCP.NatPortEnd = 60000
 
-	cfg.TCP.ListenPort = 82
-	cfg.TCP.NatPortStart = 10000
-	cfg.TCP.NatPortEnd = 60000
+	cfg.UDP.ListenPort = 82
+	cfg.UDP.NatPortStart = 10000
+	cfg.UDP.NatPortEnd = 60000
 
 	cfg.Dns.DnsPort = dnsDefaultPort
 	cfg.Dns.DnsTtl = dnsDefaultTtl
