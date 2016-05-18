@@ -138,6 +138,10 @@ func (c *DnsTable) GetByIP(ip net.IP) *DomainRecord {
 	return nil
 }
 
+func (c *DnsTable) Contains(ip net.IP) bool {
+	return c.ipSpace.Contains(ip)
+}
+
 func (c *DnsTable) Get(domain string) *DomainRecord {
 	c.recordsLock.Lock()
 	defer c.recordsLock.Unlock()

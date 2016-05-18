@@ -28,16 +28,25 @@ func forward(src *net.TCPConn, dst *net.TCPConn) {
 	src.CloseRead()
 }
 
-func (r *TCPRelay) realRemoteHost(port uint16) (addr string, proxy string) {
-	session := r.nat.getSession(port)
+func (r *TCPRelay) realRemoteHost(conn *net.TCPConn) (addr string, proxy string) {
+	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
+	remotePort := uint16(remoteAddr.Port)
+
+	session := r.nat.getSession(remotePort)
 	if session == nil {
+		logger.Errorf("[tcp] %s > %s no session", conn.LocalAddr(), remoteAddr)
 		return
 	}
 
+	one := r.one
+
 	var host string
-	if record := r.one.dnsTable.GetByIP(session.dstIP); record != nil {
+	if record := one.dnsTable.GetByIP(session.dstIP); record != nil {
 		host = record.domain
 		proxy = record.proxy
+	} else if one.dnsTable.Contains(session.dstIP) {
+		logger.Debugf("[tcp] %s:%d > %s:%d dns expired", session.srcIP, session.srcPort, session.dstIP, session.dstPort)
+		return
 	} else {
 		host = session.dstIP.String()
 	}
@@ -47,13 +56,9 @@ func (r *TCPRelay) realRemoteHost(port uint16) (addr string, proxy string) {
 }
 
 func (r *TCPRelay) handleConn(conn *net.TCPConn) {
-	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
-	remotePort := uint16(remoteAddr.Port)
-
-	addr, proxy := r.realRemoteHost(remotePort)
+	addr, proxy := r.realRemoteHost(conn)
 	if addr == "" {
 		conn.Close()
-		logger.Errorf("[tcp] no session: %s", remoteAddr)
 		return
 	}
 
@@ -61,7 +66,7 @@ func (r *TCPRelay) handleConn(conn *net.TCPConn) {
 	tunnel, err := proxies.Dial(proxy, addr)
 	if err != nil {
 		conn.Close()
-		logger.Errorf("[tcp] proxy %q failed: %s", proxy, err)
+		logger.Errorf("[tcp] dial %s by proxy %q failed: %s", addr, proxy, err)
 		return
 	}
 
@@ -100,7 +105,7 @@ func (r *TCPRelay) Filter(wr io.Writer, ipPacket tcpip.IPv4Packet) {
 		// from relay
 		session := r.nat.getSession(dstPort)
 		if session == nil {
-			logger.Errorf("[tcp] %s:%d > %s:%d: no session", srcIP, srcPort, dstIP, dstPort)
+			logger.Debugf("[tcp] %s:%d > %s:%d: no session", srcIP, srcPort, dstIP, dstPort)
 			return
 		}
 

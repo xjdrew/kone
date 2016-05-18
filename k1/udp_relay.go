@@ -153,14 +153,14 @@ func (r *UDPRelay) Filter(wr io.Writer, ipPacket tcpip.IPv4Packet) {
 		// from remote
 		session := r.nat.getSession(dstPort)
 		if session == nil {
-			logger.Errorf("[udp] %s:%d > %s:%d: no session", srcIP, srcPort, dstIP, dstPort)
+			logger.Debugf("[udp] %s:%d > %s:%d: no session", srcIP, srcPort, dstIP, dstPort)
 			return
 		}
 		ipPacket.SetSourceIP(session.dstIP)
 		ipPacket.SetDestinationIP(session.srcIP)
 		udpPacket.SetSourcePort(session.dstPort)
 		udpPacket.SetDestinationPort(session.srcPort)
-	} else if one.subnet.Contains(dstIP) {
+	} else if one.dnsTable.Contains(dstIP) {
 		// redirect to relay
 		isNew, port := r.nat.allocSession(srcIP, dstIP, srcPort, dstPort)
 
