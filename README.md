@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/xjdrew/kone.svg?branch=master)](https://travis-ci.org/xjdrew/kone)
+
 # KONE
 The project aims to improve the experience of accessing internet in home/enterprise network.
 
