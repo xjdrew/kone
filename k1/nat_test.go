@@ -23,7 +23,7 @@ func TestNatAlloc(t *testing.T) {
 
 	// map all ports
 	for i := from; i < to; i++ {
-		port := nat.allocSession(srcIP, dstIP, i, i)
+		_, port := nat.allocSession(srcIP, dstIP, i, i)
 		if i != port {
 			t.Error("alloc session failed")
 			return
@@ -41,7 +41,7 @@ func TestNatAlloc(t *testing.T) {
 	// test get session
 	srcPort := uint16(rand.Int())
 	dstPort := uint16(rand.Int())
-	port := nat.allocSession(srcIP, dstIP, srcPort, dstPort)
+	_, port := nat.allocSession(srcIP, dstIP, srcPort, dstPort)
 	session := nat.getSession(port)
 	if session == nil {
 		t.Error("get session failed")
@@ -65,7 +65,7 @@ func BenchmarkNat(b *testing.B) {
 
 	// map all ports
 	for i := from; i < to; i++ {
-		port := nat.allocSession(srcIP, dstIP, i, i)
+		_, port := nat.allocSession(srcIP, dstIP, i, i)
 		if i != port {
 			b.Error("alloc session failed")
 		}

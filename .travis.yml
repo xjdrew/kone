@@ -1,0 +1,8 @@
+language: go
+
+go:
+    - 1.6
+    - tip
+
+script:
+    - go test -race -v -bench=. github.com/xjdrew/kone/k1
