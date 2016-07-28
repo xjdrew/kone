@@ -6,7 +6,6 @@
 package k1
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"net"
@@ -101,7 +100,7 @@ func (r *TCPRelay) Filter(wr io.Writer, ipPacket tcpip.IPv4Packet) {
 	srcPort := tcpPacket.SourcePort()
 	dstPort := tcpPacket.DestinationPort()
 
-	if bytes.Equal(srcIP, r.relayIP) && srcPort == r.relayPort {
+	if r.relayIP.Equal(srcIP) && srcPort == r.relayPort {
 		// from relay
 		session := r.nat.getSession(dstPort)
 		if session == nil {

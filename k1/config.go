@@ -15,7 +15,6 @@ import (
 
 type GeneralConfig struct {
 	Tun     string // tun name
-	IP      string // tun ip
 	Network string // dns network
 }
 
@@ -71,19 +70,13 @@ func (cfg *KoneConfig) isValidProxy(proxy string) bool {
 func (cfg *KoneConfig) checkGeneral() error {
 	general := cfg.General
 
-	// check ip format
-	ip := net.ParseIP(general.IP).To4()
-	if ip == nil {
-		return fmt.Errorf("[check general] invalid ipv4 address: %s", general.IP)
-	}
-
-	_, subnet, err := net.ParseCIDR(general.Network)
+	ip, _, err := net.ParseCIDR(general.Network)
 	if err != nil {
 		return fmt.Errorf("[check general] invalid network: %s", general.Network)
 	}
 
-	if subnet.Contains(ip) {
-		return fmt.Errorf("[check general] subnet(%s) should not contain address(%s)", subnet, ip)
+	if ip = ip.To4(); ip == nil || ip[3] == 0 {
+		return fmt.Errorf("[check general] invalid ip: %s", ip)
 	}
 
 	return nil
@@ -197,8 +190,7 @@ func ParseConfig(filename string) (*KoneConfig, error) {
 	cfg := new(KoneConfig)
 
 	// set default value
-	cfg.General.IP = "10.16.0.1"
-	cfg.General.Network = "10.17.0.0/16"
+	cfg.General.Network = "10.192.0.1/16"
 
 	cfg.TCP.ListenPort = 82
 	cfg.TCP.NatPortStart = 10000

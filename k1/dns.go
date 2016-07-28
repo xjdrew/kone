@@ -47,11 +47,9 @@ func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
 			return
 		}
 
-		if r != nil && r.Rcode != dns.RcodeSuccess {
-			if r.Rcode == dns.RcodeServerFailure {
-				logger.Errorf("[dns] resolve %s on %s failed", qname, ns)
-				return
-			}
+		if r.Rcode == dns.RcodeServerFailure {
+			logger.Errorf("[dns] resolve %s on %s failed: code %d", qname, ns, r.Rcode)
+			return
 		}
 
 		logger.Debugf("[dns] resolve %s on %s, code: %d, rtt: %d", qname, ns, r.Rcode, rtt)
@@ -62,7 +60,7 @@ func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
 		}
 	}
 
-	ticker := time.NewTicker(200 * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
 	for _, ns := range d.nameservers {
@@ -131,17 +129,18 @@ func (d *Dns) doIPv4Query(r *dns.Msg) (*dns.Msg, error) {
 
 	if !matched {
 		// try match by cname and ip
+	OuterLoop:
 		for _, item := range msg.Answer {
 			switch answer := item.(type) {
 			case *dns.A:
 				// test ip
 				_, proxy = one.rule.Proxy(answer.A)
-				break
+				break OuterLoop
 			case *dns.CNAME:
 				// test cname
 				matched, proxy = one.rule.Proxy(answer.Target)
 				if matched && proxy != "" {
-					break
+					break OuterLoop
 				}
 			default:
 				logger.Noticef("[dns] unexpected response %s -> %v", domain, item)

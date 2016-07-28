@@ -17,6 +17,7 @@ var logger = GetLogger()
 type One struct {
 	// tun ip
 	ip net.IP
+
 	// tun virtual network
 	subnet *net.IPNet
 
@@ -50,13 +51,12 @@ func (one *One) Serve() error {
 func FromConfig(cfg *KoneConfig) (*One, error) {
 	general := cfg.General
 	name := general.Tun
-	ip := net.ParseIP(general.IP).To4()
-	_, subnet, _ := net.ParseCIDR(general.Network)
+	ip, subnet, _ := net.ParseCIDR(general.Network)
 
 	logger.Infof("[tun] ip:%s, subnet: %s", ip, subnet)
 
 	one := &One{
-		ip:     ip,
+		ip:     ip.To4(),
 		subnet: subnet,
 	}
 
@@ -64,7 +64,7 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 	one.rule = NewRule(cfg.Rule, cfg.Pattern)
 
 	// new dns cache
-	one.dnsTable = NewDnsTable(subnet)
+	one.dnsTable = NewDnsTable(ip, subnet)
 
 	var err error
 

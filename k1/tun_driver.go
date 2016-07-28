@@ -49,19 +49,8 @@ func (tun *TunDriver) AddRoute(subnet *net.IPNet) error {
 }
 
 func NewTunDriver(name string, ip net.IP, subnet *net.IPNet, filters map[tcpip.IPProtocol]PacketFilter) (*TunDriver, error) {
-	ifce, err := newTun(name)
+	ifce, err := createTun(name, ip, subnet.Mask)
 	if err != nil {
-		return nil, err
-	}
-
-	err = setTunIP(ifce, ip)
-	if err != nil {
-		return nil, err
-	}
-
-	logger.Infof("[tun] add route:%s", subnet)
-
-	if err = addRoute(ifce.Name(), subnet); err != nil {
 		return nil, err
 	}
 	return &TunDriver{ifce: ifce, filters: filters}, nil

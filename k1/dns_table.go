@@ -16,11 +16,12 @@ import (
 )
 
 type IPv4Space struct {
-	subnet *net.IPNet
-	free   []net.IP
+	localIP net.IP
+	subnet  *net.IPNet
+	free    []net.IP
 
-	max  uint32
-	next uint32
+	max uint32
+	cur uint32
 }
 
 func (space *IPv4Space) Contains(ip net.IP) bool {
@@ -39,22 +40,30 @@ func (space *IPv4Space) Next() net.IP {
 		return ip
 	}
 
-	if space.next >= space.max {
-		// ip space has no room
-		return nil
+	for {
+		if space.cur+1 >= space.max {
+			// ip space has no room
+			return nil
+		}
+		space.cur++
+		ip := tcpip.ConvertUint32ToIPv4(space.cur)
+
+		// skip zero address and local address
+		if space.cur&255 == 0 || space.localIP.Equal(ip) {
+			continue
+		}
+		return ip
 	}
-	ip := tcpip.ConvertUint32ToIPv4(space.next)
-	space.next++
-	return ip
 }
 
-func NewIPv4Space(subnet *net.IPNet) *IPv4Space {
+func NewIPv4Space(ip net.IP, subnet *net.IPNet) *IPv4Space {
 	space := new(IPv4Space)
+	space.localIP = ip
 	space.subnet = subnet
 
 	min := tcpip.ConvertIPv4ToUint32(subnet.IP)
 	space.max = min + ^tcpip.ConvertIPv4ToUint32(net.IP(subnet.Mask))
-	space.next = min + 1
+	space.cur = min
 	return space
 }
 
@@ -106,19 +115,12 @@ type DnsTable struct {
 	ipSpace *IPv4Space
 
 	// hijacked domain records
-	records map[string]*DomainRecord // domain -> record
+	records     map[string]*DomainRecord // domain -> record
+	ip2Domain   map[string]string        // ip -> domain: map hijacked ip address to domain
+	recordsLock sync.Mutex               // protect records and ip2Domain
 
-	// map hijacked ip address to domain
-	ip2Domain map[string]string // ip -> domain
-
-	// protect records
-	recordsLock sync.Mutex
-
-	// non proxy domain
-	nonProxyDomains map[string]time.Time
-
-	// protect non proxy domain
-	npdLock sync.Mutex
+	nonProxyDomains map[string]time.Time // non proxy domain
+	npdLock         sync.Mutex           // protect non proxy domain
 }
 
 func (c *DnsTable) get(domain string) *DomainRecord {
@@ -235,9 +237,9 @@ func (c *DnsTable) Serve() error {
 	return nil
 }
 
-func NewDnsTable(subnet *net.IPNet) *DnsTable {
+func NewDnsTable(ip net.IP, subnet *net.IPNet) *DnsTable {
 	c := new(DnsTable)
-	c.ipSpace = NewIPv4Space(subnet)
+	c.ipSpace = NewIPv4Space(ip, subnet)
 	c.records = make(map[string]*DomainRecord)
 	c.ip2Domain = make(map[string]string)
 	c.nonProxyDomains = make(map[string]time.Time)
