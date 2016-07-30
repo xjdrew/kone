@@ -40,7 +40,7 @@ echo 1 > /proc/sys/net/ipv4/ip_forward
 
 * 修改kone的配置文件
 
-在代码目录```misc/example/example.ini```，提供了一份默认配置文件。
+在代码目录```[misc/example/example.ini](https://github.com/xjdrew/kone/blob/master/misc/example/example.ini)```，提供了一份默认配置文件。
 为了简化问题，只需要把默认配置文件拷贝到合适的目录，命名为```my.ini```，然后把```[proxy "A"]```配置项下的url改成你拥有的代理，目前支持http, socks5代理。
 
 ```
@@ -48,6 +48,8 @@ echo 1 > /proc/sys/net/ipv4/ip_forward
 url = http://example.com:3228 # 修改成你的代理，支持http, socks5
 default = yes
 ```
+
+其他配置选项的含义，参考配置文件里面的说明。
 
 * 启动kone
 
