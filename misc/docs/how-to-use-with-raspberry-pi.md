@@ -86,5 +86,5 @@ sudo ./kone -debug my.ini
 
 ## 还有问题?
 
-提issue
+join [telegram group](https://telegram.me/joinchat/B4cvLQl6H8RffE-6oATIVA)
 
