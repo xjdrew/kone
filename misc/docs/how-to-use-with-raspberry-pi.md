@@ -36,10 +36,18 @@ kone是一个普通的go程序，简单说就是```go get -t github.com/xjdrew/k
 echo 1 > /proc/sys/net/ipv4/ip_forward
 ```
 
+## 配置并启动kone
+
 * 修改kone的配置文件
 
 在代码目录```misc/example/example.ini```，提供了一份默认配置文件。
-为了简化问题，只需要把默认配置文件拷贝到合适的目录，命名为```my.ini```，然后```[proxy "A"]```配置项下的url改成你拥有的代理，目前支持http, socks5代理。
+为了简化问题，只需要把默认配置文件拷贝到合适的目录，命名为```my.ini```，然后把```[proxy "A"]```配置项下的url改成你拥有的代理，目前支持http, socks5代理。
+
+```
+[proxy "A"]
+url = http://example.com:3228 # 修改成你的代理，支持http, socks5
+default = yes
+```
 
 * 启动kone
 
@@ -47,6 +55,7 @@ echo 1 > /proc/sys/net/ipv4/ip_forward
 sudo ./kone my.ini &
 ```
 
+## 配置路由器
 * 配置静态路由
 
 在路由器上添加一条静态路由：
@@ -75,5 +84,5 @@ sudo ./kone -debug my.ini
 
 ## 还有问题?
 
-email: xj dot drew at gmail dot com
+提issue
 
