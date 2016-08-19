@@ -8,8 +8,11 @@ The name "KONE" comes from [k1](https://en.wikipedia.org/wiki/Larcum_Kendall#K1)
 By now, it supports:
 * linux
 
-# Use
+## Use
 Try finding how to use it by reading [example.ini](https://github.com/xjdrew/kone/blob/master/example.ini)!
 
-# License
+## Documents
+* [how to use with Raspberry Pi (在树莓派上使用kone)](https://github.com/xjdrew/kone/blob/master/misc/docs/how-to-use-with-raspberry-pi.md)
+
+## License
 The MIT License (MIT) Copyright (c) 2016 xjdrew
