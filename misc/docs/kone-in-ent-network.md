@@ -24,7 +24,7 @@ nameserver = 192.168.1.1
 url = http://myproxy:2080
 default = yes
 ```
-  * 查看kone是否启动成功，缺省会创建虚拟网口tun0，IP地址为10.192.0.1，同时10.192.0.1也是一个新的DNS服务器
+  * 查看kone是否启动成功，缺省会创建虚拟网口tun0，IP地址为10.19.0.1，同时10.19.0.1也是一个新的DNS服务器
 ```
 >ifconfig tun0
 tun0      Link encap:UNSPEC  HWaddr 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00  
@@ -32,7 +32,7 @@ tun0      Link encap:UNSPEC  HWaddr 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00
           UP POINTOPOINT RUNNING NOARP MULTICAST  MTU:1500  Metric:1
 ```
 
-  * 在PC/手机上，把DNS服务器改成10.192.0.1，dig www.google.com.hk 测试是否返回一个10.192.x.x的地址池地址，如果返回的地址正常说明kone工作正常
+  * 在PC/手机上，把DNS服务器改成10.19.0.1，dig www.google.com.hk 测试是否返回一个10.19.x.x的地址池地址，如果返回的地址正常说明kone工作正常
 ```
 >dig www.google.com.hk @10.19.0.1                   
   ;; ANSWER SECTION:                                  
