@@ -11,6 +11,32 @@
 curl -x http://myproxy:2080 https://www.google.com.hk
 ```
 2. 在网关上启动kone，配置文件参考example.ini
+```
+[general]
+network = 10.19.0.1/16
+...
+[dns]
+# DEFAULT VALUE: 53
+# dns-port = 53
+nameserver = 192.168.1.1
+...
+[proxy "A"]
+url = http://myproxy:2080
+default = yes
+```
 3. 查看kone是否启动成功，缺省会创建虚拟网口tun0，IP地址为10.192.0.1，同时10.192.0.1也是一个新的DNS服务器
+```
+>ifconfig tun0
+tun0      Link encap:UNSPEC  HWaddr 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00  
+          inet addr:10.16.0.1  P-t-P:10.16.0.1  Mask:255.255.0.0
+          UP POINTOPOINT RUNNING NOARP MULTICAST  MTU:1500  Metric:1
+```
+
 4. 在PC/手机上，把DNS服务器改成10.192.0.1，dig www.google.com.hk测试是否返回一个10.192.x.x的地址池地址，如果返回的地址正常说明kone工作正常
-5. 一个200人的企业网络，httpproxy/sock5proxy至少需要3M带宽可以保证google/facebook/twitter等的访问，如果需要流畅的看youtube 720P，则带宽起码需要10M
+```
+>dig www.google.com.hk @10.19.0.1                   
+  ;; ANSWER SECTION:                                  
+  www.google.com.hk.      600     IN      A       10.19.0.55
+```    
+5. 改动企业网内部的DHCPD服务器，把缺省DNS服务器改为10.19.0.1，则企业内部的设备会自动使用kone实现透明翻墙
+6. 一个200人的企业网络，httpproxy/sock5proxy至少需要3M带宽可以保证google/facebook/twitter等的访问，如果需要流畅的看youtube 720P，则带宽起码需要10M
