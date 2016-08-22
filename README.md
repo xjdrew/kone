@@ -8,6 +8,8 @@ The name "KONE" comes from [k1](https://en.wikipedia.org/wiki/Larcum_Kendall#K1)
 By now, it supports:
 * linux
 
+<img src="./misc/images/kone.png" border=0>
+
 ## Use
 Try finding how to use it by reading [example.ini](./example.ini)!
 
