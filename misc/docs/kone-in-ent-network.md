@@ -1,4 +1,6 @@
 # 在一个200人的企业网中使用kone
+<img src="../images/kone.png" border=0>
+
 ## 准备工作
   * 企业网关服务器(4G内存，i3以上的CPU)，假设网关的IP是192.168.1.1，企业内部所有设备的default gateway都配置成192.168.1.1。当然，这台网关可能不是一台linux，而是一台商业网关服务器，只要它支持路由配置，都属于一台称职的网关服务器，本案例假设这台网关是一台标准的linux服务器。
   * [PC/手机] ----> [网关192.168.1.1] -----> [Internet]
@@ -24,7 +26,7 @@ nameserver = 192.168.1.1
 url = http://myproxy:2080
 default = yes
 ```
-  * 查看kone是否启动成功，缺省会创建虚拟网口tun0，IP地址为10.192.0.1，同时10.192.0.1也是一个新的DNS服务器
+  * 查看kone是否启动成功，缺省会创建虚拟网口tun0，IP地址为10.19.0.1，同时10.19.0.1也是一个新的DNS服务器
 ```
 >ifconfig tun0
 tun0      Link encap:UNSPEC  HWaddr 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00-00  
@@ -32,7 +34,7 @@ tun0      Link encap:UNSPEC  HWaddr 00-00-00-00-00-00-00-00-00-00-00-00-00-00-00
           UP POINTOPOINT RUNNING NOARP MULTICAST  MTU:1500  Metric:1
 ```
 
-  * 在PC/手机上，把DNS服务器改成10.192.0.1，dig www.google.com.hk 测试是否返回一个10.192.x.x的地址池地址，如果返回的地址正常说明kone工作正常
+  * 在PC/手机上，把DNS服务器改成10.19.0.1，dig www.google.com.hk 测试是否返回一个10.19.x.x的地址池地址，如果返回的地址正常说明kone工作正常
 ```
 >dig www.google.com.hk @10.19.0.1                   
   ;; ANSWER SECTION:                                  
