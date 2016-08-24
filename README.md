@@ -14,6 +14,7 @@ Try finding how to use it by reading [example.ini](./example.ini)!
 ## Documents
 * [how to use with Raspberry Pi (在树莓派上使用kone)](./misc/docs/how-to-use-with-raspberry-pi.md)
 * [how to use kone in an ENT network (企业网中如何使用kone)](./misc/docs/kone-in-ent-network.md)
+* [how to make gotunnel & kone work together(gotunnel和kone的珠联璧合)](./misc/docs/gotunnel-kone-work-together.md)
 
 ## License
 The MIT License (MIT) Copyright (c) 2016 xjdrew
