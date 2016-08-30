@@ -90,5 +90,7 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 		return nil, err
 	}
 
+	one.tun.AddRoutes(cfg.Route.V)
+
 	return one, nil
 }

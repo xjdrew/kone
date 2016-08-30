@@ -33,6 +33,10 @@ type DnsConfig struct {
 	Nameserver      []string // backend dns
 }
 
+type RouteConfig struct {
+	V []string
+}
+
 type ProxyConfig struct {
 	Url     string
 	Default bool
@@ -54,6 +58,7 @@ type KoneConfig struct {
 	TCP     NatConfig
 	UDP     NatConfig
 	Dns     DnsConfig
+	Route   RouteConfig
 	Proxy   map[string]*ProxyConfig
 	Pattern map[string]*PatternConfig
 	Rule    RuleConfig
@@ -102,6 +107,15 @@ func (cfg *KoneConfig) checkNat() error {
 
 	if err := check(cfg.UDP); err != nil {
 		fmt.Errorf("[check nat] udp: %v", err)
+	}
+	return nil
+}
+
+func (cfg *KoneConfig) checkRoute() error {
+	for _, val := range cfg.Route.V {
+		if _, _, err := net.ParseCIDR(val); err != nil {
+			return fmt.Errorf("[check route] invalid value: %s", val)
+		}
 	}
 	return nil
 }
@@ -173,6 +187,10 @@ func (cfg *KoneConfig) check() (err error) {
 	}
 
 	if err = cfg.checkNat(); err != nil {
+		return
+	}
+
+	if err = cfg.checkRoute(); err != nil {
 		return
 	}
 
