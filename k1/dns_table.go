@@ -11,61 +11,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
-
-	"github.com/xjdrew/kone/tcpip"
 )
-
-type IPv4Space struct {
-	localIP net.IP
-	subnet  *net.IPNet
-	free    []net.IP
-
-	max uint32
-	cur uint32
-}
-
-func (space *IPv4Space) Contains(ip net.IP) bool {
-	return space.subnet.Contains(ip)
-}
-
-func (space *IPv4Space) Release(ip net.IP) {
-	space.free = append(space.free, ip)
-}
-
-func (space *IPv4Space) Next() net.IP {
-	freeLen := len(space.free)
-	if freeLen > 0 {
-		ip := space.free[freeLen-1]
-		space.free = space.free[:freeLen-1]
-		return ip
-	}
-
-	for {
-		if space.cur+1 >= space.max {
-			// ip space has no room
-			return nil
-		}
-		space.cur++
-		ip := tcpip.ConvertUint32ToIPv4(space.cur)
-
-		// skip zero address and local address
-		if space.cur&255 == 0 || space.localIP.Equal(ip) {
-			continue
-		}
-		return ip
-	}
-}
-
-func NewIPv4Space(ip net.IP, subnet *net.IPNet) *IPv4Space {
-	space := new(IPv4Space)
-	space.localIP = ip
-	space.subnet = subnet
-
-	min := tcpip.ConvertIPv4ToUint32(subnet.IP)
-	space.max = min + ^tcpip.ConvertIPv4ToUint32(net.IP(subnet.Mask))
-	space.cur = min
-	return space
-}
 
 // hijacked domain
 type DomainRecord struct {
@@ -111,8 +57,8 @@ func (record *DomainRecord) Touch() {
 }
 
 type DnsTable struct {
-	// dns ip space
-	ipSpace *IPv4Space
+	// dns ip pool
+	ipPool *DnsIPPool
 
 	// hijacked domain records
 	records     map[string]*DomainRecord // domain -> record
@@ -141,7 +87,7 @@ func (c *DnsTable) GetByIP(ip net.IP) *DomainRecord {
 }
 
 func (c *DnsTable) Contains(ip net.IP) bool {
-	return c.ipSpace.Contains(ip)
+	return c.ipPool.Contains(ip)
 }
 
 func (c *DnsTable) Get(domain string) *DomainRecord {
@@ -167,7 +113,7 @@ func (c *DnsTable) Set(domain string, proxy string) *DomainRecord {
 	}
 
 	// alloc a ip
-	ip := c.ipSpace.Next()
+	ip := c.ipPool.Alloc(domain)
 	if ip == nil {
 		logger.Errorf("[dns] ip space is used up, domain:%s", domain)
 		return nil
@@ -223,7 +169,7 @@ func (c *DnsTable) clearExpiredDomain(now time.Time) {
 		}
 		delete(c.records, domain)
 		delete(c.ip2Domain, record.ip.String())
-		c.ipSpace.Release(record.ip)
+		c.ipPool.Release(record.ip)
 		logger.Debugf("[dns] release %s -> %s, hit: %d", domain, record.ip.String(), record.hit)
 	}
 }
@@ -239,7 +185,7 @@ func (c *DnsTable) Serve() error {
 
 func NewDnsTable(ip net.IP, subnet *net.IPNet) *DnsTable {
 	c := new(DnsTable)
-	c.ipSpace = NewIPv4Space(ip, subnet)
+	c.ipPool = NewDnsIPPool(ip, subnet)
 	c.records = make(map[string]*DomainRecord)
 	c.ip2Domain = make(map[string]string)
 	c.nonProxyDomains = make(map[string]time.Time)
