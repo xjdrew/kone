@@ -53,6 +53,10 @@ type RuleConfig struct {
 	Final   string
 }
 
+type ManagerConfig struct {
+	Listen string
+}
+
 type KoneConfig struct {
 	General GeneralConfig
 	TCP     NatConfig
@@ -62,6 +66,7 @@ type KoneConfig struct {
 	Proxy   map[string]*ProxyConfig
 	Pattern map[string]*PatternConfig
 	Rule    RuleConfig
+	Manager ManagerConfig
 }
 
 func (cfg *KoneConfig) isValidProxy(proxy string) bool {

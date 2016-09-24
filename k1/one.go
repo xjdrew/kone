@@ -29,6 +29,7 @@ type One struct {
 	tcpRelay *TCPRelay
 	udpRelay *UDPRelay
 	tun      *TunDriver
+	manager  *Manager
 }
 
 func (one *One) Serve() error {
@@ -45,6 +46,9 @@ func (one *One) Serve() error {
 	go runAndWait(one.tcpRelay.Serve)
 	go runAndWait(one.udpRelay.Serve)
 	go runAndWait(one.tun.Serve)
+	if one.manager != nil {
+		go runAndWait(one.manager.Serve)
+	}
 	return <-done
 }
 
@@ -92,5 +96,7 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 
 	one.tun.AddRoutes(cfg.Route.V)
 
+	// new manager
+	one.manager = NewManager(cfg.Manager)
 	return one, nil
 }
