@@ -72,10 +72,10 @@ func (r *UDPRelay) grabTunnel(localConn *net.UDPConn, cliaddr *net.UDPAddr) *UDP
 			return nil
 		}
 		record := r.one.dnsTable.GetByIP(session.dstIP)
-		if record == nil || record.realIP == nil {
+		if record == nil || record.RealIP == nil {
 			return nil
 		}
-		srvaddr := &net.UDPAddr{IP: record.realIP, Port: int(session.dstPort)}
+		srvaddr := &net.UDPAddr{IP: record.RealIP, Port: int(session.dstPort)}
 		remoteConn, err := net.DialUDP("udp", nil, srvaddr)
 		if err != nil {
 			logger.Errorf("[udp] connect to %s failed: %v", srvaddr, err)

@@ -20,6 +20,10 @@ type DnsIPPool struct {
 	flags []bool
 }
 
+func (pool *DnsIPPool) Capacity() int {
+	return int(pool.space)
+}
+
 func (pool *DnsIPPool) Contains(ip net.IP) bool {
 	index := tcpip.ConvertIPv4ToUint32(ip) - pool.base
 	if index < pool.space {

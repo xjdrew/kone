@@ -20,14 +20,15 @@ type TCPRelay struct {
 	relayPort uint16
 }
 
-func forward(src *net.TCPConn, dst *net.TCPConn) {
-	io.Copy(dst, src)
+func forward(src *net.TCPConn, dst *net.TCPConn, ch chan<- int64) {
+	written, _ := io.Copy(dst, src)
 
 	dst.CloseWrite()
 	src.CloseRead()
+	ch <- written
 }
 
-func (r *TCPRelay) realRemoteHost(conn *net.TCPConn) (addr string, proxy string) {
+func (r *TCPRelay) realRemoteHost(conn *net.TCPConn, connData *ConnData) (addr string, proxy string) {
 	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
 	remotePort := uint16(remoteAddr.Port)
 
@@ -41,36 +42,50 @@ func (r *TCPRelay) realRemoteHost(conn *net.TCPConn) (addr string, proxy string)
 
 	var host string
 	if record := one.dnsTable.GetByIP(session.dstIP); record != nil {
-		host = record.domain
-		proxy = record.proxy
+		host = record.Hostname
+		proxy = record.Proxy
 	} else if one.dnsTable.Contains(session.dstIP) {
 		logger.Debugf("[tcp] %s:%d > %s:%d dns expired", session.srcIP, session.srcPort, session.dstIP, session.dstPort)
 		return
 	} else {
 		host = session.dstIP.String()
 	}
+
+	connData.Src = session.srcIP.String()
+	connData.Dst = host
+	connData.Proxy = proxy
+
 	addr = fmt.Sprintf("%s:%d", host, session.dstPort)
 	logger.Debugf("[tcp] %s:%d > %s proxy %q", session.srcIP, session.srcPort, addr, proxy)
 	return
 }
 
 func (r *TCPRelay) handleConn(conn *net.TCPConn) {
-	addr, proxy := r.realRemoteHost(conn)
-	if addr == "" {
+	var connData ConnData
+	remoteAddr, proxy := r.realRemoteHost(conn, &connData)
+	if remoteAddr == "" {
 		conn.Close()
 		return
 	}
 
 	proxies := r.one.proxies
-	tunnel, err := proxies.Dial(proxy, addr)
+	tunnel, err := proxies.Dial(proxy, remoteAddr)
 	if err != nil {
 		conn.Close()
-		logger.Errorf("[tcp] dial %s by proxy %q failed: %s", addr, proxy, err)
+		logger.Errorf("[tcp] dial %s by proxy %q failed: %s", remoteAddr, proxy, err)
 		return
 	}
 
-	go forward(tunnel.(*net.TCPConn), conn)
-	go forward(conn, tunnel.(*net.TCPConn))
+	uploadChan := make(chan int64)
+	downloadChan := make(chan int64)
+	go forward(conn, tunnel.(*net.TCPConn), uploadChan)
+	go forward(tunnel.(*net.TCPConn), conn, downloadChan)
+	connData.Upload = <-uploadChan
+	connData.Download = <-downloadChan
+
+	if r.one.manager != nil {
+		r.one.manager.dataCh <- connData
+	}
 }
 
 func (r *TCPRelay) Serve() error {

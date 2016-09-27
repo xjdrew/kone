@@ -15,20 +15,19 @@ import (
 
 // hijacked domain
 type DomainRecord struct {
-	domain string // domain name
-	proxy  string // proxy
+	Hostname string // hostname
+	Proxy    string // proxy
 
-	ip     net.IP // nat ip
-	realIP net.IP // real ip
+	IP      net.IP // nat ip
+	RealIP  net.IP // real ip
+	Hits    int
+	Expires time.Time
 
 	answer *dns.A // cache dns answer
-
-	touch time.Time
-	hit   int
 }
 
 func (record *DomainRecord) SetRealIP(msg *dns.Msg) {
-	if record.realIP != nil {
+	if record.RealIP != nil {
 		return
 	}
 
@@ -40,8 +39,8 @@ func (record *DomainRecord) SetRealIP(msg *dns.Msg) {
 			break
 		}
 	}
-	record.realIP = ip
-	logger.Debugf("[dns] %s real ip: %s", record.domain, ip)
+	record.RealIP = ip
+	logger.Debugf("[dns] %s real ip: %s", record.Hostname, ip)
 }
 
 func (record *DomainRecord) Answer(request *dns.Msg) *dns.Msg {
@@ -52,8 +51,8 @@ func (record *DomainRecord) Answer(request *dns.Msg) *dns.Msg {
 }
 
 func (record *DomainRecord) Touch() {
-	record.hit++
-	record.touch = time.Now()
+	record.Hits++
+	record.Expires = time.Now().Add(dnsDefaultTtl * time.Second)
 }
 
 type DnsTable struct {
@@ -120,9 +119,9 @@ func (c *DnsTable) Set(domain string, proxy string) *DomainRecord {
 	}
 
 	record = new(DomainRecord)
-	record.ip = ip
-	record.domain = domain
-	record.proxy = proxy
+	record.IP = ip
+	record.Hostname = domain
+	record.Proxy = proxy
 	record.answer = forgeIPv4Answer(domain, ip)
 
 	record.Touch()
@@ -162,15 +161,23 @@ func (c *DnsTable) clearExpiredDomain(now time.Time) {
 	c.recordsLock.Lock()
 	defer c.recordsLock.Unlock()
 
-	expired := now.Add(-2 * dnsDefaultTtl * time.Second)
+	threshold := 1000
+	if threshold > c.ipPool.Capacity()/10 {
+		threshold = c.ipPool.Capacity() / 10
+	}
+
+	if len(c.records) <= threshold {
+		return
+	}
+
 	for domain, record := range c.records {
-		if !record.touch.Before(expired) {
+		if !record.Expires.Before(now) {
 			continue
 		}
 		delete(c.records, domain)
-		delete(c.ip2Domain, record.ip.String())
-		c.ipPool.Release(record.ip)
-		logger.Debugf("[dns] release %s -> %s, hit: %d", domain, record.ip.String(), record.hit)
+		delete(c.ip2Domain, record.IP.String())
+		c.ipPool.Release(record.IP)
+		logger.Debugf("[dns] release %s -> %s, hit: %d", domain, record.IP.String(), record.Hits)
 	}
 }
 
