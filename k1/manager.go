@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -17,6 +18,15 @@ const masterTmpl = `
 <title>{{.Title}}</title>
 <meta charset='utf-8'>
 <style>
+a {
+    color: #428BCA;
+    text-decoration: none;
+}
+
+a:hover, a:focus {
+    color: #2A6496;
+    text-decoration: underline;
+}
 /**
  * Styles for TABLE that uses a thin collapsed border.
  */
@@ -28,6 +38,7 @@ table, table th, table td {
   border: 1px solid #777;
   padding-left: 4px;
   padding-right: 4px;
+  text-align: right;
 }
 
 table th {
@@ -58,25 +69,74 @@ table th.title {
 {{template "footer" .}}
 {{end}}
 
-{{define "host_data"}}
+{{define "traffic_record"}}
 {{template "header" .}}
 <h3>{{.Title}}</h3>
+<ul>
+<li>Entries: {{len .Records}}</li>
+<li>Total: {{sumInt64 .Upload .Download | formatNumberComma}}</li>
+<li>Upload: {{formatNumberComma .Upload}}</li>
+<li>Download: {{formatNumberComma .Download}}</li>
+</ul>
 <table>
 <tr>
 <th>Name</th>
+<th>Total</th>
 <th>Upload</th>
 <th>Download</th>
 <th>Last</th>
 </tr>
 {{range .Records}}
 <tr>
-<td>{{.Name}}</td>
-<td>{{.Upload}}</td>
-<td>{{.Download}}</td>
+<td>
+{{if $.HasDetail}}
+	<a href="{{.Name}}">{{.Name}}</a>
+{{else}}
+	{{.Name}}
+{{end}}
+</td>
+<td>{{sumInt64 .Upload .Download | formatNumberComma}}</td>
+<td>{{formatNumberComma .Upload}}</td>
+<td>{{formatNumberComma .Download}}</td>
 <td>{{.Touch.Format "2006-01-02 15:04:05.000"}}</td>
 </tr>
 {{end}}
 </table>
+{{template "footer" .}}
+{{end}}
+
+{{define "traffic_record_detail"}}
+{{template "header" .}}
+{{with .Record}}
+<h3>{{$.Title}}: {{.Name}}</h3>
+<ul>
+<li>Entries: {{len .Details}}</li>
+<li>Total: {{sumInt64 .Upload .Download | formatNumberComma}}</li>
+<li>Upload: {{formatNumberComma .Upload}}</li>
+<li>Download: {{formatNumberComma .Download}}</li>
+<li>Last: {{.Touch.Format "2006-01-02 15:04:05.000"}}</li>
+</ul>
+{{end}}
+{{with .Record.Details}}
+<table>
+<tr>
+<th>Name</th>
+<th>Total</th>
+<th>Upload</th>
+<th>Download</th>
+<th>Last</th>
+</tr>
+{{range .}}
+<tr>
+<td>{{.EndPoint}}</td>
+<td>{{sumInt64 .Upload .Download | formatNumberComma}}</td>
+<td>{{formatNumberComma .Upload}}</td>
+<td>{{formatNumberComma .Download}}</td>
+<td>{{.Touch.Format "2006-01-02 15:04:05.000"}}</td>
+</tr>
+{{end}}
+</table>
+{{end}}
 {{template "footer" .}}
 {{end}}
 
@@ -101,7 +161,7 @@ table th.title {
 <td>{{.IP}}</td>
 <td>{{.Proxy}}</td>
 <td>{{.Hits}}</td>
-<td>{{.Expires.Format "2006-01-02 15:04:05.000"}}{{if .Expires.Before $.Now}}[expired]{{end}}</td>
+<td>{{.Expires.Format "2006-01-02 15:04:05.000"}}{{if .Expires.Before $.Now}}<span style="color:red">[expired]</span>{{end}}</td>
 </tr>
 {{end}}
 </table>
@@ -118,12 +178,20 @@ type ConnData struct {
 	Download int64
 }
 
-// statistical data of every host
-type HostData struct {
+// statistical data of every host/website/proxy
+type TrafficRecordDetail struct {
+	EndPoint string
+	Upload   int64
+	Download int64
+	Touch    time.Time
+}
+
+type TrafficRecord struct {
 	Name     string
 	Upload   int64
 	Download int64
 	Touch    time.Time
+	Details  map[string]*TrafficRecordDetail
 }
 
 type Manager struct {
@@ -131,10 +199,10 @@ type Manager struct {
 	listen string
 	tmpl   *template.Template
 
-	dataCh       chan ConnData
-	hosts        map[string]*HostData
-	destinations map[string]*HostData
-	proxies      map[string]*HostData
+	dataCh   chan ConnData
+	hosts    map[string]*TrafficRecord
+	websites map[string]*TrafficRecord
+	proxies  map[string]*TrafficRecord
 }
 
 func handleWrapper(f func(io.Writer, *http.Request) error) func(http.ResponseWriter, *http.Request) {
@@ -153,32 +221,73 @@ func (m *Manager) indexHandle(w io.Writer, r *http.Request) error {
 	return m.tmpl.ExecuteTemplate(w, "index", map[string]interface{}{
 		"Title": "kone",
 		"URLs": []string{
-			"/host",
-			"/destination",
-			"/proxy",
-			"/dns",
+			"/host/",
+			"/website/",
+			"/proxy/",
+			"/dns/",
 		},
 	})
 }
 
 func (m *Manager) hostHandle(w io.Writer, r *http.Request) error {
-	return m.tmpl.ExecuteTemplate(w, "host_data", map[string]interface{}{
-		"Title":   "Host Data",
-		"Records": m.hosts,
-	})
+	name := strings.TrimPrefix(r.RequestURI, "/host/")
+	record, ok := m.hosts[name]
+	if ok {
+		return m.tmpl.ExecuteTemplate(w, "traffic_record_detail", map[string]interface{}{
+			"Title":  "Host Record Detail",
+			"Record": record,
+		})
+	} else {
+		var upload, download int64
+		for _, v := range m.hosts {
+			upload += v.Upload
+			download += v.Download
+		}
+		return m.tmpl.ExecuteTemplate(w, "traffic_record", map[string]interface{}{
+			"Title":     "Host Record",
+			"Upload":    upload,
+			"Download":  download,
+			"Records":   m.hosts,
+			"HasDetail": true,
+		})
+	}
 }
 
-func (m *Manager) destinationHandle(w io.Writer, r *http.Request) error {
-	return m.tmpl.ExecuteTemplate(w, "host_data", map[string]interface{}{
-		"Title":   "Destination Data",
-		"Records": m.destinations,
-	})
+func (m *Manager) websiteHandle(w io.Writer, r *http.Request) error {
+	name := strings.TrimPrefix(r.RequestURI, "/website/")
+	record, ok := m.websites[name]
+	if ok {
+		return m.tmpl.ExecuteTemplate(w, "traffic_record_detail", map[string]interface{}{
+			"Title":  "Website Record Detail",
+			"Record": record,
+		})
+	} else {
+		var upload, download int64
+		for _, v := range m.websites {
+			upload += v.Upload
+			download += v.Download
+		}
+		return m.tmpl.ExecuteTemplate(w, "traffic_record", map[string]interface{}{
+			"Title":     "Website Record",
+			"Upload":    upload,
+			"Download":  download,
+			"Records":   m.websites,
+			"HasDetail": true,
+		})
+	}
 }
 
 func (m *Manager) proxyHandle(w io.Writer, r *http.Request) error {
-	return m.tmpl.ExecuteTemplate(w, "host_data", map[string]interface{}{
-		"Title":   "Proxy Data",
-		"Records": m.proxies,
+	var upload, download int64
+	for _, v := range m.proxies {
+		upload += v.Upload
+		download += v.Download
+	}
+	return m.tmpl.ExecuteTemplate(w, "traffic_record", map[string]interface{}{
+		"Title":    "Proxy Data",
+		"Upload":   upload,
+		"Download": download,
+		"Records":  m.proxies,
 	})
 }
 
@@ -206,14 +315,34 @@ func (m *Manager) dnsHandle(w io.Writer, r *http.Request) error {
 
 // statistical data api
 func (m *Manager) consumeData() {
-	accumulate := func(s map[string]*HostData, name string, upload int64, download int64, now time.Time) {
-		if o, ok := s[name]; ok {
+	accumulate := func(s map[string]*TrafficRecord, name string, endpoint string, upload int64, download int64, now time.Time) {
+		o, ok := s[name]
+		if ok {
 			o.Upload += upload
 			o.Download += download
 			o.Touch = now
 		} else {
-			s[name] = &HostData{
+			o = &TrafficRecord{
 				Name:     name,
+				Upload:   upload,
+				Download: download,
+				Touch:    now,
+				Details:  make(map[string]*TrafficRecordDetail),
+			}
+			s[name] = o
+		}
+
+		if len(endpoint) == 0 {
+			return
+		}
+
+		if d, ok := o.Details[endpoint]; ok {
+			d.Upload += upload
+			d.Download += download
+			d.Touch = now
+		} else {
+			o.Details[endpoint] = &TrafficRecordDetail{
+				EndPoint: endpoint,
 				Upload:   upload,
 				Download: download,
 				Touch:    now,
@@ -223,20 +352,21 @@ func (m *Manager) consumeData() {
 
 	for data := range m.dataCh {
 		now := time.Now()
-		accumulate(m.hosts, data.Src, data.Upload, data.Download, now)
-		accumulate(m.destinations, data.Dst, data.Upload, data.Download, now)
-		accumulate(m.proxies, data.Proxy, data.Upload, data.Download, now)
+		accumulate(m.hosts, data.Src, data.Dst, data.Upload, data.Download, now)
+		accumulate(m.websites, data.Dst, data.Src, data.Upload, data.Download, now)
+		accumulate(m.proxies, data.Proxy, "", data.Upload, data.Download, now)
 	}
 }
 
 func (m *Manager) Serve() error {
 	http.HandleFunc("/", handleWrapper(m.indexHandle))
-	http.HandleFunc("/host", handleWrapper(m.hostHandle))
-	http.HandleFunc("/destination", handleWrapper(m.destinationHandle))
-	http.HandleFunc("/proxy", handleWrapper(m.proxyHandle))
-	http.HandleFunc("/dns", handleWrapper(m.dnsHandle))
-	logger.Infof("[manager] listen on: %s", m.listen)
+	http.HandleFunc("/host/", handleWrapper(m.hostHandle))
+	http.HandleFunc("/website/", handleWrapper(m.websiteHandle))
+	http.HandleFunc("/proxy/", handleWrapper(m.proxyHandle))
+	http.HandleFunc("/dns/", handleWrapper(m.dnsHandle))
 	go m.consumeData()
+
+	logger.Infof("[manager] listen on: %s", m.listen)
 	return http.ListenAndServe(m.listen, nil)
 }
 
@@ -244,13 +374,48 @@ func NewManager(one *One, cfg ManagerConfig) *Manager {
 	if cfg.Listen == "" {
 		return nil
 	}
+
+	tmpl := template.New("master").Funcs(map[string]interface{}{
+		"sumInt64": func(a int64, b int64) int64 {
+			return a + b
+		},
+		"formatNumberComma": func(a int64) string {
+			var sign, ret string
+			if a == 0 {
+				return "0"
+			}
+			if a < 0 {
+				sign, a = "-", -a
+			}
+			for a > 0 {
+				b := a % 1000
+				a = a / 1000
+
+				var flag string
+				if a > 0 {
+					flag = "%03d"
+				} else {
+					flag = "%d"
+				}
+				if len(ret) > 0 {
+					flag += ",%s"
+				} else {
+					flag += "%s"
+				}
+				ret = fmt.Sprintf(flag, b, ret)
+
+			}
+			return sign + ret
+		},
+	})
+
 	return &Manager{
-		one:          one,
-		listen:       cfg.Listen,
-		dataCh:       make(chan ConnData),
-		hosts:        make(map[string]*HostData),
-		destinations: make(map[string]*HostData),
-		proxies:      make(map[string]*HostData),
-		tmpl:         template.Must(template.New("master").Parse(masterTmpl)),
+		one:      one,
+		listen:   cfg.Listen,
+		dataCh:   make(chan ConnData),
+		hosts:    make(map[string]*TrafficRecord),
+		websites: make(map[string]*TrafficRecord),
+		proxies:  make(map[string]*TrafficRecord),
+		tmpl:     template.Must(tmpl.Parse(masterTmpl)),
 	}
 }
