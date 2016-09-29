@@ -38,11 +38,15 @@ table, table th, table td {
   border: 1px solid #777;
   padding-left: 4px;
   padding-right: 4px;
+}
+
+table td {
   text-align: right;
 }
 
 table th {
   background: rgb(224,236,255);
+  text-align: left;
 }
 
 table th.title {
@@ -66,12 +70,24 @@ table th.title {
 <li><a href='{{.}}'>{{.}}</a></li>
 {{end}}
 </ul>
+<hr>
+<h2>Current State</h2>
+<table>
+<tr><th>Total Hosts</th><td>{{.TotalHosts}}</td></tr>
+<tr><th>Total Websites</th><td>{{.TotalWebistes}}</td></tr>
+<tr><th>Total Proxies</th><td>{{.TotalProxies}}</td></tr>
+<tr><th>Total Traffic</th><td>{{formatNumberComma .TotalTraffic}}</td></tr>
+<tr><th>Upload Traffic</th><td>{{formatNumberComma .UploadTraffic}}</td></tr>
+<tr><th>Download Traffic</th><td>{{formatNumberComma .DownloadTraffic}}</td></tr>
+<tr><th>Uptime</th><td>{{.Uptime}}</td></tr>
+<tr><th>Now</th><td>{{.Now.Format "2006-01-02 15:04:05.000"}}</td></tr>
+</table>
 {{template "footer" .}}
 {{end}}
 
 {{define "traffic_record"}}
 {{template "header" .}}
-<h3>{{.Title}}</h3>
+<h2>{{.Title}}</h2>
 <ul>
 <li>Entries: {{len .Records}}</li>
 <li>Total: {{sumInt64 .Upload .Download | formatNumberComma}}</li>
@@ -108,7 +124,7 @@ table th.title {
 {{define "traffic_record_detail"}}
 {{template "header" .}}
 {{with .Record}}
-<h3>{{$.Title}}: {{.Name}}</h3>
+<h2>{{$.Title}}: {{.Name}}</h2>
 <ul>
 <li>Entries: {{len .Details}}</li>
 <li>Total: {{sumInt64 .Upload .Download | formatNumberComma}}</li>
@@ -142,7 +158,7 @@ table th.title {
 
 {{define "dns"}}
 {{template "header" .}}
-<h3>Current State</h3>
+<h2>Current State</h2>
 <ul>
 <li>Active entries: {{.ActiveEntries}}</li>
 <li>Expired entries:{{.ExpiredEntries}}</li>
@@ -195,9 +211,10 @@ type TrafficRecord struct {
 }
 
 type Manager struct {
-	one    *One
-	listen string
-	tmpl   *template.Template
+	one       *One
+	startTime time.Time // process start time
+	listen    string
+	tmpl      *template.Template
 
 	dataCh   chan ConnData
 	hosts    map[string]*TrafficRecord
@@ -218,8 +235,21 @@ func handleWrapper(f func(io.Writer, *http.Request) error) func(http.ResponseWri
 }
 
 func (m *Manager) indexHandle(w io.Writer, r *http.Request) error {
+	var upload, download int64
+	for _, v := range m.proxies {
+		upload += v.Upload
+		download += v.Download
+	}
 	return m.tmpl.ExecuteTemplate(w, "index", map[string]interface{}{
-		"Title": "kone",
+		"Title":           "kone",
+		"Now":             time.Now(),
+		"Uptime":          time.Since(m.startTime),
+		"TotalHosts":      len(m.hosts),
+		"TotalWebistes":   len(m.websites),
+		"TotalProxies":    len(m.proxies),
+		"TotalTraffic":    upload + download,
+		"UploadTraffic":   upload,
+		"DownloadTraffic": download,
 		"URLs": []string{
 			"/host/",
 			"/website/",
@@ -410,12 +440,13 @@ func NewManager(one *One, cfg ManagerConfig) *Manager {
 	})
 
 	return &Manager{
-		one:      one,
-		listen:   cfg.Listen,
-		dataCh:   make(chan ConnData),
-		hosts:    make(map[string]*TrafficRecord),
-		websites: make(map[string]*TrafficRecord),
-		proxies:  make(map[string]*TrafficRecord),
-		tmpl:     template.Must(tmpl.Parse(masterTmpl)),
+		one:       one,
+		startTime: time.Now(),
+		listen:    cfg.Listen,
+		dataCh:    make(chan ConnData),
+		hosts:     make(map[string]*TrafficRecord),
+		websites:  make(map[string]*TrafficRecord),
+		proxies:   make(map[string]*TrafficRecord),
+		tmpl:      template.Must(tmpl.Parse(masterTmpl)),
 	}
 }
