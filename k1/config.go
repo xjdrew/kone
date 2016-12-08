@@ -107,11 +107,11 @@ func (cfg *KoneConfig) checkNat() error {
 	}
 
 	if err := check(cfg.TCP); err != nil {
-		fmt.Errorf("[check nat] tcp: %v", err)
+		return fmt.Errorf("[check nat] tcp: %v", err)
 	}
 
 	if err := check(cfg.UDP); err != nil {
-		fmt.Errorf("[check nat] udp: %v", err)
+		return fmt.Errorf("[check nat] udp: %v", err)
 	}
 	return nil
 }
