@@ -12,7 +12,7 @@ By now, it supports:
 Try finding how to use it by reading [example.ini](./example.ini)!
 
 ## Web Status
-The default web status port is 9200 , just visit http://your_kone_ip:9200/ the check the kone status.
+The default web status port is 9200 , just visit http://your_kone_ip:9200/ to check the kone status.
 
 <img src=./misc/images/kone_webui.png border=0>
 
