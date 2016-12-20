@@ -11,6 +11,11 @@ By now, it supports:
 ## Use
 Try finding how to use it by reading [example.ini](./example.ini)!
 
+## Web Status
+The default web status port is 9200 , just visit http://your_kone_ip:9200/ the check the kone status.
+
+<img src=./misc/images/kone_webui.png border=0>
+
 ## Documents
 * [how to use with Raspberry Pi (在树莓派上使用kone)](./misc/docs/how-to-use-with-raspberry-pi.md)
 * [how to use kone in an ENT network (企业网中如何使用kone)](./misc/docs/kone-in-ent-network.md)
