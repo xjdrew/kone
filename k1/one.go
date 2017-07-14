@@ -94,7 +94,7 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 		return nil, err
 	}
 
-	one.tun.AddRoutes(ip, cfg.Route.V)
+	one.tun.AddRoutes(cfg.Route.V)
 
 	// new manager
 	one.manager = NewManager(one, cfg.Manager)
