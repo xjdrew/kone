@@ -22,6 +22,6 @@ func initTun(tun string, ipNet *net.IPNet, mtu int) error {
 }
 
 func addRoute(tun string, subnet *net.IPNet) error {
-	sargs := fmt.Sprintf("route add %s dev %s", subnet, name)
+	sargs := fmt.Sprintf("route add %s dev %s", subnet, tun)
 	return execCommand("ip", sargs)
 }
