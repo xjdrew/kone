@@ -22,7 +22,7 @@ type httpTunnel struct {
 }
 
 type httpConn struct {
-	net.Conn
+	*net.TCPConn
 	reader *bufio.Reader
 	req    *http.Request
 
@@ -72,11 +72,19 @@ func (c *httpConn) Read(p []byte) (int, error) {
 	return c.reader.Read(p)
 }
 
-func newHttpConn(conn net.Conn, req *http.Request) *httpConn {
+func (c *httpConn) CloseRead() error {
+	return c.TCPConn.CloseRead()
+}
+
+func (c *httpConn) CloseWrite() error {
+	return c.TCPConn.CloseWrite()
+}
+
+func newHttpConn(conn *net.TCPConn, req *http.Request) *httpConn {
 	return &httpConn{
-		Conn:   conn,
-		reader: bufio.NewReader(conn),
-		req:    req,
+		TCPConn: conn,
+		reader:  bufio.NewReader(conn),
+		req:     req,
 	}
 }
 
@@ -107,7 +115,7 @@ func (h *httpTunnel) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	return newHttpConn(conn, req), nil
+	return newHttpConn(conn.(*net.TCPConn), req), nil
 }
 
 func init() {

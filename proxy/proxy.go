@@ -12,14 +12,25 @@ import (
 	"golang.org/x/net/proxy"
 )
 
+type Conn interface {
+	net.Conn
+	CloseRead() error
+	CloseWrite() error
+}
+
 type Proxy struct {
 	Url *url.URL
 
 	dialer proxy.Dialer
 }
 
-func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
-	return p.dialer.Dial(network, addr)
+func (p *Proxy) Dial(network, addr string) (Conn, error) {
+	conn, err := p.dialer.Dial(network, addr)
+	if err != nil {
+		return nil, err
+	}
+
+	return conn.(Conn), nil
 }
 
 func FromUrl(rawurl string) (*Proxy, error) {

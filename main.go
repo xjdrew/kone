@@ -14,7 +14,7 @@ import (
 	"github.com/xjdrew/kone/k1"
 )
 
-var VERSION = "0.1-dev"
+var VERSION = "0.2-dev"
 
 func main() {
 	version := flag.Bool("version", false, "Get version info")

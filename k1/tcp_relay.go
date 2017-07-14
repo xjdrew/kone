@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 
+	"github.com/xjdrew/kone/proxy"
 	"github.com/xjdrew/kone/tcpip"
 )
 
@@ -20,7 +21,7 @@ type TCPRelay struct {
 	relayPort uint16
 }
 
-func forward(src *net.TCPConn, dst *net.TCPConn, ch chan<- int64) {
+func forward(src proxy.Conn, dst proxy.Conn, ch chan<- int64) {
 	written, _ := io.Copy(dst, src)
 
 	dst.CloseWrite()
@@ -78,8 +79,8 @@ func (r *TCPRelay) handleConn(conn *net.TCPConn) {
 
 	uploadChan := make(chan int64)
 	downloadChan := make(chan int64)
-	go forward(conn, tunnel.(*net.TCPConn), uploadChan)
-	go forward(tunnel.(*net.TCPConn), conn, downloadChan)
+	go forward(conn, tunnel, uploadChan)
+	go forward(tunnel, conn, downloadChan)
 	connData.Upload = <-uploadChan
 	connData.Download = <-downloadChan
 
