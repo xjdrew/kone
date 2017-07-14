@@ -44,13 +44,13 @@ func (tun *TunDriver) Serve() error {
 	}
 }
 
-func (tun *TunDriver) AddRoutes(vals []string) {
+func (tun *TunDriver) AddRoutes(ip net.IP, vals []string) {
 	name := tun.ifce.Name()
 	for _, val := range vals {
-		_, subnet, _ := net.ParseCIDR(val)
+		dstip, subnet, _ := net.ParseCIDR(val)
 		if subnet != nil {
-			addRoute(name, subnet)
-			logger.Infof("add route %s to %s", val, name)
+			addRoute(name, subnet, ip, dstip)
+			logger.Infof("add route %s -> %s to %s", val, ip, name)
 		}
 	}
 }

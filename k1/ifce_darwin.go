@@ -36,22 +36,30 @@ func createTun(name string, ip net.IP, mask net.IPMask) (ifce *water.Interface, 
 		IP:   ip,
 		Mask: mask,
 	}
-	sargs := fmt.Sprintf("addr add %s dev %s", ipNet, ifce.Name())
-	err = execCommand("ip", sargs)
+	gw := make(net.IP, len(ip))
+	copy(gw, ip)
+	gw = gw.To4()
+	gw[3]++
+	logger.Infof("create %s ip %s gw %s", ifce.Name(), ip, gw)
+
+	sargs := fmt.Sprintf("%s inet %s %s mtu %d", ifce.Name(), ip, gw, MTU)
+	err = execCommand("ifconfig", sargs)
 	if err != nil {
 		return
 	}
 
-	// brings the link up
-	sargs = fmt.Sprintf("link set dev %s up mtu %d qlen 1000", ifce.Name(), MTU)
-	err = execCommand("ip", sargs)
+	logger.Infof("ipNet is %s mtu %d", ipNet, MTU)
+	network := ip.Mask(mask)
+	sargs = fmt.Sprintf("-n add -net %s %s", network, ip)
+	err = execCommand("route", sargs)
 	if err != nil {
 		return
 	}
 	return
 }
 
-func addRoute(name string, subnet *net.IPNet) error {
-	sargs := fmt.Sprintf("route add %s dev %s", subnet, name)
-	return execCommand("ip", sargs)
+func addRoute(_ string, subnet *net.IPNet, ip net.IP, dstip net.IP) error {
+	network := dstip.Mask(subnet.Mask)
+	sargs := fmt.Sprintf("-n add -net %s %s", network, ip)
+	return execCommand("route", sargs)
 }
