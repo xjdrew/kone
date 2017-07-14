@@ -118,7 +118,7 @@ func (nat *Nat) allocSession(srcIP, dstIP net.IP, srcPort, dstPort uint16) (bool
 }
 
 func (nat *Nat) clearExpiredSessions(now int64) {
-	if nat.lastCheck < NatSessionCheckInterval {
+	if now-nat.lastCheck < NatSessionCheckInterval {
 		return
 	}
 
@@ -128,7 +128,7 @@ func (nat *Nat) clearExpiredSessions(now int64) {
 
 	nat.lastCheck = now
 	for index, session := range nat.sessions {
-		if session != nil && session.lastTouch >= NatSessionLifeSeconds {
+		if session != nil && now-session.lastTouch >= NatSessionLifeSeconds {
 			nat.sessions[index] = nil
 			nat.tbl.Unmap(session.srcIP, session.srcPort)
 		}
