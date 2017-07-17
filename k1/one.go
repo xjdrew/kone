@@ -54,7 +54,6 @@ func (one *One) Serve() error {
 
 func FromConfig(cfg *KoneConfig) (*One, error) {
 	general := cfg.General
-	name := general.Tun
 	ip, subnet, _ := net.ParseCIDR(general.Network)
 
 	logger.Infof("[tun] ip:%s, subnet: %s", ip, subnet)
@@ -90,7 +89,7 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 		tcpip.UDP:  one.udpRelay,
 	}
 
-	if one.tun, err = NewTunDriver(name, ip, subnet, filters); err != nil {
+	if one.tun, err = NewTunDriver(ip, subnet, filters); err != nil {
 		return nil, err
 	}
 

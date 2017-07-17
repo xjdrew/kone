@@ -22,7 +22,7 @@ func execCommand(name, sargs string) error {
 	return cmd.Run()
 }
 
-func createTun(name string, ip net.IP, mask net.IPMask) (*water.Interface, error) {
+func createTun(ip net.IP, mask net.IPMask) (*water.Interface, error) {
 	ifce, err := water.New(water.Config{
 		DeviceType: water.TUN,
 	})

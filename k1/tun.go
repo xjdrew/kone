@@ -55,8 +55,8 @@ func (tun *TunDriver) AddRoutes(vals []string) {
 	}
 }
 
-func NewTunDriver(name string, ip net.IP, subnet *net.IPNet, filters map[tcpip.IPProtocol]PacketFilter) (*TunDriver, error) {
-	ifce, err := createTun(name, ip, subnet.Mask)
+func NewTunDriver(ip net.IP, subnet *net.IPNet, filters map[tcpip.IPProtocol]PacketFilter) (*TunDriver, error) {
+	ifce, err := createTun(ip, subnet.Mask)
 	if err != nil {
 		return nil, err
 	}

@@ -14,8 +14,7 @@ import (
 )
 
 type GeneralConfig struct {
-	Tun     string // tun name
-	Network string // dns network
+	Network string // tun network
 }
 
 type NatConfig struct {
