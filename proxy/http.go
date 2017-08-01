@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"bufio"
+	"encoding/base64"
 	"errors"
 	"net"
 	"net/http"
@@ -96,6 +97,11 @@ func HttpTunnel(url *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
 	}, nil
 }
 
+func basicAuth(username, password string) string {
+	auth := username + ":" + password
+	return base64.StdEncoding.EncodeToString([]byte(auth))
+}
+
 func (h *httpTunnel) Dial(network, addr string) (net.Conn, error) {
 	conn, err := h.forward.Dial(network, h.addr)
 	if err != nil {
@@ -105,9 +111,16 @@ func (h *httpTunnel) Dial(network, addr string) (net.Conn, error) {
 	req := &http.Request{
 		Method: "CONNECT",
 		URL: &url.URL{
-			User: h.user,
 			Host: addr,
 		},
+		Proto:      "HTTP/1.1",
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+		Header:     make(http.Header),
+	}
+
+	if password, ok := h.user.Password(); ok {
+		req.Header.Set("Proxy-Authorization", "Basic "+basicAuth(h.user.Username(), password))
 	}
 
 	if err = req.Write(conn); err != nil {
