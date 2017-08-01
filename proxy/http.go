@@ -12,14 +12,12 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
-
-	"golang.org/x/net/proxy"
 )
 
 type httpTunnel struct {
 	addr    string
 	user    *url.Userinfo
-	forward proxy.Dialer
+	forward Dialer
 }
 
 type httpConn struct {
@@ -89,7 +87,7 @@ func newHttpConn(conn *net.TCPConn, req *http.Request) *httpConn {
 	}
 }
 
-func HttpTunnel(url *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
+func HttpTunnel(url *url.URL, forward Dialer) (Dialer, error) {
 	return &httpTunnel{
 		addr:    url.Host,
 		user:    url.User,
@@ -132,7 +130,7 @@ func (h *httpTunnel) Dial(network, addr string) (net.Conn, error) {
 }
 
 func init() {
-	proxy.RegisterDialerType("http", func(url *url.URL, forward proxy.Dialer) (proxy.Dialer, error) {
+	registerDialerType("http", func(url *url.URL, forward Dialer) (Dialer, error) {
 		return &httpTunnel{
 			addr:    url.Host,
 			user:    url.User,

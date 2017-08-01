@@ -8,6 +8,7 @@ package k1
 import (
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/xjdrew/kone/proxy"
@@ -20,7 +21,7 @@ type Proxies struct {
 	dft     string
 }
 
-func (p *Proxies) Dial(proxy string, addr string) (proxy.Conn, error) {
+func (p *Proxies) Dial(proxy string, addr string) (net.Conn, error) {
 	if proxy == "" {
 		return p.DefaultDial(addr)
 	}
@@ -32,7 +33,7 @@ func (p *Proxies) Dial(proxy string, addr string) (proxy.Conn, error) {
 	return nil, fmt.Errorf("Invalid proxy: %s", proxy)
 }
 
-func (p *Proxies) DefaultDial(addr string) (proxy.Conn, error) {
+func (p *Proxies) DefaultDial(addr string) (net.Conn, error) {
 	dialer := p.proxies[p.dft]
 	if dialer == nil {
 		return nil, errNoProxy

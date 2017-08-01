@@ -10,9 +10,14 @@ import (
 	"io"
 	"net"
 
-	"github.com/xjdrew/kone/proxy"
 	"github.com/xjdrew/kone/tcpip"
 )
+
+type halfCloseConn interface {
+	net.Conn
+	CloseRead() error
+	CloseWrite() error
+}
 
 type TCPRelay struct {
 	one       *One
@@ -21,7 +26,12 @@ type TCPRelay struct {
 	relayPort uint16
 }
 
-func forward(src proxy.Conn, dst proxy.Conn, ch chan<- int64) {
+func copy(src net.Conn, dst net.Conn, ch chan<- int64) {
+	written, _ := io.Copy(dst, src)
+	ch <- written
+}
+
+func copyAndClose(src halfCloseConn, dst halfCloseConn, ch chan<- int64) {
 	written, _ := io.Copy(dst, src)
 
 	dst.CloseWrite()
@@ -29,7 +39,7 @@ func forward(src proxy.Conn, dst proxy.Conn, ch chan<- int64) {
 	ch <- written
 }
 
-func (r *TCPRelay) realRemoteHost(conn *net.TCPConn, connData *ConnData) (addr string, proxy string) {
+func (r *TCPRelay) realRemoteHost(conn net.Conn, connData *ConnData) (addr string, proxy string) {
 	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
 	remotePort := uint16(remoteAddr.Port)
 
@@ -61,7 +71,7 @@ func (r *TCPRelay) realRemoteHost(conn *net.TCPConn, connData *ConnData) (addr s
 	return
 }
 
-func (r *TCPRelay) handleConn(conn *net.TCPConn) {
+func (r *TCPRelay) handleConn(conn net.Conn) {
 	var connData ConnData
 	remoteAddr, proxy := r.realRemoteHost(conn, &connData)
 	if remoteAddr == "" {
@@ -79,8 +89,18 @@ func (r *TCPRelay) handleConn(conn *net.TCPConn) {
 
 	uploadChan := make(chan int64)
 	downloadChan := make(chan int64)
-	go forward(conn, tunnel, uploadChan)
-	go forward(tunnel, conn, downloadChan)
+
+	connHCC, connOK := conn.(halfCloseConn)
+	tunnelHCC, tunnelOK := tunnel.(halfCloseConn)
+	if connOK && tunnelOK {
+		go copyAndClose(connHCC, tunnelHCC, uploadChan)
+		go copyAndClose(tunnelHCC, connHCC, downloadChan)
+	} else {
+		go copy(conn, tunnel, uploadChan)
+		go copy(tunnel, conn, downloadChan)
+		defer conn.Close()
+		defer tunnel.Close()
+	}
 	connData.Upload = <-uploadChan
 	connData.Download = <-downloadChan
 
