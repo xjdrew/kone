@@ -11,7 +11,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/xjdrew/kone/proxy"
+	"github.com/xjdrew/proxy"
 )
 
 var errNoProxy = errors.New("no proxy")
