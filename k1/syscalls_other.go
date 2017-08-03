@@ -3,7 +3,7 @@
 //   author: xjdrew
 //
 
-// +build !linux,!darwin
+// +build !linux,!darwin,!windows
 
 package k1
 
@@ -20,4 +20,8 @@ func initTun(tun string, ipNet *net.IPNet, mtu int) error {
 
 func addRoute(tun string, subnet *net.IPNet) error {
 	return errOS
+}
+
+func fixDnsPort(ip net.IP) net.IP {
+	return ip
 }

@@ -25,3 +25,40 @@ func addRoute(tun string, subnet *net.IPNet) error {
 	sargs := fmt.Sprintf("route add %s dev %s", subnet, tun)
 	return execCommand("ip", sargs)
 }
+
+func execCommand(name, sargs string) error {
+	args := strings.Split(sargs, " ")
+	cmd := exec.Command(name, args...)
+	logger.Infof("exec command: %s %s", name, sargs)
+	return cmd.Run()
+}
+
+func createTun(ip net.IP, mask net.IPMask) (*water.Interface, error) {
+	ifce, err := water.New(water.Config{
+		DeviceType: water.TUN,
+		PlatformSpecificParams: water.PlatformSpecificParams{
+			ComponentID: "tap0901",
+			Network:     "192.168.1.10/24",
+		},
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Infof("create %s", ifce.Name())
+
+	ipNet := &net.IPNet{
+		IP:   ip,
+		Mask: mask,
+	}
+
+	if err := initTun(ifce.Name(), ipNet, MTU); err != nil {
+		return nil, err
+	}
+	return ifce, nil
+}
+
+func fixDnsPort(ip net.IP) net.IP {
+	return ip
+}

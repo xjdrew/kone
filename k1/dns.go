@@ -199,7 +199,7 @@ func NewDns(one *One, cfg DnsConfig) (*Dns, error) {
 
 	server := &dns.Server{
 		Net:          "udp",
-		Addr:         fmt.Sprintf("%s:%d", "0.0.0.0", cfg.DnsPort),
+		Addr:         fmt.Sprintf("%s:%d", fixTunIP(one.ip), cfg.DnsPort),
 		Handler:      dns.HandlerFunc(d.ServeDNS),
 		UDPSize:      int(cfg.DnsPacketSize),
 		ReadTimeout:  time.Duration(cfg.DnsReadTimeout) * time.Second,

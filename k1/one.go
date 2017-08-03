@@ -43,8 +43,8 @@ func (one *One) Serve() error {
 
 	go runAndWait(one.dnsTable.Serve)
 	go runAndWait(one.dns.Serve)
-	go runAndWait(one.tcpRelay.Serve)
-	go runAndWait(one.udpRelay.Serve)
+	//go runAndWait(one.tcpRelay.Serve)
+	//go runAndWait(one.udpRelay.Serve)
 	go runAndWait(one.tun.Serve)
 	if one.manager != nil {
 		go runAndWait(one.manager.Serve)

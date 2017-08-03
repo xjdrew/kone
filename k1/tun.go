@@ -13,6 +13,8 @@ import (
 	"github.com/xjdrew/kone/tcpip"
 )
 
+var MTU = 1500
+
 type TunDriver struct {
 	ifce    *water.Interface
 	filters map[tcpip.IPProtocol]PacketFilter

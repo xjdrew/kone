@@ -26,3 +26,8 @@ func addRoute(tun string, subnet *net.IPNet) error {
 	sargs := fmt.Sprintf("-n add -net %s -netmask %s -interface %s", ip.String(), maskIP.String(), tun)
 	return execCommand("route", sargs)
 }
+
+// can't listen on tun's ip in macosx
+func fixTunIP(ip net.IP) net.IP {
+	return net.IPv4zero
+}
