@@ -14,6 +14,13 @@ import (
 	"github.com/songgao/water"
 )
 
+func execCommand(name, sargs string) error {
+	args := strings.Split(sargs, " ")
+	cmd := exec.Command(name, args...)
+	logger.Infof("exec command: %s %s", name, sargs)
+	return cmd.Run()
+}
+
 func initTun(tun string, ipNet *net.IPNet, mtu int) error {
 	sargs := fmt.Sprintf("addr add %s dev %s", ipNet, tun)
 	if err := execCommand("ip", sargs); err != nil {
@@ -28,13 +35,6 @@ func initTun(tun string, ipNet *net.IPNet, mtu int) error {
 func addRoute(tun string, subnet *net.IPNet) error {
 	sargs := fmt.Sprintf("route add %s dev %s", subnet, tun)
 	return execCommand("ip", sargs)
-}
-
-func execCommand(name, sargs string) error {
-	args := strings.Split(sargs, " ")
-	cmd := exec.Command(name, args...)
-	logger.Infof("exec command: %s %s", name, sargs)
-	return cmd.Run()
 }
 
 func createTun(ip net.IP, mask net.IPMask) (*water.Interface, error) {
