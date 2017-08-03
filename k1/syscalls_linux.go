@@ -8,6 +8,10 @@ package k1
 import (
 	"fmt"
 	"net"
+	"os/exec"
+	"strings"
+
+	"github.com/songgao/water"
 )
 
 func initTun(tun string, ipNet *net.IPNet, mtu int) error {
@@ -36,10 +40,6 @@ func execCommand(name, sargs string) error {
 func createTun(ip net.IP, mask net.IPMask) (*water.Interface, error) {
 	ifce, err := water.New(water.Config{
 		DeviceType: water.TUN,
-		PlatformSpecificParams: water.PlatformSpecificParams{
-			ComponentID: "tap0901",
-			Network:     "192.168.1.10/24",
-		},
 	})
 
 	if err != nil {
@@ -59,6 +59,6 @@ func createTun(ip net.IP, mask net.IPMask) (*water.Interface, error) {
 	return ifce, nil
 }
 
-func fixDnsPort(ip net.IP) net.IP {
+func fixTunIP(ip net.IP) net.IP {
 	return ip
 }

@@ -22,6 +22,6 @@ func addRoute(tun string, subnet *net.IPNet) error {
 	return errOS
 }
 
-func fixDnsPort(ip net.IP) net.IP {
+func fixTunIP(ip net.IP) net.IP {
 	return ip
 }
