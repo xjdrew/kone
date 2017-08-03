@@ -121,7 +121,12 @@ func (r *TCPRelay) Serve() error {
 	for {
 		conn, err := ln.AcceptTCP()
 		if err != nil {
-			return err
+			if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
+				logger.Errorf("acceept failed temporary: %s", netErr.Error())
+				continue
+			} else {
+				return err
+			}
 		}
 		go r.handleConn(conn)
 	}
