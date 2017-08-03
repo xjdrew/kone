@@ -6,7 +6,9 @@ The project aims to improve the experience of accessing internet in home/enterpr
 The name "KONE" comes from [k1](https://en.wikipedia.org/wiki/Larcum_Kendall#K1), a chronometer made by Larcum Kendall and played a important role in Captain Cook's voyage.
 
 By now, it supports:
+
 * linux
+* macosx
 
 ## Use
 Try finding how to use it by reading [example.ini](./example.ini)!
