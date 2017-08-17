@@ -46,6 +46,7 @@ func (record *DomainRecord) SetRealIP(msg *dns.Msg) {
 func (record *DomainRecord) Answer(request *dns.Msg) *dns.Msg {
 	rsp := new(dns.Msg)
 	rsp.SetReply(request)
+	rsp.RecursionAvailable = true
 	rsp.Answer = append(rsp.Answer, record.answer)
 	return rsp
 }
