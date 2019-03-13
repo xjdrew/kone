@@ -1,27 +1,46 @@
 //
-//   date  : 2017-07-20
-//   author: xjdrew
+//   date  : 2019-03-13
+//   author: SUCHMOKUO
 //
 
 package k1
 
 import (
-	"net"
-	"os/exec"
-	"strings"
-
+	"context"
+	"fmt"
 	"github.com/songgao/water"
+	"github.com/thecodeteam/goodbye"
+	"net"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 )
 
-func execCommand(name, sargs string) error {
-	args := strings.Split(sargs, " ")
-	cmd := exec.Command(name, args...)
-	logger.Infof("exec command: %s %s", name, sargs)
+var tunNet string
+
+func powershell(args ...string) error {
+	cmd := exec.Command("powershell", args...)
 	return cmd.Run()
 }
 
+func clearRoute(tun string) {
+	_ = powershell(
+		"Remove-NetRoute",
+		"-InterfaceAlias", tun,
+		"-Confirm:$false")
+}
+
 func addRoute(tun string, subnet *net.IPNet) error {
-	return nil
+	tun = fmt.Sprintf(`"%s"`, tun)
+	subnetArg := fmt.Sprintf(`"%s"`, subnet.String())
+	return powershell(
+		"New-NetRoute",
+		"-DestinationPrefix", subnetArg,
+		"-InterfaceAlias", tun,
+		"-PolicyStore", "ActiveStore",
+		"-AddressFamily", "IPv4",
+		"-NextHop", tunNet)
 }
 
 func createTun(ip net.IP, mask net.IPMask) (*water.Interface, error) {
@@ -29,6 +48,13 @@ func createTun(ip net.IP, mask net.IPMask) (*water.Interface, error) {
 		IP:   ip,
 		Mask: mask,
 	}
+
+	s := make([]byte, 4)
+	ip4 := ip.To4()
+	for i := range s {
+		s[i] = ip4[i] & mask[i]
+	}
+	tunNet = net.IPv4(s[0], s[1], s[2], s[3]).String()
 
 	ifce, err := water.New(water.Config{
 		DeviceType: water.TUN,
@@ -42,8 +68,60 @@ func createTun(ip net.IP, mask net.IPMask) (*water.Interface, error) {
 		return nil, err
 	}
 
-	logger.Infof("create %s", ifce.Name())
+	logger.Infof("initializing %s, please wait...", ifce.Name())
+
+	err = initTun(ifce.Name(), ipNet, MTU)
+	if err != nil {
+		return nil, err
+	}
+
+	logger.Infof("created %s", ifce.Name())
 	return ifce, nil
+}
+
+func initTun(tun string, ipNet *net.IPNet, mtu int) error {
+	tun = fmt.Sprintf(`"%s"`, tun)
+	ip := fmt.Sprintf(`"%s"`, ipNet.IP)
+	prefix := strings.Split(ipNet.String(), "/")[1]
+
+	// clear previous route.
+	clearRoute(tun)
+
+	// clear route on quit.
+	goodbye.Notify(context.Background())
+	goodbye.Register(func(ctx context.Context, s os.Signal) {
+		logger.Infof("clearing route of %s, please wait...", tun)
+		clearRoute(tun)
+	})
+
+	// set interface mtu and metric.
+	_ = powershell(
+		"Set-NetIPInterface",
+		"-InterfaceAlias", tun,
+		"-NlMtuBytes", strconv.Itoa(mtu),
+		"-InterfaceMetric", "1")
+
+	// remove all previous ips of tun.
+	_ = powershell(
+		"Remove-NetIPAddress",
+		"-InterfaceAlias", tun,
+		"-AddressFamily", "IPv4",
+		"-Confirm:$false")
+
+	// add dns for tun.
+	_ = powershell(
+		"Set-DnsClientServerAddress",
+		"-InterfaceAlias", tun,
+		"-ServerAddresses", ip)
+
+	// add ip for tun.
+	return powershell(
+		"New-NetIPAddress",
+		"-InterfaceAlias", tun,
+		"-IPAddress", ip,
+		"-PrefixLength", prefix,
+		"-PolicyStore", "ActiveStore",
+		"-AddressFamily", "IPv4")
 }
 
 func fixTunIP(ip net.IP) net.IP {
