@@ -1,5 +1,5 @@
 //
-//   date  : 2019-03-13
+//   date  : 2019-08-29
 //   author: SUCHMOKUO
 //
 
@@ -8,13 +8,14 @@ package k1
 import (
 	"context"
 	"fmt"
-	"github.com/songgao/water"
-	"github.com/thecodeteam/goodbye"
 	"net"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	
+	"github.com/songgao/water"
+	"github.com/thecodeteam/goodbye"
 )
 
 var tunNet string
@@ -25,7 +26,7 @@ func powershell(args ...string) error {
 }
 
 func clearRoute(tun string) {
-	_ = powershell(
+	powershell(
 		"Remove-NetRoute",
 		"-InterfaceAlias", tun,
 		"-Confirm:$false")
@@ -79,7 +80,7 @@ func createTun(ip net.IP, mask net.IPMask) (*water.Interface, error) {
 	return ifce, nil
 }
 
-func initTun(tun string, ipNet *net.IPNet, mtu int) error {
+func initTun(tun string, ipNet *net.IPNet, mtu int) (err error) {
 	tun = fmt.Sprintf(`"%s"`, tun)
 	ip := fmt.Sprintf(`"%s"`, ipNet.IP)
 	prefix := strings.Split(ipNet.String(), "/")[1]
@@ -95,24 +96,36 @@ func initTun(tun string, ipNet *net.IPNet, mtu int) error {
 	})
 
 	// set interface mtu and metric.
-	_ = powershell(
+	err = powershell(
 		"Set-NetIPInterface",
 		"-InterfaceAlias", tun,
 		"-NlMtuBytes", strconv.Itoa(mtu),
 		"-InterfaceMetric", "1")
+	
+	if err != nil {
+		return err
+	}
 
 	// remove all previous ips of tun.
-	_ = powershell(
+	err = powershell(
 		"Remove-NetIPAddress",
 		"-InterfaceAlias", tun,
 		"-AddressFamily", "IPv4",
 		"-Confirm:$false")
+	
+	if err != nil {
+		return err
+	}
 
 	// add dns for tun.
-	_ = powershell(
+	err = powershell(
 		"Set-DnsClientServerAddress",
 		"-InterfaceAlias", tun,
 		"-ServerAddresses", ip)
+	
+	if err != nil {
+		return err
+	}
 
 	// add ip for tun.
 	return powershell(
