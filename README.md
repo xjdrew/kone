@@ -9,6 +9,7 @@ By now, it supports:
 
 * linux
 * macosx
+* windows (8 / Server 2012 and above)
 
 ## Use
 Try finding how to use it by reading [example.ini](./example.ini)!
