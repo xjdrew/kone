@@ -8,6 +8,7 @@ package k1
 import (
 	"fmt"
 	"net"
+	"os"
 	"strings"
 
 	"gopkg.in/gcfg.v1"
@@ -232,6 +233,17 @@ func ParseConfig(filename string) (*KoneConfig, error) {
 	err := gcfg.ReadFileInto(cfg, filename)
 	if err != nil {
 		return nil, err
+	}
+
+	// read from env and set to config
+	if os.Getenv("DEFAULT_PROXY") != "" {
+		cfg.Proxy["A"].Url = os.Getenv("DEFAULT_PROXY")
+	}
+	logger.Infof("Default A URL Proxy: %q", cfg.Proxy["A"].Url)
+
+	// remove default final proxy A
+	if os.Getenv("NO_DEFAULT_FINAL_PROXY") != "" {
+		cfg.Rule.Final = ""
 	}
 
 	// set backend dns default value

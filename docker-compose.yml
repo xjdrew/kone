@@ -1,0 +1,22 @@
+# ports: HOST:CONTAINER
+
+version: '3.8'
+services:
+  tun:
+    build: .
+    container_name: tun-go
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    environment:
+      - DEFAULT_PROXY=socks5://127.0.0.1:1080
+      - NO_DEFAULT_FINAL_PROXY=true
+#    volumes:
+#      - ./config.ini:/config.ini # comment to use default config
+#    networks:
+#      - internal
+
+networks:
+  internal:
+    name: network-tun2proxy
+    driver: bridge

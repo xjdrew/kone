@@ -1,4 +1,3 @@
-[![Build Status](https://travis-ci.org/xjdrew/kone.svg?branch=master)](https://travis-ci.org/xjdrew/kone)
 
 # KONE
 The project aims to improve the experience of accessing internet in home/enterprise network.
@@ -12,7 +11,7 @@ By now, it supports:
 * windows (8 / Server 2012 and above)
 
 ## Use
-Try finding how to use it by reading [example.ini](./example.ini)!
+Try finding how to use it by reading [config.ini](./config.ini)!
 
 ## Web Status
 The default web status port is 9200 , just visit http://your_kone_ip:9200/ to check the kone status.
