@@ -7,14 +7,40 @@ services:
     container_name: tun-go
     restart: unless-stopped
     privileged: true
-    network_mode: host
+#    network_mode: host
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "80:80/tcp"
+      - "9200:9200/tcp"
     environment:
-      - DEFAULT_PROXY=socks5://127.0.0.1:1080
-      - NO_DEFAULT_FINAL_PROXY=true
-#    volumes:
-#      - ./config.ini:/config.ini # comment to use default config
-#    networks:
-#      - internal
+#      - DEFAULT_PROXY=socks5://v2raya:1080
+#      - NO_DEFAULT_FINAL_PROXY=true
+      - PIHOLE_DNS=10.192.0.1#5385
+      - WEBPASSWORD=123654789
+      - FTLCONF_LOCAL_IPV4=172.22.0.2
+    volumes:
+      - ./config.ini:/config.ini # comment to use default config
+    networks:
+      - internal
+
+
+  v2raya:
+    image: mzz2017/v2raya
+    container_name: v2raya
+    restart: unless-stopped
+    privileged: true
+    expose:
+      - "1080"
+      - "9080"
+    ports:
+      - "2020:2017"
+    environment:
+      - V2RAYA_ADDRESS=0.0.0.0:2017
+    volumes:
+      - ./v2raya/v2raya:/etc/v2raya
+    networks:
+      - internal
 
 networks:
   internal:

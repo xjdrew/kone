@@ -6,7 +6,7 @@ COPY . .
 RUN go build -o main .
 
 
-FROM debian:bullseye-20230320-slim
+FROM pihole/pihole:2023.03.1
 RUN apt-get update && apt-get install -y iproute2
 COPY --from=builder /app/main /
 COPY --from=builder /app/config.ini /
