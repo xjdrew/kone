@@ -19,7 +19,7 @@ var VERSION = "0.2-dev"
 func main() {
 	version := flag.Bool("version", false, "Get version info")
 	debug := flag.Bool("debug", false, "Print debug info")
-	config := flag.String("config", "", "config file")
+	config := flag.String("config", "config.ini", "config file")
 	flag.Parse()
 
 	if *version {
