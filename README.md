@@ -25,3 +25,8 @@ The default web status port is 9200 , just visit http://your_kone_ip:9200/ to ch
 
 ## License
 The MIT License (MIT) Copyright (c) 2016 xjdrew
+
+## todo
+- [ ] upgrade to surge like config
+- [ ] default hijack dns query
+- [ ] show process name of network
