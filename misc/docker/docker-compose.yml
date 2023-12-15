@@ -16,9 +16,7 @@ services:
       - "80:80/tcp"
       - "9200:9200/tcp"
     environment:
-      - DEFAULT_PROXY=socks5://v2raya:1080
-#      - DEFAULT_PROXY=socks5://v2ray:1080
-#      - NO_DEFAULT_FINAL_PROXY=true
+      - SOCKS_PROXY=socks5://v2raya:1080
       - PIHOLE_DNS_=10.192.0.1#5385
       - WEBPASSWORD=123654789
       - FTLCONF_LOCAL_IPV4=127.0.0.1

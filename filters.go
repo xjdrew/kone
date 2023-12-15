@@ -3,7 +3,7 @@
 //   author: xjdrew
 //
 
-package k1
+package kone
 
 import (
 	"io"
@@ -24,7 +24,7 @@ func (f PacketFilterFunc) Filter(wr io.Writer, p tcpip.IPv4Packet) {
 func icmpFilterFunc(wr io.Writer, ipPacket tcpip.IPv4Packet) {
 	icmpPacket := tcpip.ICMPPacket(ipPacket.Payload())
 	if icmpPacket.Type() == tcpip.ICMPRequest && icmpPacket.Code() == 0 {
-		logger.Debugf("icmp echo request: %s -> %s", ipPacket.SourceIP(), ipPacket.DestinationIP())
+		logger.Debugf("[icmp filter] ping %s > %s", ipPacket.SourceIP(), ipPacket.DestinationIP())
 		// forge a reply
 		icmpPacket.SetType(tcpip.ICMPEcho)
 		srcIP := ipPacket.SourceIP()

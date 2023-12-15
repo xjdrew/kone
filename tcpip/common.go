@@ -10,11 +10,11 @@ import (
 )
 
 func IsIPv4(packet []byte) bool {
-	return 4 == (packet[0] >> 4)
+	return (packet[0] >> 4) == 4
 }
 
 func IsIPv6(packet []byte) bool {
-	return 6 == (packet[0] >> 4)
+	return (packet[0] >> 4) == 6
 }
 
 func ConvertIPv4ToUint32(ip net.IP) uint32 {

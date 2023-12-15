@@ -2,3 +2,5 @@
 .env
 .idea
 v2raya
+kone
+cmd/kone/local.ini

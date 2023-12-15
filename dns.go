@@ -3,11 +3,12 @@
 //   author: xjdrew
 //
 
-package k1
+package kone
 
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,14 +17,14 @@ import (
 )
 
 const (
-	dnsDefaultPort         = 53
-	dnsDefaultTtl          = 600
-	dnsDefaultPacketSize   = 4096
-	dnsDefaultReadTimeout  = 5
-	dnsDefaultWriteTimeout = 5
+	DnsDefaultPort         = 53
+	DnsDefaultTtl          = 600
+	DnsDefaultPacketSize   = 4096
+	DnsDefaultReadTimeout  = 5
+	DnsDefaultWriteTimeout = 5
 )
 
-var resolveErr = errors.New("resolve error")
+var errResolve = errors.New("resolve error")
 
 type Dns struct {
 	one         *One
@@ -43,12 +44,12 @@ func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
 
 		r, rtt, err := d.client.Exchange(r, ns)
 		if err != nil {
-			logger.Errorf("[dns] resolve %s on %s failed: %v", qname, ns, err)
+			logger.Debugf("[dns] resolve %s on %s failed: %v", qname, ns, err)
 			return
 		}
 
 		if r.Rcode == dns.RcodeServerFailure {
-			logger.Errorf("[dns] resolve %s on %s failed: code %d", qname, ns, r.Rcode)
+			logger.Debugf("[dns] resolve %s on %s failed: code %d", qname, ns, r.Rcode)
 			return
 		}
 
@@ -82,7 +83,7 @@ func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
 		return r, nil
 	default:
 		logger.Errorf("[dns] query %s failed", qname)
-		return nil, resolveErr
+		return nil, errResolve
 	}
 }
 
@@ -111,14 +112,13 @@ func (d *Dns) doIPv4Query(r *dns.Msg) (*dns.Msg, error) {
 	}
 
 	// match by domain
-	matched, proxy := one.rule.Proxy(domain)
+	proxy := one.rule.Proxy(domain)
 
 	// if domain use proxy
-	if matched && proxy != "" {
-		if record := one.dnsTable.Set(domain, proxy); record != nil {
-			go d.fillRealIP(record, r)
-			return record.Answer(r), nil
-		}
+	if proxy != "DIRECT" {
+		record := one.dnsTable.Set(domain, proxy)
+		go d.fillRealIP(record, r) // why?
+		return record.Answer(r), nil
 	}
 
 	// resolve
@@ -127,32 +127,31 @@ func (d *Dns) doIPv4Query(r *dns.Msg) (*dns.Msg, error) {
 		return msg, err
 	}
 
-	if !matched {
-		// try match by cname and ip
-	OuterLoop:
-		for _, item := range msg.Answer {
-			switch answer := item.(type) {
-			case *dns.A:
-				// test ip
-				_, proxy = one.rule.Proxy(answer.A)
-				break OuterLoop
-			case *dns.CNAME:
-				// test cname
-				matched, proxy = one.rule.Proxy(answer.Target)
-				if matched && proxy != "" {
-					break OuterLoop
-				}
-			default:
-				logger.Noticef("[dns] unexpected response %s -> %v", domain, item)
+	// try match by cname and ip
+	for _, item := range msg.Answer {
+		switch answer := item.(type) {
+		case *dns.A:
+			// test ip
+			proxy = one.rule.Proxy(answer.A)
+			if proxy != "DIRECT" {
+				break
 			}
-		}
-		// if ip use proxy
-		if proxy != "" {
-			if record := one.dnsTable.Set(domain, proxy); record != nil {
-				record.SetRealIP(msg)
-				return record.Answer(r), nil
+		case *dns.CNAME:
+			// test cname
+			proxy = one.rule.Proxy(answer.Target)
+			if proxy != "DIRECT" {
+				break
 			}
+		default:
+			logger.Noticef("[dns] unexpected response %s -> %v", domain, item)
 		}
+	}
+
+	// if ip use proxy
+	if proxy != "DIRECT" {
+		record := one.dnsTable.Set(domain, proxy)
+		record.SetRealIP(msg)
+		return record.Answer(r), nil
 	}
 
 	// set domain as a non-proxy-domain
@@ -193,13 +192,13 @@ func (d *Dns) Serve() error {
 	return d.server.ListenAndServe()
 }
 
-func NewDns(one *One, cfg DnsConfig) (*Dns, error) {
+func NewDns(one *One, cfg CoreConfig) (*Dns, error) {
 	d := new(Dns)
 	d.one = one
 
 	server := &dns.Server{
 		Net:          "udp",
-		Addr:         fmt.Sprintf("%s:%d", fixTunIP(one.ip), cfg.DnsPort),
+		Addr:         fmt.Sprintf("%s:%d", fixTunIP(one.ip), cfg.DnsListenPort),
 		Handler:      dns.HandlerFunc(d.ServeDNS),
 		UDPSize:      int(cfg.DnsPacketSize),
 		ReadTimeout:  time.Duration(cfg.DnsReadTimeout) * time.Second,
@@ -215,6 +214,11 @@ func NewDns(one *One, cfg DnsConfig) (*Dns, error) {
 
 	d.server = server
 	d.client = client
-	d.nameservers = cfg.Nameserver
+
+	for _, addr := range cfg.DnsServer {
+		if !strings.Contains(addr, ":") {
+			d.nameservers = append(d.nameservers, addr+":53")
+		}
+	}
 	return d, nil
 }

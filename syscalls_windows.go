@@ -3,7 +3,7 @@
 //   author: SUCHMOKUO
 //
 
-package k1
+package kone
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	
+
 	"github.com/songgao/water"
 	"github.com/thecodeteam/goodbye"
 )
@@ -101,7 +101,7 @@ func initTun(tun string, ipNet *net.IPNet, mtu int) (err error) {
 		"-InterfaceAlias", tun,
 		"-NlMtuBytes", strconv.Itoa(mtu),
 		"-InterfaceMetric", "1")
-	
+
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func initTun(tun string, ipNet *net.IPNet, mtu int) (err error) {
 		"-InterfaceAlias", tun,
 		"-AddressFamily", "IPv4",
 		"-Confirm:$false")
-	
+
 	if err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func initTun(tun string, ipNet *net.IPNet, mtu int) (err error) {
 		"Set-DnsClientServerAddress",
 		"-InterfaceAlias", tun,
 		"-ServerAddresses", ip)
-	
+
 	if err != nil {
 		return err
 	}

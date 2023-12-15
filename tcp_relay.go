@@ -3,12 +3,13 @@
 //   author: xjdrew
 //
 
-package k1
+package kone
 
 import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 
 	"github.com/xjdrew/kone/tcpip"
 )
@@ -50,16 +51,21 @@ func (r *TCPRelay) realRemoteHost(conn net.Conn, connData *ConnData) (addr strin
 	}
 
 	one := r.one
+	dstIP := session.dstIP
 
 	var host string
-	if record := one.dnsTable.GetByIP(session.dstIP); record != nil {
+	if one.dnsTable.IsLocalIP(dstIP) { // for dns hijacked traffic
+		record := one.dnsTable.GetByIP(dstIP)
+		if record == nil {
+			logger.Debugf("[tcp] %s:%d > %s:%d dns expired", session.srcIP, session.srcPort, dstIP, session.dstPort)
+			return
+		}
+
 		host = record.Hostname
 		proxy = record.Proxy
-	} else if one.dnsTable.Contains(session.dstIP) {
-		logger.Debugf("[tcp] %s:%d > %s:%d dns expired", session.srcIP, session.srcPort, session.dstIP, session.dstPort)
-		return
-	} else {
-		host = session.dstIP.String()
+	} else { // for IP-CIDR rule traffic
+		host = dstIP.String()
+		proxy = one.rule.Proxy(dstIP)
 	}
 
 	connData.Src = session.srcIP.String()
@@ -67,7 +73,7 @@ func (r *TCPRelay) realRemoteHost(conn net.Conn, connData *ConnData) (addr strin
 	connData.Proxy = proxy
 
 	addr = fmt.Sprintf("%s:%d", host, session.dstPort)
-	logger.Debugf("[tcp] %s:%d > %s proxy %q", session.srcIP, session.srcPort, addr, proxy)
+	logger.Debugf("[tcp] tunnel %s:%d > %s proxy %q", session.srcIP, session.srcPort, addr, proxy)
 	return
 }
 
@@ -76,6 +82,12 @@ func (r *TCPRelay) handleConn(conn net.Conn) {
 	remoteAddr, proxy := r.realRemoteHost(conn, &connData)
 	if remoteAddr == "" {
 		conn.Close()
+		return
+	}
+
+	if proxy == "DIRECT" {
+		conn.Close()
+		logger.Errorf("[tcp] %s > %s traffic dead loop", conn.LocalAddr(), remoteAddr)
 		return
 	}
 
@@ -111,7 +123,7 @@ func (r *TCPRelay) handleConn(conn net.Conn) {
 
 func (r *TCPRelay) Serve() error {
 	addr := &net.TCPAddr{IP: r.relayIP, Port: int(r.relayPort)}
-	ln, err := net.ListenTCP("tcp4", addr)
+	ln, err := net.ListenTCP("tcp", addr)
 	if err != nil {
 		return err
 	}
@@ -121,13 +133,11 @@ func (r *TCPRelay) Serve() error {
 	for {
 		conn, err := ln.AcceptTCP()
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
-				logger.Errorf("acceept failed temporary: %s", netErr.Error())
-				continue
-			} else {
-				return err
-			}
+			logger.Errorf("acceept failed temporary: %v", err)
+			time.Sleep(time.Second) //prevent log storms
+			continue
 		}
+		logger.Debugf("[tcp] new connection [%s > %s]", conn.RemoteAddr(), conn.LocalAddr())
 		go r.handleConn(conn)
 	}
 }
@@ -145,7 +155,7 @@ func (r *TCPRelay) Filter(wr io.Writer, ipPacket tcpip.IPv4Packet) {
 		// from relay
 		session := r.nat.getSession(dstPort)
 		if session == nil {
-			logger.Debugf("[tcp] %s:%d > %s:%d: no session", srcIP, srcPort, dstIP, dstPort)
+			logger.Debugf("[tcp filter] %s:%d > %s:%d: no session", srcIP, srcPort, dstIP, dstPort)
 			return
 		}
 
@@ -163,7 +173,7 @@ func (r *TCPRelay) Filter(wr io.Writer, ipPacket tcpip.IPv4Packet) {
 		tcpPacket.SetDestinationPort(r.relayPort)
 
 		if isNew {
-			logger.Debugf("[tcp] %s:%d > %s:%d: shape to %s:%d > %s:%d",
+			logger.Debugf("[tcp filter] reshape connection from [%s:%d > %s:%d] to [%s:%d > %s:%d]",
 				srcIP, srcPort, dstIP, dstPort, dstIP, port, r.relayIP, r.relayPort)
 		}
 	}
@@ -174,11 +184,11 @@ func (r *TCPRelay) Filter(wr io.Writer, ipPacket tcpip.IPv4Packet) {
 	wr.Write(ipPacket)
 }
 
-func NewTCPRelay(one *One, cfg NatConfig) *TCPRelay {
+func NewTCPRelay(one *One, cfg CoreConfig) *TCPRelay {
 	relay := new(TCPRelay)
 	relay.one = one
-	relay.nat = NewNat(cfg.NatPortStart, cfg.NatPortEnd)
+	relay.nat = NewNat(cfg.TcpNatPortStart, cfg.TcpNatPortEnd)
 	relay.relayIP = one.ip
-	relay.relayPort = cfg.ListenPort
+	relay.relayPort = cfg.TcpListenPort
 	return relay
 }

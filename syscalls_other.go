@@ -3,9 +3,10 @@
 //   author: xjdrew
 //
 
+//go:build !linux && !darwin && !windows
 // +build !linux,!darwin,!windows
 
-package k1
+package kone
 
 import (
 	"errors"

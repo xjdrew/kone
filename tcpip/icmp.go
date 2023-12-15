@@ -13,7 +13,7 @@ type ICMPType byte
 
 const (
 	ICMPEcho    ICMPType = 0x0
-	ICMPRequest          = 0x8
+	ICMPRequest ICMPType = 0x8
 )
 
 type ICMPPacket []byte

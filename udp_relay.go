@@ -3,10 +3,9 @@
 //   author: xjdrew
 //
 
-package k1
+package kone
 
 import (
-	"bytes"
 	"io"
 	"net"
 	"sync"
@@ -123,7 +122,7 @@ func (r *UDPRelay) handlePacket(localConn *net.UDPConn, cliaddr *net.UDPAddr, pa
 
 func (r *UDPRelay) Serve() error {
 	addr := &net.UDPAddr{IP: r.relayIP, Port: int(r.relayPort)}
-	conn, err := net.ListenUDP("udp4", addr)
+	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		return err
 	}
@@ -149,11 +148,11 @@ func (r *UDPRelay) Filter(wr io.Writer, ipPacket tcpip.IPv4Packet) {
 
 	one := r.one
 
-	if bytes.Equal(srcIP, r.relayIP) && srcPort == r.relayPort {
+	if net.IP.Equal(srcIP, r.relayIP) && srcPort == r.relayPort {
 		// from remote
 		session := r.nat.getSession(dstPort)
 		if session == nil {
-			logger.Debugf("[udp] %s:%d > %s:%d: no session", srcIP, srcPort, dstIP, dstPort)
+			logger.Debugf("[udp filter] %s:%d > %s:%d: no session", srcIP, srcPort, dstIP, dstPort)
 			return
 		}
 		ipPacket.SetSourceIP(session.dstIP)
@@ -170,11 +169,11 @@ func (r *UDPRelay) Filter(wr io.Writer, ipPacket tcpip.IPv4Packet) {
 		udpPacket.SetDestinationPort(r.relayPort)
 
 		if isNew {
-			logger.Debugf("[udp] %s:%d > %s:%d: shape to %s:%d > %s:%d",
+			logger.Debugf("[udp filter] reshape packet from [%s:%d > %s:%d] to [%s:%d > %s:%d]",
 				srcIP, srcPort, dstIP, dstPort, dstIP, port, r.relayIP, r.relayPort)
 		}
 	} else {
-		logger.Errorf("[udp] %s:%d > %s:%d: invalid packet", srcIP, srcPort, dstIP, dstPort)
+		logger.Errorf("[udp filter] %s:%d > %s:%d: invalid packet", srcIP, srcPort, dstIP, dstPort)
 		return
 	}
 
@@ -184,12 +183,12 @@ func (r *UDPRelay) Filter(wr io.Writer, ipPacket tcpip.IPv4Packet) {
 	wr.Write(ipPacket)
 }
 
-func NewUDPRelay(one *One, cfg NatConfig) *UDPRelay {
+func NewUDPRelay(one *One, cfg CoreConfig) *UDPRelay {
 	r := new(UDPRelay)
 	r.one = one
-	r.nat = NewNat(cfg.NatPortStart, cfg.NatPortEnd)
+	r.nat = NewNat(cfg.UdpNatPortStart, cfg.UdpNatPortEnd)
 	r.relayIP = one.ip
-	r.relayPort = cfg.ListenPort
+	r.relayPort = cfg.UdpListenPort
 	r.tunnels = make(map[string]*UDPTunnel)
 	return r
 }

@@ -3,7 +3,7 @@
 //   author: xjdrew
 //
 
-package k1
+package kone
 
 import (
 	"fmt"
