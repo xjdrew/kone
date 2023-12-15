@@ -11,10 +11,15 @@ By now, it supports:
 * windows (8 / Server 2012 and above)
 
 ## Use
-Try finding how to use it by reading [config.ini](./config.ini)!
+
+```bash
+go build ./cmd/kone
+sudo ./kone -debug -config cmd/kone/test.ini
+```
+For more information, please read [test.ini](./cmd/kone/test.ini).
 
 ## Web Status
-The default web status port is 9200 , just visit http://your_kone_ip:9200/ to check the kone status.
+The default web status port is 9200 , just visit http://localhost:9200/ to check the kone status.
 
 <img src=./misc/images/kone_webui.png border=0>
 

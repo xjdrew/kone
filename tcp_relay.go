@@ -51,18 +51,21 @@ func (r *TCPRelay) realRemoteHost(conn net.Conn, connData *ConnData) (addr strin
 	}
 
 	one := r.one
+	dstIP := session.dstIP
 
 	var host string
-	if record := one.dnsTable.GetByIP(session.dstIP); record != nil {
+	if one.dnsTable.IsLocalIP(dstIP) { // for dns hijacked traffic
+		record := one.dnsTable.GetByIP(dstIP)
+		if record == nil {
+			logger.Debugf("[tcp] %s:%d > %s:%d dns expired", session.srcIP, session.srcPort, dstIP, session.dstPort)
+			return
+		}
+
 		host = record.Hostname
 		proxy = record.Proxy
-		logger.Debugf("------------------1")
-	} else if one.dnsTable.Contains(session.dstIP) {
-		logger.Debugf("[tcp] %s:%d > %s:%d dns expired", session.srcIP, session.srcPort, session.dstIP, session.dstPort)
-		return
-	} else {
-		logger.Debugf("------------------2")
-		host = session.dstIP.String()
+	} else { // for IP-CIDR rule traffic
+		host = dstIP.String()
+		proxy = one.rule.Proxy(dstIP)
 	}
 
 	connData.Src = session.srcIP.String()
@@ -79,6 +82,12 @@ func (r *TCPRelay) handleConn(conn net.Conn) {
 	remoteAddr, proxy := r.realRemoteHost(conn, &connData)
 	if remoteAddr == "" {
 		conn.Close()
+		return
+	}
+
+	if proxy == "DIRECT" {
+		conn.Close()
+		logger.Errorf("[tcp] %s > %s traffic dead loop", conn.LocalAddr(), remoteAddr)
 		return
 	}
 

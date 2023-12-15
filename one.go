@@ -95,9 +95,13 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 		return nil, err
 	}
 
-	// TODO: hijackip === ping ip/ nc ip
-	// one.tun.AddRoutes(cfg.Route.V)
-	one.tun.AddRoutes([]string{"208.31.254.33/16"})
+	// set tun as all IP-CIDR rule output
+	for _, pattern := range one.rule.patterns {
+		switch p := pattern.(type) {
+		case IPCIDRPattern:
+			one.tun.AddRoute(p.ipNet)
+		}
+	}
 
 	// new manager
 	one.manager = NewManager(one, cfg.General)

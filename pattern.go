@@ -183,6 +183,9 @@ func CreatePattern(rc RuleConfig) Pattern {
 	case "IP-CIDR":
 		fallthrough
 	case "IP-CIDR6":
+		if proxy == "DIRECT" { // all IPNet default proxy is DIRECT
+			return nil
+		}
 		_, ipNet, err := net.ParseCIDR(pattern)
 		if err == nil {
 			return NewIPCIDRPattern(proxy, ipNet)

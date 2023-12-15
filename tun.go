@@ -46,15 +46,18 @@ func (tun *TunDriver) Serve() error {
 	}
 }
 
-func (tun *TunDriver) AddRoutes(vals []string) {
-	name := tun.ifce.Name()
-	for _, val := range vals {
-		_, subnet, _ := net.ParseCIDR(val)
-		if subnet != nil {
-			addRoute(name, subnet)
-			logger.Infof("add route %s by %s", val, name)
-		}
+func (tun *TunDriver) AddRoute(ipNet *net.IPNet) bool {
+	addRoute(tun.ifce.Name(), ipNet)
+	logger.Infof("add route %s by %s", ipNet.String(), tun.ifce.Name())
+	return true
+}
+
+func (tun *TunDriver) AddRouteString(val string) bool {
+	_, subnet, err := net.ParseCIDR(val)
+	if err != nil {
+		return false
 	}
+	return tun.AddRoute(subnet)
 }
 
 func NewTunDriver(ip net.IP, subnet *net.IPNet, filters map[tcpip.IPProtocol]PacketFilter) (*TunDriver, error) {

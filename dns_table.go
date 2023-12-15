@@ -56,8 +56,8 @@ func (record *DomainRecord) Touch() {
 }
 
 type DnsTable struct {
-	// dns ip pool
-	ipPool *DnsIPPool
+	ipNet  *net.IPNet // local network
+	ipPool *DnsIPPool // dns ip pool
 
 	// hijacked domain records
 	records     map[string]*DomainRecord // domain -> record
@@ -66,6 +66,10 @@ type DnsTable struct {
 
 	nonProxyDomains map[string]time.Time // non proxy domain
 	npdLock         sync.Mutex           // protect non proxy domain
+}
+
+func (c *DnsTable) IsLocalIP(ip net.IP) bool {
+	return c.ipNet.Contains(ip)
 }
 
 func (c *DnsTable) get(domain string) *DomainRecord {
@@ -192,6 +196,7 @@ func (c *DnsTable) Serve() error {
 
 func NewDnsTable(ip net.IP, subnet *net.IPNet) *DnsTable {
 	c := new(DnsTable)
+	c.ipNet = subnet
 	c.ipPool = NewDnsIPPool(ip, subnet)
 	c.records = make(map[string]*DomainRecord)
 	c.ip2Domain = make(map[string]string)
