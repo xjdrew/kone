@@ -1,4 +1,6 @@
 
+![github workflow](https://github.com/xjdrew/kone/actions/workflows/go.yml/badge.svg)
+[![codecov](https://codecov.io/gh/xjdrew/kone/graph/badge.svg?token=cGQLHTtaVc)](https://codecov.io/gh/xjdrew/kone)
 # KONE
 The project aims to improve the experience of accessing internet in home/enterprise network.
 
