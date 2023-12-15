@@ -3,10 +3,9 @@
 //   author: xjdrew
 //
 
-package k1
+package kone
 
 import (
-	"bytes"
 	"math/rand"
 	"net"
 	"testing"
@@ -48,7 +47,7 @@ func TestNatAlloc(t *testing.T) {
 		return
 	}
 
-	if !bytes.Equal(session.srcIP, srcIP) || !bytes.Equal(session.dstIP, dstIP) ||
+	if !net.IP.Equal(session.srcIP, srcIP) || !net.IP.Equal(session.dstIP, dstIP) ||
 		session.srcPort != srcPort || session.dstPort != dstPort {
 		t.Error("check session failed")
 		return

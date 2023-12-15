@@ -1,4 +1,4 @@
-package k1
+package kone
 
 import (
 	"bytes"
@@ -400,8 +400,8 @@ func (m *Manager) Serve() error {
 	return http.ListenAndServe(m.listen, nil)
 }
 
-func NewManager(one *One, cfg ManagerConfig) *Manager {
-	if cfg.Listen == "" {
+func NewManager(one *One, cfg GeneralConfig) *Manager {
+	if cfg.ManagerAddr == "" {
 		return nil
 	}
 
@@ -442,7 +442,7 @@ func NewManager(one *One, cfg ManagerConfig) *Manager {
 	return &Manager{
 		one:       one,
 		startTime: time.Now(),
-		listen:    cfg.Listen,
+		listen:    cfg.ManagerAddr,
 		dataCh:    make(chan ConnData),
 		hosts:     make(map[string]*TrafficRecord),
 		websites:  make(map[string]*TrafficRecord),

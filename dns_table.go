@@ -3,9 +3,10 @@
 //   author: xjdrew
 //
 
-package k1
+package kone
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -31,16 +32,14 @@ func (record *DomainRecord) SetRealIP(msg *dns.Msg) {
 		return
 	}
 
-	var ip net.IP
 	for _, item := range msg.Answer {
 		switch answer := item.(type) {
 		case *dns.A:
-			ip = answer.A
-			break
+			record.RealIP = answer.A
+			logger.Debugf("[dns] %s real ip: %s", record.Hostname, answer.A)
+			return
 		}
 	}
-	record.RealIP = ip
-	logger.Debugf("[dns] %s real ip: %s", record.Hostname, ip)
 }
 
 func (record *DomainRecord) Answer(request *dns.Msg) *dns.Msg {
@@ -53,7 +52,7 @@ func (record *DomainRecord) Answer(request *dns.Msg) *dns.Msg {
 
 func (record *DomainRecord) Touch() {
 	record.Hits++
-	record.Expires = time.Now().Add(dnsDefaultTtl * time.Second)
+	record.Expires = time.Now().Add(DnsDefaultTtl * time.Second)
 }
 
 type DnsTable struct {
@@ -99,7 +98,7 @@ func (c *DnsTable) Get(domain string) *DomainRecord {
 // forge a IPv4 dns reply
 func forgeIPv4Answer(domain string, ip net.IP) *dns.A {
 	rr := new(dns.A)
-	rr.Hdr = dns.RR_Header{Name: dns.Fqdn(domain), Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: dnsDefaultTtl}
+	rr.Hdr = dns.RR_Header{Name: dns.Fqdn(domain), Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: DnsDefaultTtl}
 	rr.A = ip.To4()
 	return rr
 }
@@ -109,14 +108,14 @@ func (c *DnsTable) Set(domain string, proxy string) *DomainRecord {
 	defer c.recordsLock.Unlock()
 	record := c.records[domain]
 	if record != nil {
+		record.Touch()
 		return record
 	}
 
 	// alloc a ip
 	ip := c.ipPool.Alloc(domain)
 	if ip == nil {
-		logger.Errorf("[dns] ip space is used up, domain:%s", domain)
-		return nil
+		panic(fmt.Sprintf("[dns] ip space is used up, domain:%s", domain))
 	}
 
 	record = new(DomainRecord)
@@ -125,11 +124,11 @@ func (c *DnsTable) Set(domain string, proxy string) *DomainRecord {
 	record.Proxy = proxy
 	record.answer = forgeIPv4Answer(domain, ip)
 
-	record.Touch()
-
 	c.records[domain] = record
 	c.ip2Domain[ip.String()] = domain
 	logger.Debugf("[dns] hijack %s -> %s", domain, ip.String())
+
+	record.Touch()
 	return record
 }
 
@@ -183,8 +182,8 @@ func (c *DnsTable) clearExpiredDomain(now time.Time) {
 }
 
 func (c *DnsTable) Serve() error {
-	tick := time.Tick(60 * time.Second)
-	for now := range tick {
+	tick := time.NewTicker(60 * time.Second)
+	for now := range tick.C {
 		c.clearExpiredDomain(now)
 		c.clearExpiredNonProxyDomain(now)
 	}

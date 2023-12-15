@@ -14,8 +14,8 @@ type IPProtocol byte
 
 const (
 	ICMP IPProtocol = 0x01
-	TCP             = 0x06
-	UDP             = 0x11
+	TCP  IPProtocol = 0x06
+	UDP  IPProtocol = 0x11
 )
 
 type IPv4Packet []byte
@@ -41,7 +41,8 @@ func (p IPv4Packet) Protocol() IPProtocol {
 }
 
 func (p IPv4Packet) SourceIP() net.IP {
-	return net.IPv4(p[12], p[13], p[14], p[15]).To4()
+	var ip = [4]byte{p[12], p[13], p[14], p[15]}
+	return net.IP(ip[:])
 }
 
 func (p IPv4Packet) SetSourceIP(ip net.IP) {
@@ -52,7 +53,8 @@ func (p IPv4Packet) SetSourceIP(ip net.IP) {
 }
 
 func (p IPv4Packet) DestinationIP() net.IP {
-	return net.IPv4(p[16], p[17], p[18], p[19]).To4()
+	var ip = [4]byte{p[16], p[17], p[18], p[19]}
+	return net.IP(ip[:])
 }
 
 func (p IPv4Packet) SetDestinationIP(ip net.IP) {

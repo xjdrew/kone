@@ -3,7 +3,7 @@
 //   author: xjdrew
 //
 
-package k1
+package kone
 
 import (
 	"hash/adler32"
@@ -26,10 +26,7 @@ func (pool *DnsIPPool) Capacity() int {
 
 func (pool *DnsIPPool) Contains(ip net.IP) bool {
 	index := tcpip.ConvertIPv4ToUint32(ip) - pool.base
-	if index < pool.space {
-		return true
-	}
-	return false
+	return index < pool.space
 }
 
 func (pool *DnsIPPool) Release(ip net.IP) {

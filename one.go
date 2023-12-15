@@ -3,10 +3,11 @@
 //   author: xjdrew
 //
 
-package k1
+package kone
 
 import (
 	"net"
+	"sync"
 
 	. "github.com/xjdrew/kone/internal"
 	"github.com/xjdrew/kone/tcpip"
@@ -32,29 +33,30 @@ type One struct {
 	manager  *Manager
 }
 
-func (one *One) Serve() error {
-	done := make(chan error)
+func (one *One) Serve() {
+	var wg sync.WaitGroup
 
 	runAndWait := func(f func() error) {
-		select {
-		case done <- f():
-		}
+		defer wg.Done()
+		err := f()
+		logger.Errorf("%v", err)
 	}
 
+	wg.Add(5)
 	go runAndWait(one.dnsTable.Serve)
 	go runAndWait(one.dns.Serve)
 	go runAndWait(one.tcpRelay.Serve)
 	go runAndWait(one.udpRelay.Serve)
 	go runAndWait(one.tun.Serve)
 	if one.manager != nil {
+		wg.Add(1)
 		go runAndWait(one.manager.Serve)
 	}
-	return <-done
+	wg.Wait()
 }
 
 func FromConfig(cfg *KoneConfig) (*One, error) {
-	general := cfg.General
-	ip, subnet, _ := net.ParseCIDR(general.Network)
+	ip, subnet, _ := net.ParseCIDR(cfg.Core.Network)
 
 	logger.Infof("[tun] ip:%s, subnet: %s", ip, subnet)
 
@@ -64,7 +66,7 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 	}
 
 	// new rule
-	one.rule = NewRule(cfg.Rule, cfg.Pattern)
+	one.rule = NewRule(cfg.Rule)
 
 	// new dns cache
 	one.dnsTable = NewDnsTable(ip, subnet)
@@ -72,7 +74,7 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 	var err error
 
 	// new dns
-	if one.dns, err = NewDns(one, cfg.Dns); err != nil {
+	if one.dns, err = NewDns(one, cfg.Core); err != nil {
 		return nil, err
 	}
 
@@ -80,8 +82,8 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 		return nil, err
 	}
 
-	one.tcpRelay = NewTCPRelay(one, cfg.TCP)
-	one.udpRelay = NewUDPRelay(one, cfg.UDP)
+	one.tcpRelay = NewTCPRelay(one, cfg.Core)
+	one.udpRelay = NewUDPRelay(one, cfg.Core)
 
 	filters := map[tcpip.IPProtocol]PacketFilter{
 		tcpip.ICMP: PacketFilterFunc(icmpFilterFunc),
@@ -93,9 +95,11 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 		return nil, err
 	}
 
-	one.tun.AddRoutes(cfg.Route.V)
+	// TODO: hijackip === ping ip/ nc ip
+	// one.tun.AddRoutes(cfg.Route.V)
+	one.tun.AddRoutes([]string{"208.31.254.33/16"})
 
 	// new manager
-	one.manager = NewManager(one, cfg.Manager)
+	one.manager = NewManager(one, cfg.General)
 	return one, nil
 }

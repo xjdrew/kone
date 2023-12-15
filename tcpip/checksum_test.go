@@ -7,6 +7,8 @@ package tcpip
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestChecksum(t *testing.T) {
@@ -17,7 +19,5 @@ func TestChecksum(t *testing.T) {
 
 	expected := [2]byte{0x00, 0x00}
 	v := Checksum(0, b)
-	if v != expected {
-		t.Errorf("v: %x", v)
-	}
+	assert.Equal(t, v, expected)
 }
