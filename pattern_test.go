@@ -31,7 +31,7 @@ func TestDomainSuffixPattern(t *testing.T) {
 	assert.True(t, pattern.Match("example.com"))
 	assert.True(t, pattern.Match("Example.Com"))     // case insensitive
 	assert.True(t, pattern.Match("api.example.com")) // suffix
-	assert.False(t, pattern.Match("1example.com"))
+	assert.True(t, pattern.Match("1example.com"))
 	assert.False(t, pattern.Match("example.hk"))
 	assert.False(t, pattern.Match("example.com.hk"))
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/xjdrew/kone/geoip"
+	"github.com/xjdrew/kone/tcpip"
 )
 
 type Pattern interface {
@@ -40,7 +41,7 @@ func (p DomainPattern) Match(val interface{}) bool {
 func NewDomainPattern(proxy, domain string) Pattern {
 	return DomainPattern{
 		proxy:  proxy,
-		domain: domain,
+		domain: strings.ToLower(domain),
 	}
 }
 
@@ -93,7 +94,7 @@ func (p DomainKeywordPattern) Match(val interface{}) bool {
 func NewDomainKeywordPattern(proxy string, key string) Pattern {
 	return DomainKeywordPattern{
 		proxy: proxy,
-		key:   key,
+		key:   strings.ToLower(key),
 	}
 }
 
@@ -140,6 +141,8 @@ func (p IPCIDRPattern) Match(val interface{}) bool {
 	switch ip := val.(type) {
 	case net.IP:
 		return p.ipNet.Contains(ip)
+	case uint32:
+		return p.ipNet.Contains(tcpip.ConvertUint32ToIPv4(ip))
 	}
 
 	return false
