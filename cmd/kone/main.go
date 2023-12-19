@@ -10,11 +10,27 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/op/go-logging"
 	"github.com/xjdrew/kone"
-	. "github.com/xjdrew/kone/internal"
 )
 
-var VERSION = "0.2-dev"
+var VERSION = "0.3-dev"
+
+var logger = logging.MustGetLogger("kone")
+
+func InitLogger(debug bool) {
+	format := logging.MustStringFormatter(
+		`%{color}%{time:06-01-02 15:04:05.000} %{level:.4s} @%{shortfile}%{color:reset} %{message}`,
+	)
+	logging.SetFormatter(format)
+	logging.SetBackend(logging.NewLogBackend(os.Stdout, "", 0))
+
+	if debug {
+		logging.SetLevel(logging.DEBUG, "kone")
+	} else {
+		logging.SetLevel(logging.INFO, "kone")
+	}
+}
 
 func main() {
 	version := flag.Bool("version", false, "Get version info")
@@ -28,7 +44,6 @@ func main() {
 	}
 
 	InitLogger(*debug)
-	logger := GetLogger()
 
 	configFile := *config
 	if configFile == "" {

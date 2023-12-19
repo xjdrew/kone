@@ -43,8 +43,6 @@ func NewRule(rcs []RuleConfig) *Rule {
 	for _, rc := range rcs {
 		if pattern := CreatePattern(rc); pattern != nil {
 			rule.patterns = append(rule.patterns, pattern)
-		} else {
-			logger.Errorf("invalid rule: %s,%s,%s", rc.Scheme, rc.Pattern, rc.Proxy)
 		}
 	}
 	return rule

@@ -9,11 +9,11 @@ import (
 	"net"
 	"sync"
 
-	. "github.com/xjdrew/kone/internal"
+	"github.com/op/go-logging"
 	"github.com/xjdrew/kone/tcpip"
 )
 
-var logger = GetLogger()
+var logger = logging.MustGetLogger("kone")
 
 type One struct {
 	// tun ip
