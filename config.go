@@ -59,7 +59,7 @@ func (cfg *KoneConfig) parseRule(sec *ini.Section) (err error) {
 	var ops []string
 	for _, key := range keys {
 		ops = strings.Split(key, ",")
-		logger.Infof("%s %v", key, ops)
+		logger.Debugf("%s %v", key, ops)
 		if len(ops) == 3 { // ignore invalid format
 			cfg.Rule = append(cfg.Rule, RuleConfig{
 				Scheme:  ops[0],
