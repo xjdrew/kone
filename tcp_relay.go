@@ -85,7 +85,7 @@ func (r *TCPRelay) handleConn(conn net.Conn) {
 		return
 	}
 
-	if proxy == "DIRECT" {
+	if proxy == "DIRECT" { // impossible
 		conn.Close()
 		logger.Errorf("[tcp] %s > %s traffic dead loop", conn.LocalAddr(), remoteAddr)
 		return

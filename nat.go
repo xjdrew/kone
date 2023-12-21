@@ -90,6 +90,10 @@ type Nat struct {
 }
 
 func (nat *Nat) getSession(port uint16) *NatSession {
+	if port < nat.tbl.from || port >= nat.tbl.to {
+		return nil
+	}
+
 	session := nat.sessions[port-nat.tbl.from]
 	if session != nil {
 		session.lastTouch = time.Now().Unix()
@@ -139,6 +143,7 @@ func (nat *Nat) count() int {
 	return nat.tbl.Count()
 }
 
+// port range [from, to)
 func NewNat(from, to uint16) *Nat {
 	count := to - from
 	tbl := &NatTable{

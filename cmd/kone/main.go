@@ -54,13 +54,13 @@ func main() {
 	cfg, err := kone.ParseConfig(configFile)
 	if err != nil {
 		logger.Error(err.Error())
-		os.Exit(1)
+		os.Exit(2)
 	}
 
 	one, err := kone.FromConfig(cfg)
 	if err != nil {
 		logger.Error(err.Error())
-		os.Exit(1)
+		os.Exit(3)
 	}
 	one.Serve()
 }
