@@ -7,6 +7,7 @@ $Report = foreach ($Rule in $List)
     $Program = (Get-NetFirewallApplicationFilter -AssociatedNetFirewallRule $Rule).Program
 
     @{
+        Profile     = $Rule.Profile
         Enabled     = $Rule.Enabled
         Action      = $Rule.Action
         Protocol    = (Get-NetFirewallPortFilter -AssociatedNetFirewallRule $Rule).Protocol
