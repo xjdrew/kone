@@ -10,7 +10,7 @@ By now, it supports:
 
 * linux
 * macosx
-* windows (8 / Server 2012 and above)
+* windows (10 and above) （refer to [use kone in windows](./misc/windows/README.md) for more information)
 
 ## Use
 
