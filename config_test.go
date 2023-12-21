@@ -43,7 +43,7 @@ const (
 	Proxy2 = socks5://127.0.0.1:9080
 
 	[Rule]
-	IP-CIDR,91.108.4.0/22,Proxy1
+	IP-CIDR, 91.108.4.0/22, Proxy1
 	IP-CIDR,91.108.56.0/22,Proxy1
 	IP-CIDR,109.239.140.0/24,Proxy1
 	IP-CIDR,149.154.167.0/24,Proxy1
@@ -53,7 +53,7 @@ const (
 	IP-CIDR6,2001:db8:abcd:8000::/50,DIRECT
 
 	# match if the domain 
-	DOMAIN,www.twitter.com,Proxy1
+	DOMAIN, www.twitter.com, Proxy1
 	DOMAIN-SUFFIX,twitter.com,Proxy1
 	DOMAIN-SUFFIX,telegram.org,Proxy1
 	DOMAIN-KEYWORD,google,Proxy1
@@ -96,4 +96,7 @@ func TestParseConfig(t *testing.T) {
 	assert.Equal(t, "socks5://127.0.0.1:9080", cfg.Proxy["Proxy2"])
 
 	assert.Len(t, cfg.Rule, 15)
+	assert.Equal(t, cfg.Rule[0].Scheme, "IP-CIDR")
+	assert.Equal(t, cfg.Rule[0].Pattern, "91.108.4.0/22")
+	assert.Equal(t, cfg.Rule[0].Proxy, "Proxy1")
 }
