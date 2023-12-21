@@ -3,5 +3,7 @@
 .idea
 v2raya
 /kone
+/my.ini
+/kone.exe
 /coverage.txt
 cmd/kone/local.ini

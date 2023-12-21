@@ -175,7 +175,7 @@ func NewFinalPattern(proxy string) FinalPattern {
 func CreatePattern(rc RuleConfig) Pattern {
 	proxy := rc.Proxy
 	pattern := rc.Pattern
-	schema := strings.ToUpper(rc.Scheme)
+	schema := strings.ToUpper(rc.Schema)
 
 	switch schema {
 	case "DOMAIN":
@@ -188,7 +188,7 @@ func CreatePattern(rc RuleConfig) Pattern {
 		fallthrough
 	case "IP-CIDR6":
 		if proxy == "DIRECT" { // all IPNet default proxy is DIRECT
-			logger.Debugf("skip DIRECT rule: %s,%s,%s", rc.Scheme, rc.Pattern, rc.Proxy)
+			logger.Debugf("skip DIRECT rule: %s,%s,%s", rc.Schema, rc.Pattern, rc.Proxy)
 			return nil
 		}
 		_, ipNet, err := net.ParseCIDR(pattern)
@@ -200,6 +200,6 @@ func CreatePattern(rc RuleConfig) Pattern {
 	case "FINAL":
 		return NewFinalPattern(proxy)
 	}
-	logger.Errorf("invalid rule: %s,%s,%s", rc.Scheme, rc.Pattern, rc.Proxy)
+	logger.Errorf("invalid rule: %s,%s,%s", rc.Schema, rc.Pattern, rc.Proxy)
 	return nil
 }

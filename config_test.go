@@ -43,8 +43,8 @@ const (
 	Proxy2 = socks5://127.0.0.1:9080
 
 	[Rule]
-	IP-CIDR, 91.108.4.0/22, Proxy1
-	IP-CIDR,91.108.56.0/22,Proxy1
+	IP-CIDR, 91.108.4.0/22, Proxy1 # rule 0
+	IP-CIDR,91.108.56.0/22,Proxy1 # rule 1
 	IP-CIDR,109.239.140.0/24,Proxy1
 	IP-CIDR,149.154.167.0/24,Proxy1
 	IP-CIDR,172.16.0.0/16,DIRECT
@@ -61,10 +61,11 @@ const (
 	DOMAIN-KEYWORD,baidu,REJECT
 
 	# match if the GeoIP test result matches a specified country code
-	GEOIP,US,DIRECT
+	GEOIP,US,DIRECT # rule 13
 
 	# define default policy for requests which are not matched by any other rules
-	FINAL,DIRECT`
+	FINAL,DIRECT # rule 14
+	`
 )
 
 func TestParseConfig(t *testing.T) {
@@ -96,7 +97,15 @@ func TestParseConfig(t *testing.T) {
 	assert.Equal(t, "socks5://127.0.0.1:9080", cfg.Proxy["Proxy2"])
 
 	assert.Len(t, cfg.Rule, 15)
-	assert.Equal(t, cfg.Rule[0].Scheme, "IP-CIDR")
+	assert.Equal(t, cfg.Rule[0].Schema, "IP-CIDR")
 	assert.Equal(t, cfg.Rule[0].Pattern, "91.108.4.0/22")
 	assert.Equal(t, cfg.Rule[0].Proxy, "Proxy1")
+
+	assert.Equal(t, cfg.Rule[1].Schema, "IP-CIDR")
+	assert.Equal(t, cfg.Rule[1].Pattern, "91.108.56.0/22")
+	assert.Equal(t, cfg.Rule[1].Proxy, "Proxy1")
+
+	assert.Equal(t, cfg.Rule[14].Schema, "FINAL")
+	assert.Equal(t, cfg.Rule[14].Pattern, "")
+	assert.Equal(t, cfg.Rule[14].Proxy, "DIRECT")
 }

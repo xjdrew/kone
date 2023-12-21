@@ -8,6 +8,7 @@ package kone
 import (
 	"os"
 	"strings"
+	"unicode"
 
 	"gopkg.in/ini.v1"
 )
@@ -41,7 +42,7 @@ type CoreConfig struct {
 }
 
 type RuleConfig struct {
-	Scheme  string
+	Schema  string
 	Pattern string
 	Proxy   string
 }
@@ -58,11 +59,16 @@ func (cfg *KoneConfig) parseRule(sec *ini.Section) (err error) {
 
 	var ops []string
 	for _, key := range keys {
-		ops = strings.Split(key, ",")
+		ops = strings.FieldsFunc(key, func(c rune) bool {
+			if c == ',' || unicode.IsSpace(c) {
+				return true
+			}
+			return false
+		})
 		logger.Debugf("%s %v", key, ops)
 		if len(ops) == 3 { // ignore invalid format
 			cfg.Rule = append(cfg.Rule, RuleConfig{
-				Scheme:  ops[0],
+				Schema:  ops[0],
 				Pattern: ops[1],
 				Proxy:   ops[2],
 			})
@@ -70,7 +76,7 @@ func (cfg *KoneConfig) parseRule(sec *ini.Section) (err error) {
 	}
 	if len(ops) == 2 { //final rule
 		cfg.Rule = append(cfg.Rule, RuleConfig{
-			Scheme: ops[0],
+			Schema: ops[0],
 			Proxy:  ops[1],
 		})
 	}
