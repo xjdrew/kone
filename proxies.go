@@ -10,7 +10,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/xjdrew/proxy"
+	"github.com/xjdrew/kone/proxy"
 )
 
 type Proxies struct {

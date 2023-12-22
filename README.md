@@ -34,6 +34,8 @@ The default web status port is 9200 , just visit http://localhost:9200/ to check
 The MIT License (MIT) Copyright (c) 2016 xjdrew
 
 ## todo
-- [ ] upgrade to surge like config
+- [x] upgrade to surge like config
+- [x] support windows 10
+- [ ] merge proxy code
 - [ ] default hijack dns query
 - [ ] show process name of network
