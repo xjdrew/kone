@@ -11,72 +11,12 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sync"
 )
 
 type http11 struct {
 	addr    string
 	user    *url.Userinfo
 	forward Dialer
-}
-
-type httpConn struct {
-	net.Conn
-	reader *bufio.Reader
-	req    *http.Request
-
-	sync.Mutex
-	connErr  error
-	connResp bool
-}
-
-func (c *httpConn) readConnectResponse() error {
-	c.Lock()
-	defer c.Unlock()
-
-	// double check
-	if c.connResp {
-		return c.connErr
-	}
-
-	// set connResp
-	c.connResp = true
-
-	resp, err := http.ReadResponse(c.reader, c.req)
-
-	// release req
-	c.req = nil
-
-	if err != nil {
-		c.connErr = err
-		return c.connErr
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		c.connErr = errors.New(resp.Status)
-		return c.connErr
-	}
-
-	return c.connErr
-}
-
-func (c *httpConn) Read(p []byte) (int, error) {
-	if !c.connResp {
-		err := c.readConnectResponse()
-		if err != nil {
-			return 0, err
-		}
-	}
-	return c.reader.Read(p)
-}
-
-func newHttpConn(conn net.Conn, req *http.Request) *httpConn {
-	return &httpConn{
-		Conn:   conn,
-		reader: bufio.NewReader(conn),
-		req:    req,
-	}
 }
 
 func basicAuth(username, password string) string {
@@ -101,6 +41,10 @@ func (h *http11) Dial(network, addr string) (net.Conn, error) {
 		Header:     make(http.Header),
 	}
 
+	req.Header.Set("Proxy-Connection", "keep-alive")
+
+	// req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+
 	if h.user != nil {
 		if password, ok := h.user.Password(); ok {
 			req.Header.Set("Proxy-Authorization", "Basic "+basicAuth(h.user.Username(), password))
@@ -112,7 +56,20 @@ func (h *http11) Dial(network, addr string) (net.Conn, error) {
 		return nil, err
 	}
 
-	return newHttpConn(conn, req), nil
+	var resp *http.Response
+	resp, err = http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+
+	//defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		conn.Close()
+		return nil, errors.New(resp.Status)
+	}
+
+	return conn, nil
 }
 
 func init() {

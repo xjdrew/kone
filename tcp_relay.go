@@ -14,12 +14,6 @@ import (
 	"github.com/xjdrew/kone/tcpip"
 )
 
-type halfCloseConn interface {
-	net.Conn
-	CloseRead() error
-	CloseWrite() error
-}
-
 type TCPRelay struct {
 	one       *One
 	nat       *Nat
@@ -28,15 +22,9 @@ type TCPRelay struct {
 }
 
 func copy(src net.Conn, dst net.Conn, ch chan<- int64) {
-	written, _ := io.Copy(dst, src)
-	ch <- written
-}
+	defer dst.Close()
 
-func copyAndClose(src halfCloseConn, dst halfCloseConn, ch chan<- int64) {
 	written, _ := io.Copy(dst, src)
-
-	dst.CloseWrite()
-	src.CloseRead()
 	ch <- written
 }
 
@@ -87,7 +75,7 @@ func (r *TCPRelay) handleConn(conn net.Conn) {
 
 	if proxy == "DIRECT" { // impossible
 		conn.Close()
-		logger.Errorf("[tcp] %s > %s traffic dead loop", conn.LocalAddr(), remoteAddr)
+		logger.Errorf("[tcp relay] %s > %s traffic dead loop", conn.LocalAddr(), remoteAddr)
 		return
 	}
 
@@ -95,27 +83,22 @@ func (r *TCPRelay) handleConn(conn net.Conn) {
 	tunnel, err := proxies.Dial(proxy, remoteAddr)
 	if err != nil {
 		conn.Close()
-		logger.Errorf("[tcp] dial %s by proxy %q failed: %s", remoteAddr, proxy, err)
+		logger.Errorf("[tcp relay] dial %s by proxy %q failed: %s", remoteAddr, proxy, err)
 		return
 	}
+
+	logger.Debugf("[tcp relay] new tunnel, to %s through %s", remoteAddr, proxy)
 
 	uploadChan := make(chan int64)
 	downloadChan := make(chan int64)
 
-	connHCC, connOK := conn.(halfCloseConn)
-	tunnelHCC, tunnelOK := tunnel.(halfCloseConn)
-	if connOK && tunnelOK {
-		go copyAndClose(connHCC, tunnelHCC, uploadChan)
-		go copyAndClose(tunnelHCC, connHCC, downloadChan)
-	} else {
-		go copy(conn, tunnel, uploadChan)
-		go copy(tunnel, conn, downloadChan)
-		defer conn.Close()
-		defer tunnel.Close()
-	}
+	go copy(conn, tunnel, uploadChan)
+	go copy(tunnel, conn, downloadChan)
+
 	connData.Upload = <-uploadChan
 	connData.Download = <-downloadChan
 
+	logger.Debugf("[tcp relay] domain %s, upload %v bytes, download %v bytes", remoteAddr, connData.Upload, connData.Download)
 	if r.one.manager != nil {
 		r.one.manager.dataCh <- connData
 	}
