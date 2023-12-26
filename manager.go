@@ -183,6 +183,24 @@ table th.title {
 </table>
 {{template "footer" .}}
 {{end}}
+
+
+{{define "config"}}
+{{template "header" .}}
+<h2>Config</h2>
+<ul>
+<li>rules: {{.RuleCount}}</li>
+</ul>
+<table>
+<tr>
+<th>Source</th>
+</tr>
+<tr>
+<td style="text-align:left;"><pre>{{.Source}}</pre></td>
+</tr>
+</table>
+{{template "footer" .}}
+{{end}}
 `
 
 // statistical data of every connection
@@ -212,6 +230,7 @@ type TrafficRecord struct {
 
 type Manager struct {
 	one       *One
+	cfg       *KoneConfig
 	startTime time.Time // process start time
 	listen    string
 	tmpl      *template.Template
@@ -255,6 +274,8 @@ func (m *Manager) indexHandle(w io.Writer, r *http.Request) error {
 			"/website/",
 			"/proxy/",
 			"/dns/",
+			"/reload/",
+			"/config/",
 		},
 	})
 }
@@ -343,6 +364,34 @@ func (m *Manager) dnsHandle(w io.Writer, r *http.Request) error {
 	})
 }
 
+func (m *Manager) reloadHandle(w io.Writer, r *http.Request) error {
+	logger.Infof("[manager] reload config")
+	newcfg, err := ParseConfig(m.cfg.source)
+	if err != nil {
+		return err
+	}
+
+	err = m.one.Reload(newcfg)
+	if err != nil {
+		return err
+	}
+
+	m.cfg = newcfg
+	w.Write([]byte("reload succeed"))
+	return nil
+}
+
+func (m *Manager) configHandle(w io.Writer, r *http.Request) error {
+	b := bytes.NewBuffer([]byte{})
+	m.cfg.inif.WriteTo(b)
+
+	return m.tmpl.ExecuteTemplate(w, "config", map[string]interface{}{
+		"Title":     "Config",
+		"RuleCount": len(m.cfg.Rule),
+		"Source":    string(b.Bytes()),
+	})
+}
+
 // statistical data api
 func (m *Manager) consumeData() {
 	accumulate := func(s map[string]*TrafficRecord, name string, endpoint string, upload int64, download int64, now time.Time) {
@@ -394,14 +443,16 @@ func (m *Manager) Serve() error {
 	http.HandleFunc("/website/", handleWrapper(m.websiteHandle))
 	http.HandleFunc("/proxy/", handleWrapper(m.proxyHandle))
 	http.HandleFunc("/dns/", handleWrapper(m.dnsHandle))
+	http.HandleFunc("/reload/", handleWrapper(m.reloadHandle))
+	http.HandleFunc("/config/", handleWrapper(m.configHandle))
 	go m.consumeData()
 
 	logger.Infof("[manager] listen on: %s", m.listen)
 	return http.ListenAndServe(m.listen, nil)
 }
 
-func NewManager(one *One, cfg GeneralConfig) *Manager {
-	if cfg.ManagerAddr == "" {
+func NewManager(one *One, cfg *KoneConfig) *Manager {
+	if cfg.General.ManagerAddr == "" {
 		return nil
 	}
 
@@ -441,8 +492,9 @@ func NewManager(one *One, cfg GeneralConfig) *Manager {
 
 	return &Manager{
 		one:       one,
+		cfg:       cfg,
 		startTime: time.Now(),
-		listen:    cfg.ManagerAddr,
+		listen:    cfg.General.ManagerAddr,
 		dataCh:    make(chan ConnData),
 		hosts:     make(map[string]*TrafficRecord),
 		websites:  make(map[string]*TrafficRecord),

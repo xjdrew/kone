@@ -77,7 +77,7 @@ func (r *UDPRelay) grabTunnel(localConn *net.UDPConn, cliaddr *net.UDPAddr) *UDP
 		srvaddr := &net.UDPAddr{IP: record.RealIP, Port: int(session.dstPort)}
 		remoteConn, err := net.DialUDP("udp", nil, srvaddr)
 		if err != nil {
-			logger.Errorf("[udp] connect to %s failed: %v", srvaddr, err)
+			logger.Errorf("[udp relay] connect to %s failed: %v", srvaddr, err)
 			return nil
 		}
 		tunnel = &UDPTunnel{
@@ -88,16 +88,16 @@ func (r *UDPRelay) grabTunnel(localConn *net.UDPConn, cliaddr *net.UDPAddr) *UDP
 			remoteConn: remoteConn,
 		}
 
-		logger.Debugf("[udp] %s:%d > %v: new tunnel", session.srcIP, session.srcPort, srvaddr)
+		logger.Debugf("[udp relay] %s:%d > %v: new tunnel", session.srcIP, session.srcPort, srvaddr)
 
 		r.tunnels[addr] = tunnel
 		go func() {
 			err := tunnel.Pump()
 			if err != nil {
-				logger.Debugf("[udp] pump to %v failed: %v", tunnel.remoteConn.RemoteAddr(), err)
+				logger.Debugf("[udp relay] pump to %v failed: %v", tunnel.remoteConn.RemoteAddr(), err)
 			}
 			tunnel.remoteConn.Close()
-			logger.Debugf("[udp] %s:%d > %v: destroy tunnel", tunnel.session.srcIP, tunnel.session.srcPort, srvaddr)
+			logger.Debugf("[udp relay] %s:%d > %v: destroy tunnel", tunnel.session.srcIP, tunnel.session.srcPort, srvaddr)
 
 			r.lock.Lock()
 			delete(r.tunnels, addr)
@@ -111,12 +111,12 @@ func (r *UDPRelay) grabTunnel(localConn *net.UDPConn, cliaddr *net.UDPAddr) *UDP
 func (r *UDPRelay) handlePacket(localConn *net.UDPConn, cliaddr *net.UDPAddr, packet []byte) {
 	tunnel := r.grabTunnel(localConn, cliaddr)
 	if tunnel == nil {
-		logger.Errorf("[udp] %v > %v: grap tunnel failed", cliaddr, localConn.LocalAddr())
+		logger.Errorf("[udp relay %v > %v: grap tunnel failed", cliaddr, localConn.LocalAddr())
 		return
 	}
 	_, err := tunnel.Write(packet)
 	if err != nil {
-		logger.Debugf("[udp] %v", err)
+		logger.Debugf("[udp relay] tunnel write failed: %v", err)
 	}
 }
 
@@ -124,6 +124,7 @@ func (r *UDPRelay) Serve() error {
 	addr := &net.UDPAddr{IP: r.relayIP, Port: int(r.relayPort)}
 	conn, err := net.ListenUDP("udp", addr)
 	if err != nil {
+		logger.Errorf("[udp relay] listen failed: %v", err)
 		return err
 	}
 
@@ -131,7 +132,9 @@ func (r *UDPRelay) Serve() error {
 		b := make([]byte, MTU)
 		n, cliaddr, err := conn.ReadFromUDP(b)
 		if err != nil {
-			return err
+			logger.Errorf("[udp relay] acceept failed temporary: %v", err)
+			time.Sleep(time.Second) //prevent log storms
+			continue
 		}
 		go r.handlePacket(conn, cliaddr, b[:n])
 	}

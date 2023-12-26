@@ -156,8 +156,18 @@ func (c *DnsTable) clearExpiredNonProxyDomain(now time.Time) {
 	for domain, expired := range c.nonProxyDomains {
 		if expired.Before(now) {
 			delete(c.nonProxyDomains, domain)
-			logger.Debugf("[dns] release non proxy domain: %s", domain)
+			logger.Debugf("[dns] release expired non proxy domain: %s", domain)
 		}
+	}
+}
+
+func (c *DnsTable) ClearNonProxyDomain() {
+	c.npdLock.Lock()
+	defer c.npdLock.Unlock()
+	for domain := range c.nonProxyDomains {
+		delete(c.nonProxyDomains, domain)
+		logger.Debugf("[dns] release non proxy domain: %s", domain)
+
 	}
 }
 
@@ -189,6 +199,7 @@ func (c *DnsTable) Serve() error {
 	tick := time.NewTicker(60 * time.Second)
 	for now := range tick.C {
 		c.clearExpiredDomain(now)
+		//TODO: is it necessary?
 		c.clearExpiredNonProxyDomain(now)
 	}
 	return nil

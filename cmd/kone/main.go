@@ -18,18 +18,11 @@ var VERSION = "0.3-dev"
 
 var logger = logging.MustGetLogger("kone")
 
-func InitLogger(debug bool) {
-	format := logging.MustStringFormatter(
+func init() {
+	logging.SetFormatter(logging.MustStringFormatter(
 		`%{color}%{time:06-01-02 15:04:05.000} %{level:.4s} @%{shortfile}%{color:reset} %{message}`,
-	)
-	logging.SetFormatter(format)
+	))
 	logging.SetBackend(logging.NewLogBackend(os.Stdout, "", 0))
-
-	if debug {
-		logging.SetLevel(logging.DEBUG, "kone")
-	} else {
-		logging.SetLevel(logging.INFO, "kone")
-	}
 }
 
 func main() {
@@ -43,7 +36,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	InitLogger(*debug)
+	if *debug {
+		logging.SetLevel(logging.DEBUG, "kone")
+	} else {
+		logging.SetLevel(logging.INFO, "kone")
+	}
 
 	configFile := *config
 	if configFile == "" {

@@ -13,6 +13,10 @@ import (
 	"gopkg.in/ini.v1"
 )
 
+func init() {
+	ini.PrettyFormat = true
+}
+
 const (
 	HTTP_PROXY  = "http_proxy"
 	HTTPS_PROXY = "https_proxy"
@@ -48,6 +52,9 @@ type RuleConfig struct {
 }
 
 type KoneConfig struct {
+	source interface{} // config source: file name or raw ini data
+	inif   *ini.File   // parsed ini file
+
 	General GeneralConfig
 	Core    CoreConfig
 	Proxy   map[string]string
@@ -87,8 +94,9 @@ func (cfg *KoneConfig) check() (err error) {
 	return nil
 }
 
-func ParseConfig(filename interface{}) (*KoneConfig, error) {
+func ParseConfig(source interface{}) (*KoneConfig, error) {
 	cfg := new(KoneConfig)
+	cfg.source = source
 
 	// set default value
 	cfg.Core.Network = "10.192.0.1/16"
@@ -107,11 +115,12 @@ func ParseConfig(filename interface{}) (*KoneConfig, error) {
 	cfg.Core.DnsWriteTimeout = DnsDefaultWriteTimeout
 
 	// decode config value
-	f, err := ini.LoadSources(ini.LoadOptions{AllowBooleanKeys: true, KeyValueDelimiters: "="}, filename)
+	f, err := ini.LoadSources(ini.LoadOptions{AllowBooleanKeys: true, KeyValueDelimiters: "="}, source)
 	if err != nil {
 		logger.Errorf("%v", err)
 		return nil, err
 	}
+	cfg.inif = f
 
 	err = f.MapTo(cfg)
 	if err != nil {

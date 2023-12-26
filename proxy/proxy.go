@@ -9,11 +9,7 @@ import (
 	"errors"
 	"net"
 	"net/url"
-
-	"github.com/op/go-logging"
 )
-
-var logger = logging.MustGetLogger("kone")
 
 // A Dialer is a means to establish a connection.
 type Dialer interface {
@@ -29,7 +25,6 @@ var proxySchemes = make(map[string]func(*url.URL, Dialer) (Dialer, error))
 // a URL with that scheme and a forwarding Dialer. Registered schemes are used
 // by FromURL.
 func registerDialerType(scheme string, f func(*url.URL, Dialer) (Dialer, error)) {
-	logger.Debugf("register proxy schema %s", scheme)
 	proxySchemes[scheme] = f
 }
 

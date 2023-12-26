@@ -28,6 +28,7 @@ func (tun *TunDriver) Serve() error {
 	for {
 		n, err := ifce.Read(buffer)
 		if err != nil {
+			logger.Errorf("[tun] read failed: %v", err)
 			return err
 		}
 

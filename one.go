@@ -55,6 +55,12 @@ func (one *One) Serve() {
 	wg.Wait()
 }
 
+func (one *One) Reload(cfg *KoneConfig) error {
+	one.rule = NewRule(cfg.Rule)
+	one.dnsTable.ClearNonProxyDomain()
+	return nil
+}
+
 func FromConfig(cfg *KoneConfig) (*One, error) {
 	ip, subnet, _ := net.ParseCIDR(cfg.Core.Network)
 
@@ -104,6 +110,6 @@ func FromConfig(cfg *KoneConfig) (*One, error) {
 	}
 
 	// new manager
-	one.manager = NewManager(one, cfg.General)
+	one.manager = NewManager(one, cfg)
 	return one, nil
 }

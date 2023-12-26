@@ -34,7 +34,7 @@ func (r *TCPRelay) realRemoteHost(conn net.Conn, connData *ConnData) (addr strin
 
 	session := r.nat.getSession(remotePort)
 	if session == nil {
-		logger.Errorf("[tcp] %s > %s no session", conn.LocalAddr(), remoteAddr)
+		logger.Errorf("[tcp relay] %s > %s no session", conn.LocalAddr(), remoteAddr)
 		return
 	}
 
@@ -45,7 +45,7 @@ func (r *TCPRelay) realRemoteHost(conn net.Conn, connData *ConnData) (addr strin
 	if one.dnsTable.IsLocalIP(dstIP) { // for dns hijacked traffic
 		record := one.dnsTable.GetByIP(dstIP)
 		if record == nil {
-			logger.Debugf("[tcp] %s:%d > %s:%d dns expired", session.srcIP, session.srcPort, dstIP, session.dstPort)
+			logger.Debugf("[tcp relay] %s:%d > %s:%d dns expired", session.srcIP, session.srcPort, dstIP, session.dstPort)
 			return
 		}
 
@@ -61,7 +61,7 @@ func (r *TCPRelay) realRemoteHost(conn net.Conn, connData *ConnData) (addr strin
 	connData.Proxy = proxy
 
 	addr = fmt.Sprintf("%s:%d", host, session.dstPort)
-	logger.Debugf("[tcp] tunnel %s:%d > %s proxy %q", session.srcIP, session.srcPort, addr, proxy)
+	logger.Debugf("[tcp relay] tunnel %s:%d > %s proxy %q", session.srcIP, session.srcPort, addr, proxy)
 	return
 }
 
@@ -108,19 +108,20 @@ func (r *TCPRelay) Serve() error {
 	addr := &net.TCPAddr{IP: r.relayIP, Port: int(r.relayPort)}
 	ln, err := net.ListenTCP("tcp", addr)
 	if err != nil {
+		logger.Errorf("[tcp relay] listen failed: %v", err)
 		return err
 	}
 
-	logger.Infof("[tcp] listen on %v", addr)
+	logger.Infof("[tcp relay] listen on %v", addr)
 
 	for {
 		conn, err := ln.AcceptTCP()
 		if err != nil {
-			logger.Errorf("acceept failed temporary: %v", err)
+			logger.Errorf("[tcp relay] acceept failed temporary: %v", err)
 			time.Sleep(time.Second) //prevent log storms
 			continue
 		}
-		logger.Debugf("[tcp] new connection [%s > %s]", conn.RemoteAddr(), conn.LocalAddr())
+		logger.Debugf("[tcp relay] new connection [%s > %s]", conn.RemoteAddr(), conn.LocalAddr())
 		go r.handleConn(conn)
 	}
 }
