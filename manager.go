@@ -160,6 +160,7 @@ table th.title {
 {{template "header" .}}
 <h2>Current State</h2>
 <ul>
+<li>Dns server: {{.DnsServer}}</li>
 <li>Active entries: {{.ActiveEntries}}</li>
 <li>Expired entries:{{.ExpiredEntries}}</li>
 </ul>
@@ -357,6 +358,7 @@ func (m *Manager) dnsHandle(w io.Writer, r *http.Request) error {
 
 	return m.tmpl.ExecuteTemplate(w, "dns", map[string]interface{}{
 		"Title":          "dns cache",
+		"DnsServer":      strings.Join(m.one.dns.nameservers, ","),
 		"ActiveEntries":  activeEntries,
 		"ExpiredEntries": expiredEntires,
 		"Now":            now,

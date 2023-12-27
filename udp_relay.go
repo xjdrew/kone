@@ -59,6 +59,7 @@ type UDPRelay struct {
 	tunnels map[string]*UDPTunnel
 }
 
+// bypass udp packet
 func (r *UDPRelay) grabTunnel(localConn *net.UDPConn, cliaddr *net.UDPAddr) *UDPTunnel {
 	r.lock.Lock()
 	defer r.lock.Unlock()
@@ -71,9 +72,23 @@ func (r *UDPRelay) grabTunnel(localConn *net.UDPConn, cliaddr *net.UDPAddr) *UDP
 			return nil
 		}
 		record := r.one.dnsTable.GetByIP(session.dstIP)
-		if record == nil || record.RealIP == nil {
+		if record == nil { // by IP-CIDR rule
 			return nil
 		}
+
+		if record.RealIP == nil {
+			// try resolve real ip
+			msg, err := r.one.dns.Resolve(record.Hostname)
+			if err == nil {
+				record.SetRealIP(msg)
+			}
+
+			if record.RealIP == nil {
+				// resolve real ip failed
+				return nil
+			}
+		}
+
 		srvaddr := &net.UDPAddr{IP: record.RealIP, Port: int(session.dstPort)}
 		remoteConn, err := net.DialUDP("udp", nil, srvaddr)
 		if err != nil {

@@ -18,7 +18,7 @@ type Proxies struct {
 }
 
 func (p *Proxies) Dial(pname string, addr string) (net.Conn, error) {
-	logger.Debugf("[proxy] dail addr:%s by proxy:%s", addr, pname)
+	logger.Debugf("[proxy] dail host %s by proxy %s", addr, pname)
 	dialer := p.proxies[pname]
 	if dialer != nil {
 		return dialer.Dial("tcp", addr)

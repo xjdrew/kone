@@ -27,7 +27,7 @@ func (rule *Rule) Proxy(val interface{}) string {
 	for _, pattern := range rule.patterns {
 		if pattern.Match(val) {
 			proxy := pattern.Proxy()
-			logger.Debugf("[rule match] %v, proxy %q", val, proxy)
+			logger.Debugf("[rule match] %v, proxy %s", val, proxy)
 			return proxy
 		}
 	}

@@ -24,13 +24,21 @@ const (
 	DnsDefaultWriteTimeout = 5
 )
 
-var errResolve = errors.New("resolve error")
+var ErrResolve = errors.New("resolve timeout")
 
 type Dns struct {
 	one         *One
 	server      *dns.Server
 	client      *dns.Client
 	nameservers []string
+}
+
+// query synchronously
+func (d *Dns) Resolve(domain string) (*dns.Msg, error) {
+	r := new(dns.Msg)
+	r.SetQuestion(dns.Fqdn(domain), dns.TypeA)
+
+	return d.resolve(r)
 }
 
 func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
@@ -48,7 +56,8 @@ func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
 			return
 		}
 
-		if r.Rcode == dns.RcodeServerFailure {
+		// remove this code
+		if r.Rcode != dns.RcodeSuccess {
 			logger.Debugf("[dns] resolve %s on %s failed: code %d", qname, ns, r.Rcode)
 			return
 		}
@@ -82,30 +91,21 @@ func (d *Dns) resolve(r *dns.Msg) (*dns.Msg, error) {
 	case r := <-msgCh:
 		return r, nil
 	default:
-		logger.Errorf("[dns] query %s failed", qname)
-		return nil, errResolve
+		logger.Errorf("[dns] query %s timeout", qname)
+		return nil, ErrResolve
 	}
-}
-
-func (d *Dns) fillRealIP(record *DomainRecord, r *dns.Msg) {
-	// resolve
-	msg, err := d.resolve(r)
-	if err != nil || len(msg.Answer) == 0 {
-		return
-	}
-	record.SetRealIP(msg)
 }
 
 func (d *Dns) doIPv4Query(r *dns.Msg) (*dns.Msg, error) {
 	one := d.one
 
 	domain := dnsutil.TrimDomainName(r.Question[0].Name, ".")
-	// if is a non-proxy-domain
+	// short circuit: non proxy
 	if one.dnsTable.IsNonProxyDomain(domain) {
 		return d.resolve(r)
 	}
 
-	// if have already hijacked
+	// short circuit: proxy
 	record := one.dnsTable.Get(domain)
 	if record != nil {
 		return record.Answer(r), nil
@@ -113,21 +113,17 @@ func (d *Dns) doIPv4Query(r *dns.Msg) (*dns.Msg, error) {
 
 	// match by domain
 	proxy := one.rule.Proxy(domain)
-
-	// if domain use proxy
 	if proxy != "DIRECT" {
 		record := one.dnsTable.Set(domain, proxy)
-		go d.fillRealIP(record, r) // why?
 		return record.Answer(r), nil
 	}
 
-	// resolve
+	// match by IP & CNAME
 	msg, err := d.resolve(r)
 	if err != nil || len(msg.Answer) == 0 {
 		return msg, err
 	}
 
-	// try match by cname and ip
 	for _, item := range msg.Answer {
 		switch answer := item.(type) {
 		case *dns.A:
@@ -147,18 +143,17 @@ func (d *Dns) doIPv4Query(r *dns.Msg) (*dns.Msg, error) {
 		}
 	}
 
-	// if ip use proxy
+	// if IP or CNAME use proxy
 	if proxy != "DIRECT" {
 		record := one.dnsTable.Set(domain, proxy)
 		record.SetRealIP(msg)
 		return record.Answer(r), nil
+	} else {
+		// set domain as a non-proxy-domain
+		one.dnsTable.SetNonProxyDomain(domain, msg.Answer[0].Header().Ttl)
+		// final
+		return msg, err
 	}
-
-	// set domain as a non-proxy-domain
-	one.dnsTable.SetNonProxyDomain(domain, msg.Answer[0].Header().Ttl)
-
-	// final
-	return msg, err
 }
 
 func isIPv4Query(q dns.Question) bool {
