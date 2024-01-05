@@ -1,6 +1,6 @@
 module github.com/xjdrew/kone
 
-go 1.20
+go 1.21.5
 
 require (
 	github.com/miekg/dns v1.1.57
@@ -14,6 +14,7 @@ require (
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/xjdrew/dnsconfig v0.0.0-20240104111907-3ab1a6f060b1
 	golang.org/x/mod v0.14.0 // indirect
 	golang.org/x/net v0.19.0 // indirect
 	golang.org/x/sys v0.15.0 // indirect

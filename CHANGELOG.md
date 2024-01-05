@@ -3,6 +3,7 @@
 - [x] feat: support windows 10
 - [x] tech: merge proxy code
 - [x] feat: reload rule by manager: curl http://127.0.0.1:9200/reload
+- [x] tech: use system dns config as default
 
 # plan
 - [ ] feat: default hijack dns query
@@ -11,3 +12,5 @@
 - [ ] feat: support ss protocol
 - [ ] feat: support IPv6
 - [ ] feat: update GEOIP database
+- [ ] feat: record all dns query
+- [ ] feat: support for internal domain name resolution

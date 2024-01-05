@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/xjdrew/dnsconfig"
 	"gopkg.in/ini.v1"
 )
 
@@ -94,6 +95,15 @@ func (cfg *KoneConfig) check() (err error) {
 	return nil
 }
 
+func (cfg *KoneConfig) GetSystemDnsservers() (servers []string) {
+	config := dnsconfig.ReadDnsConfig()
+	if config.Err != nil {
+		logger.Warningf("read dns config failed: %v", config.Err)
+		return []string{"114.114.114.114", "8.8.8.8"} // default
+	}
+	return config.Servers
+}
+
 func ParseConfig(source interface{}) (*KoneConfig, error) {
 	cfg := new(KoneConfig)
 	cfg.source = source
@@ -150,7 +160,7 @@ func ParseConfig(source interface{}) (*KoneConfig, error) {
 
 	// set backend dns default value
 	if len(cfg.Core.DnsServer) == 0 {
-		cfg.Core.DnsServer = append(cfg.Core.DnsServer, "114.114.114.114", "223.5.5.5")
+		cfg.Core.DnsServer = cfg.GetSystemDnsservers()
 	}
 
 	// init rule

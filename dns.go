@@ -191,9 +191,10 @@ func NewDns(one *One, cfg CoreConfig) (*Dns, error) {
 	d := new(Dns)
 	d.one = one
 
+	dnsListenAddr := fmt.Sprintf("%s:%d", fixTunIP(one.ip), cfg.DnsListenPort)
 	server := &dns.Server{
 		Net:          "udp",
-		Addr:         fmt.Sprintf("%s:%d", fixTunIP(one.ip), cfg.DnsListenPort),
+		Addr:         dnsListenAddr,
 		Handler:      dns.HandlerFunc(d.ServeDNS),
 		UDPSize:      int(cfg.DnsPacketSize),
 		ReadTimeout:  time.Duration(cfg.DnsReadTimeout) * time.Second,
@@ -212,8 +213,13 @@ func NewDns(one *One, cfg CoreConfig) (*Dns, error) {
 
 	for _, addr := range cfg.DnsServer {
 		if !strings.Contains(addr, ":") {
-			d.nameservers = append(d.nameservers, addr+":53")
+			addr = addr + ":53"
+		}
+
+		if addr != dnsListenAddr { // don't add self
+			d.nameservers = append(d.nameservers, addr)
 		}
 	}
+	logger.Infof("[dns] updstream dns server: %v", d.nameservers)
 	return d, nil
 }
