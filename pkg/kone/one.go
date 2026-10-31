@@ -248,16 +248,14 @@ func (one *One) Run(parent context.Context) (result error) {
 		cleanupCtx, stop := context.WithTimeout(context.Background(), one.shutdownTimeout)
 		defer stop()
 		// Stop admission and active flows before restoring system networking.
-		for _, c := range []interface{ Close() error }{manager} {
-			if c != nil {
-				c.Close()
-			}
+		var cleanup []error
+		if manager != nil {
+			cleanup = append(cleanup, manager.Close())
 		}
 		one.flows.close()
 		if dnsConn != nil {
 			dnsConn.Close()
 		}
-		var cleanup []error
 		if !isNilInterface(stack) {
 			cleanup = append(cleanup, stack.Close())
 		}
@@ -330,6 +328,7 @@ func (one *One) Run(parent context.Context) (result error) {
 		if manager, err = lc.Listen(ctx, "tcp", one.manager.listen); err != nil {
 			return fmt.Errorf("manager listener: %w", err)
 		}
+		manager = &ownedListener{Listener: manager}
 		one.manager.server = &http.Server{Handler: one.manager.Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	}
 	seen := make(map[string]bool)

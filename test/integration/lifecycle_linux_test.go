@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -196,6 +197,47 @@ func TestSystemLifecycleExclusiveDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	noSystemInterface(t, cfg)
+}
+
+func TestSystemLifecycleManagerConcurrentClose(t *testing.T) {
+	for range 3 {
+		cfg := systemConfig(t)
+		one, _, done := systemStart(t, cfg)
+		transport := &http.Transport{DisableKeepAlives: true}
+		client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
+		// Ensure HTTP Serve owns the live listener before concurrent cleanup.
+		response, err := client.Get("http://" + cfg.General.ManagerAddr + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		transport.CloseIdleConnections()
+		if err != nil {
+			t.Fatal(err)
+		}
+		results := make(chan error, 8)
+		var workers sync.WaitGroup
+		for range cap(results) {
+			workers.Add(1)
+			go func() { defer workers.Done(); results <- one.Close() }()
+		}
+		workers.Wait()
+		for range cap(results) {
+			if err := <-results; err != nil {
+				t.Fatalf("concurrent manager shutdown: %v", err)
+			}
+		}
+		if err := systemWait(t, done); err != nil {
+			t.Fatal(err)
+		}
+		noSystemInterface(t, cfg)
+		listener, err := net.Listen("tcp4", cfg.General.ManagerAddr)
+		if err != nil {
+			t.Fatalf("management listener leaked: %v", err)
+		}
+		listener.Close()
+	}
 }
 
 func localConnectProxy(t *testing.T, body string) *httptest.Server {

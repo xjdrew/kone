@@ -1,3 +1,7 @@
+# 2026/10/31 — management listener shutdown
+- Make the management listener's Close idempotent across engine cleanup and HTTP shutdown, preventing intermittent net.ErrClosed failures during concurrent exit while preserving real close errors.
+- Add deterministic close-order/concurrent-close regressions and real TUN management shutdown acceptance; retain race checks and the coverage gate.
+
 # 2026/10/31 — forked TUN fixes and explicit configuration model
 - Remove the legacy packet dispatcher, NAT and TCP/UDP relays plus their port/range configuration; migrate remaining Fake-IP and CIDR address operations to net/netip and remove pkg/tcpip.
 - Deny UDP on unsupported proxy outbounds by default, before destination DNS/dialing; add explicit per-proxy udp-fallback=direct/reject with strict validation and immutable session snapshots, preserving direct/reject and gateway behavior.
