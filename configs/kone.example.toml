@@ -18,7 +18,8 @@
 # network = "10.192.0.1/16"
 # system：系统 TCP + sing-tun UDP；mixed：系统 TCP + gVisor UDP。
 # mixed 需要以 -tags with_gvisor 构建；两者都只接管 IPv4。
-# stack = "system"
+# 显式选择协议栈；省略时也默认为 system。修改后需要重启。
+stack = "system"
 # true 添加两条 /1 路由接管 IPv4；保留原默认路由，更具体路由仍优先。
 # 开启时必须设置 outbound-interface，网关还需自行配置 forwarding/DHCP/防火墙。
 # auto-route = false
@@ -56,12 +57,11 @@
 # read-timeout = 5
 # write-timeout = 5
 
-# 出站数组只需声明代理；name 是规则引用的唯一名称，type 必须为 proxy。
+# 出站数组只需声明代理，填写 name（规则引用的唯一名称）和 url 即可。
 # direct（直连）和 reject（拒绝）是内置出站，无需声明；名称及其大小写变体保留。
 # 只使用内置出站时可省略整个 outbounds 数组。
 [[outbounds]]
 name = "office"
-type = "proxy"
 # 支持 http、https CONNECT 或 socks5，必须显式提供端口。
 # 也可填写 socks5://127.0.0.1:1080 或 https://username:password@example.com:443。
 # 当前代理出站仅转发 TCP；UDP 保持直连行为，未实现 SOCKS5 UDP ASSOCIATE。

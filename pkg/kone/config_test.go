@@ -23,14 +23,14 @@ func outboundByName(cfg *KoneConfig, name string) *OutboundConfig {
 	panic("missing test outbound: " + name)
 }
 
-func setTestOutbound(cfg *KoneConfig, name string, kind OutboundType, url string) {
+func setTestOutbound(cfg *KoneConfig, name string, url string) {
 	for i := range cfg.Outbounds {
 		if cfg.Outbounds[i].Name == name {
-			cfg.Outbounds[i] = OutboundConfig{Name: name, Type: kind, URL: url}
+			cfg.Outbounds[i] = OutboundConfig{Name: name, URL: url}
 			return
 		}
 	}
-	cfg.Outbounds = append(cfg.Outbounds, OutboundConfig{Name: name, Type: kind, URL: url})
+	cfg.Outbounds = append(cfg.Outbounds, OutboundConfig{Name: name, URL: url})
 }
 
 func cleanProxyEnv(t *testing.T) {
@@ -54,11 +54,9 @@ func TestParseConfig(t *testing.T) {
 log-format = 'json'
 [[outbounds]]
 name='Proxy1'
-type='proxy'
 url='http://proxy.example.com:8080'
 [[outbounds]]
 name='Proxy2'
-type='proxy'
 url='socks5://127.0.0.1:1080'
 [[rules]]
 type = 'DOMAIN-SUFFIX'
@@ -75,6 +73,13 @@ outbound = 'direct'
 	require.Equal(t, []string{"1.1.1.1:53", "[2001:4860:4860::8888]:53"}, cfg.DNS.Servers)
 	require.Len(t, cfg.Rule, 2)
 	require.Equal(t, "FINAL", cfg.Rule[1].Schema)
+	require.Len(t, cfg.Outbounds, 2)
+	require.Equal(t, OutboundProxy, NewRule(cfg.Rule, cfg.Outbounds).OutboundType("Proxy1"))
+	redacted, err := cfg.RedactedTOML()
+	require.NoError(t, err)
+	roundtrip, err := ParseConfig(redacted)
+	require.NoError(t, err)
+	require.Equal(t, cfg.Outbounds, roundtrip.Outbounds)
 }
 
 func TestProxyEnvironmentWithoutSection(t *testing.T) {
@@ -118,17 +123,17 @@ func TestConfigValidation(t *testing.T) {
 		{"bad DNS", "[dns]\nservers=['not-an-ip']", "dns.servers[1]"},
 		{"DNS loop", "[dns]\nservers=['10.192.0.1']", "virtual network"},
 		{"DNS port", "[dns]\nservers=['1.1.1.1:0']", "dns.servers[1]"},
-		{"duplicate outbound", baseConfig + "[[outbounds]]\nname='A'\ntype='proxy'\nurl='http://127.0.0.1:8080'\n[[outbounds]]\nname='A'\ntype='proxy'\nurl='http://127.0.0.1:8081'", "duplicate outbound name"},
-		{"reserved direct", baseConfig + "[[outbounds]]\nname='direct'\ntype='proxy'\nurl='http://127.0.0.1:8080'", "reserved for built-in outbound direct"},
-		{"reserved reject case", baseConfig + "[[outbounds]]\nname='REJECT'\ntype='proxy'\nurl='http://127.0.0.1:8080'", "reserved for built-in outbound reject"},
-		{"bad proxy", baseConfig + "[[outbounds]]\nname='A'\ntype='proxy'\nurl='ftp://127.0.0.1:8080'", "outbounds[1]"},
-		{"proxy no port", baseConfig + "[[outbounds]]\nname='A'\ntype='proxy'\nurl='http://127.0.0.1'", "invalid proxy URL"},
-		{"empty outbound name", "[[outbounds]]\nname=''\ntype='direct'", "name must be nonempty"},
-		{"whitespace outbound name", "[[outbounds]]\nname=' bad'\ntype='direct'", "name must be nonempty"},
-		{"missing outbound type", "[[outbounds]]\nname='local'", "type must be proxy"},
-		{"invalid outbound type", "[[outbounds]]\nname='local'\ntype='magic'", "type must be proxy"},
-		{"configured direct", "[[outbounds]]\nname='local'\ntype='direct'", "direct/reject are built-in"},
-		{"configured reject", "[[outbounds]]\nname='blocked'\ntype='reject'", "direct/reject are built-in"},
+		{"duplicate outbound", baseConfig + "[[outbounds]]\nname='A'\nurl='http://127.0.0.1:8080'\n[[outbounds]]\nname='A'\nurl='http://127.0.0.1:8081'", "duplicate outbound name"},
+		{"reserved direct", baseConfig + "[[outbounds]]\nname='direct'\nurl='http://127.0.0.1:8080'", "reserved for built-in outbound direct"},
+		{"reserved reject case", baseConfig + "[[outbounds]]\nname='REJECT'\nurl='http://127.0.0.1:8080'", "reserved for built-in outbound reject"},
+		{"bad proxy", baseConfig + "[[outbounds]]\nname='A'\nurl='ftp://127.0.0.1:8080'", "outbounds[1]"},
+		{"proxy no port", baseConfig + "[[outbounds]]\nname='A'\nurl='http://127.0.0.1'", "invalid proxy URL"},
+		{"empty outbound name", "[[outbounds]]\nname=''\nurl='http://127.0.0.1:8080'", "name must be nonempty"},
+		{"whitespace outbound name", "[[outbounds]]\nname=' bad'\nurl='http://127.0.0.1:8080'", "name must be nonempty"},
+		{"missing outbound URL", "[[outbounds]]\nname='office'", "invalid proxy URL"},
+		{"removed proxy type", "[[outbounds]]\nname='office'\ntype='proxy'\nurl='http://127.0.0.1:8080'", "unknown configuration key"},
+		{"configured direct", "[[outbounds]]\nname='local'\ntype='direct'", "unknown configuration key"},
+		{"configured reject", "[[outbounds]]\nname='blocked'\ntype='reject'", "unknown configuration key"},
 		{"legacy proxies", "[proxies]\nSecret='https://alice:secret@example.com:443'", "unknown configuration key"},
 		{"legacy DNS", "[core]\ndns-server=['1.1.1.1']", "unknown configuration key"},
 		{"legacy rule", baseConfig + "[[rules]]\ntype='FINAL'\nproxy='direct'", "unknown configuration key"},
@@ -167,13 +172,13 @@ func TestConfigSourceOwnership(t *testing.T) {
 
 func TestConfigSecretsAreRedacted(t *testing.T) {
 	cleanProxyEnv(t)
-	cfg := parseTestConfig(t, "[[outbounds]]\nname='Secret'\ntype='proxy'\nurl='https://alice:supersecret@example.com:443'\n")
+	cfg := parseTestConfig(t, "[[outbounds]]\nname='Secret'\nurl='https://alice:supersecret@example.com:443'\n")
 	data, err := cfg.RedactedTOML()
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "alice")
 	require.NotContains(t, string(data), "supersecret")
 	require.Contains(t, outboundByName(cfg, "Secret").URL, "supersecret")
-	_, err = ParseConfig([]byte(baseConfig + "[[outbounds]]\nname='Secret'\ntype='proxy'\nurl='https://alice:supersecret@example.com:bad'\n"))
+	_, err = ParseConfig([]byte(baseConfig + "[[outbounds]]\nname='Secret'\nurl='https://alice:supersecret@example.com:bad'\n"))
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "supersecret")
 }

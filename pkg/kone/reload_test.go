@@ -14,11 +14,9 @@ func testEngine(t *testing.T) *One {
 	cfg := parseTestConfig(t, `
 [[outbounds]]
 name='A'
-type='proxy'
 url='http://Proxy.Example.com:8080'
 [[outbounds]]
 name='B'
-type='proxy'
 url='socks5://127.0.0.1:1080'
 [[rules]]
 type='FINAL'

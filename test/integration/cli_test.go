@@ -41,8 +41,10 @@ outbound = "reject"
 type = "FINAL"
 outbound = "direct"
 `,
-		"override": "[[outbounds]]\nname='DIRECT'\ntype='proxy'\nurl='http://127.0.0.1:8080'",
+		"override": "[[outbounds]]\nname='DIRECT'\nurl='http://127.0.0.1:8080'",
 		"alias":    "[[outbounds]]\nname='local'\ntype='direct'",
+		"proxy":    "[core]\nstack='system'\n[[outbounds]]\nname='office'\nurl='socks5://127.0.0.1:1080'\n[[rules]]\ntype='FINAL'\noutbound='office'",
+		"stack":    "[core]\nstack='unknown'",
 	} {
 		if err := os.WriteFile(filepath.Join(configs, name+".toml"), []byte(content), 0600); err != nil {
 			t.Fatal(err)
@@ -61,7 +63,9 @@ outbound = "direct"
 		{"missing", []string{"-check", "-config", "does-not-exist.toml"}, "Configuration error", 2},
 		{"builtins without outbounds", []string{"-check", "-config", filepath.Join(configs, "builtins.toml")}, "Configuration valid", 0},
 		{"builtin override", []string{"-check", "-config", filepath.Join(configs, "override.toml")}, "reserved for built-in outbound direct", 2},
-		{"builtin alias", []string{"-check", "-config", filepath.Join(configs, "alias.toml")}, "direct/reject are built-in", 2},
+		{"builtin alias", []string{"-check", "-config", filepath.Join(configs, "alias.toml")}, "unknown configuration key", 2},
+		{"proxy and explicit stack", []string{"-check", "-config", filepath.Join(configs, "proxy.toml")}, "Configuration valid", 0},
+		{"invalid stack", []string{"-check", "-config", filepath.Join(configs, "stack.toml")}, "core.stack must be system or mixed", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command(binary, tc.args...)

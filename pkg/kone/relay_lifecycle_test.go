@@ -69,7 +69,7 @@ func TestShutdownCancelsPendingProxyDial(t *testing.T) {
 	n, s := newMemoryNetwork(), &loopSockets{}
 	one := lifecycleEngine(t, n, s)
 	cfg := one.Snapshot().Config
-	setTestOutbound(cfg, "A", OutboundProxy, "http://"+proxy.Addr().String())
+	setTestOutbound(cfg, "A", "http://"+proxy.Addr().String())
 	cfg.Rule = append(cfg.Rule, RuleConfig{Schema: "FINAL", Outbound: "A"})
 	require.NoError(t, one.Reload(cfg))
 	probe, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})

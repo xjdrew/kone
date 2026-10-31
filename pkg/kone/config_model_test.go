@@ -104,18 +104,18 @@ outbound='direct'
 	reparsed, err := ParseConfig(data)
 	require.NoError(t, err)
 	require.Empty(t, reparsed.Outbounds, "built-ins must not become file configuration")
-	_, err = NewOutbounds([]OutboundConfig{{Name: "direct", Type: OutboundProxy, URL: "http://127.0.0.1:8080"}})
+	_, err = NewOutbounds([]OutboundConfig{{Name: "direct", URL: "http://127.0.0.1:8080"}})
 	require.Error(t, err)
 }
 
 func TestEnvironmentOutboundOverrideAndConflict(t *testing.T) {
 	cleanProxyEnv(t)
 	t.Setenv(HTTP_PROXY, "http://127.0.0.1:8888")
-	cfg := parseTestConfig(t, "[[outbounds]]\nname='http_proxy'\ntype='proxy'\nurl='http://127.0.0.1:8080'")
+	cfg := parseTestConfig(t, "[[outbounds]]\nname='http_proxy'\nurl='http://127.0.0.1:8080'")
 	require.Equal(t, "http://127.0.0.1:8888", outboundByName(cfg, HTTP_PROXY).URL)
 	_, err := ParseConfig([]byte("[[outbounds]]\nname='http_proxy'\ntype='direct'"))
-	require.ErrorContains(t, err, "direct/reject are built-in")
-	_, err = ParseConfig([]byte("[[outbounds]]\nname='http_proxy'\ntype='proxy'\nurl='http://user:secret@127.0.0.1:bad'"))
+	require.ErrorContains(t, err, "unknown configuration key")
+	_, err = ParseConfig([]byte("[[outbounds]]\nname='http_proxy'\nurl='http://user:secret@127.0.0.1:bad'"))
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "secret")
 }
@@ -207,6 +207,7 @@ func TestExampleDocumentsEveryConfigurationField(t *testing.T) {
 	cfg, err := ParseConfig(data)
 	require.NoError(t, err)
 	require.Empty(t, cfg.DNS.Servers, "example must use system DNS by default")
+	require.Equal(t, "system", cfg.Core.Stack)
 	// Enable commented defaults to validate their spelling, types, and values.
 	option := regexp.MustCompile(`^#\s*(\[[^\]]+\]|[a-z][a-z0-9-]*\s*=.*)$`)
 	lines := strings.Split(string(data), "\n")

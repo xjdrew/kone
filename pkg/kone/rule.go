@@ -77,10 +77,10 @@ func NewRule(rcs []RuleConfig, outbounds []OutboundConfig) *Rule {
 		outbounds:     map[string]OutboundType{},
 	}
 	for _, o := range outbounds {
-		rule.outbounds[o.Name] = o.Type
+		rule.outbounds[o.Name] = OutboundProxy
 	}
-	for _, o := range builtinOutbounds() {
-		rule.outbounds[o.Name] = o.Type
+	for name, kind := range builtinOutbounds() {
+		rule.outbounds[name] = kind
 	}
 
 	for _, rc := range rcs {

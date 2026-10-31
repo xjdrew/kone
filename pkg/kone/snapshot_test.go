@@ -18,9 +18,9 @@ func TestConcurrentSnapshotGenerations(t *testing.T) {
 	one := testEngine(t)
 	initial := one.policy.Load()
 	a, b := one.Snapshot().Config, one.Snapshot().Config
-	setTestOutbound(a, "A", OutboundProxy, "http://127.0.0.1:8081")
+	setTestOutbound(a, "A", "http://127.0.0.1:8081")
 	a.Rule[0].Outbound = "A"
-	setTestOutbound(b, "A", OutboundProxy, "http://127.0.0.1:8082")
+	setTestOutbound(b, "A", "http://127.0.0.1:8082")
 	b.Rule[0].Outbound = "B"
 	var wg sync.WaitGroup
 	for worker := 0; worker < 4; worker++ {
@@ -35,7 +35,7 @@ func TestConcurrentSnapshotGenerations(t *testing.T) {
 					return
 				}
 				copy := one.Snapshot()
-				setTestOutbound(copy.Config, "A", OutboundProxy, "caller mutation")
+				setTestOutbound(copy.Config, "A", "caller mutation")
 				copy.Config.Rule[0].Outbound = "caller mutation"
 			}
 		}()

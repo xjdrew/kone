@@ -3,6 +3,7 @@
 - Normalize Wintun HRESULT adapter errors so standard Go error matching recognizes duplicate devices; retain PE/session/exclusive-creation race and native regressions in fork CI.
 - Replace the proxies dictionary with named proxy outbounds arrays; rules reference proxy names or built-in direct/reject targets, with duplicate/type/URL/reference validation and atomic reload.
 - Make direct/reject always-available reserved targets without configuration entries; reject declarations and name overrides, preserve built-ins during reload, and cover configuration-free routing with unit, CLI and gateway regressions.
+- Simplify proxy entries to name/url without a redundant type field; derive protocol from the URL and explicitly select core.stack in the annotated example, with configuration/CLI regressions and migration guidance.
 - Move DNS settings from core into an optional dns section. Resolve omitted upstreams from system settings once before startup, preserve automatic configuration through reload, and reject invalid/self-routed upstreams.
 - Keep loopback proxies and local DNS stubs on the loopback path when a physical outbound interface is selected.
 - Document every supported configuration key and its default in the example, comment optional defaults, and add schema-completeness, DNS-default, outbound-policy and migration regressions.

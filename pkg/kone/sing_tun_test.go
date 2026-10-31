@@ -23,6 +23,26 @@ type stubTun struct {
 	closeErr error
 }
 
+func TestStackConfigurationSelection(t *testing.T) {
+	cleanProxyEnv(t)
+	for _, name := range []string{"system", "mixed"} {
+		cfg, err := ParseConfig([]byte(baseConfig + "stack='" + name + "'"))
+		if name == "mixed" && !singtun.WithGVisor {
+			require.ErrorContains(t, err, "requires a build with -tags with_gvisor")
+			continue
+		}
+		require.NoError(t, err)
+		require.Equal(t, name, cfg.Core.Stack)
+		if name == "mixed" {
+			one := testEngine(t)
+			updated := one.Snapshot().Config
+			updated.Core.Stack = name
+			require.ErrorContains(t, one.Reload(updated), "require restart")
+			require.Equal(t, "system", one.Snapshot().Config.Core.Stack)
+		}
+	}
+}
+
 func (d *stubTun) Name() (string, error)                    { return "kone-test", d.nameErr }
 func (d *stubTun) Start() error                             { return nil }
 func (d *stubTun) UpdateRouteOptions(singtun.Options) error { return nil }

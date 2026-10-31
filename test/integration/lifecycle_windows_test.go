@@ -100,7 +100,6 @@ listen-port=%d
 servers=["1.1.1.1"]
 [[outbounds]]
 name='Win'
-type='proxy'
 url="%s"
 [[rules]]
 type="FINAL"

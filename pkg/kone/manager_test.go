@@ -31,7 +31,7 @@ func TestManagerReloadAndRedaction(t *testing.T) {
 	require.Equal(t, "A", one.policy.Load().rule.Proxy("example.com"))
 	require.Equal(t, "A", one.Snapshot().Config.Rule[0].Outbound)
 	cfg = one.Snapshot().Config
-	setTestOutbound(cfg, "Secret", OutboundProxy, "https://user:password@example.com:443")
+	setTestOutbound(cfg, "Secret", "https://user:password@example.com:443")
 	require.NoError(t, one.Reload(cfg))
 	view := httptest.NewRecorder()
 	handler.ServeHTTP(view, httptest.NewRequest(http.MethodGet, "/config/", nil))

@@ -46,8 +46,8 @@ func NewOutbounds(config []OutboundConfig) (*Outbounds, error) {
 		return nil, err
 	}
 	p := &Outbounds{entries: make(map[string]configuredOutbound, len(config)+2), dial: proxy.Direct.DialContext}
-	for _, o := range builtinOutbounds() {
-		p.entries[o.Name] = configuredOutbound{kind: o.Type}
+	for name, kind := range builtinOutbounds() {
+		p.entries[name] = configuredOutbound{kind: kind}
 	}
 	for _, o := range config {
 		dialer, _ := proxy.FromUrl(o.URL) // validated above; never log credentials

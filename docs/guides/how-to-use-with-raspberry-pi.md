@@ -51,7 +51,6 @@ outbound-interface = "eth0" # 真实上游接口，按设备修改；可与 LAN 
 
 [[outbounds]]
 name = "gateway"
-type = "proxy"
 url = "http://your-proxy.example:8080"
 
 [[rules]]

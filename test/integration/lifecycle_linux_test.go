@@ -250,7 +250,7 @@ func localConnectProxy(t *testing.T, body string) *httptest.Server {
 func TestSystemLifecycleTrafficAndReload(t *testing.T) {
 	cfg := systemConfig(t)
 	oldProxy, newProxy := localConnectProxy(t, "old"), localConnectProxy(t, "new")
-	cfg.Outbounds = append(cfg.Outbounds, kone.OutboundConfig{Name: "A", Type: kone.OutboundProxy, URL: oldProxy.URL})
+	cfg.Outbounds = append(cfg.Outbounds, kone.OutboundConfig{Name: "A", URL: oldProxy.URL})
 	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Outbound: "A"}}
 	one, cancel, done := systemStart(t, cfg)
 	request := new(dns.Msg)

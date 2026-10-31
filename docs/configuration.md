@@ -6,7 +6,7 @@ Go 版本统一为 1.27.3。原 INI 文件不再加载，默认配置文件名�
 ## INI 到 TOML
 
 配置由 `[general]`、`[core]`、可选的 `[dns]`、`[[outbounds]]` 与 `[[rules]]` 组成。
-旧 `[proxies]` 字典改为代理出站数组，使用自定义名字、`type = "proxy"` 和 URL 声明代理。规则使用 `outbound` 引用代理名，或直接引用内置的 `direct`、`reject`。
+旧 `[proxies]` 字典改为代理出站数组，只使用自定义 `name` 和 `url` 声明代理，不再配置出站 `type`；代理协议由 URL 的 scheme 决定。规则使用 `outbound` 引用代理名，或直接引用内置的 `direct`、`reject`。
 `direct` 和 `reject` 始终可用，不需要配置条目；只使用它们时，整个 `[[outbounds]]` 数组都可以省略。已有 `type = "direct" / "reject"` 条目应删除，并将规则中的别名替换为 `direct` / `reject`。
 旧 `core.dns-*` 参数移动到 `[dns]` 并去掉 `dns-` 前缀；`dns-server` 改为 `dns.servers`。
 旧 INI、`[proxies]`、规则的 `proxy` 字段和 `core.dns-*` 都会被严格校验拒绝，不会静默忽略。
@@ -19,10 +19,10 @@ log-format = "json"
 
 [core]
 network = "10.192.0.1/16"
+stack = "system"
 
 [[outbounds]]
 name = "office"
-type = "proxy"
 url = "http://127.0.0.1:8080"
 
 [[rules]]
@@ -64,7 +64,7 @@ write-timeout = 5
 - 监听端口非零；NAT 范围为 `[start, end)`，必须有效，且不能包含对应 relay 的监听端口。
 - DNS 上游必须是 IP 地址，可带有效端口，不能指向虚拟网段。DNS TTL 必须在 1..4294967295 秒内，报文大小至少 512 字节，超时在 1..300 秒内。
 - 支持 `http://host:port`、`https://host:port`、`socks5://host:port`，端口必须显式提供；URL 不允许路径、查询或 fragment。IPv6 主机使用方括号。
-- 代理出站名必须非空、唯一，不含控制字符或首尾空白。配置类型只允许 `proxy`，必须有合法 URL；内置出站不能通过配置声明或覆盖。
+- 代理出站只接受 `name` 和 `url`；旧的出站 `type` 字段应删除，否则会报未知配置键。名称必须非空、唯一，不含控制字符或首尾空白，URL 必须合法；内置出站不能通过配置声明或覆盖。
 - 规则引用已配置的代理名或内置小写 `direct` / `reject`，引用区分大小写。`direct`、`reject` 及其大小写变体均不能用作代理名称。没有规则匹配时使用内置 `direct`。
 - 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 当前会报不支持。
 - `DOMAIN-SUFFIX = example.com` 匹配自身和子域名，不匹配 `1example.com`。`DIRECT` CIDR 例外会保留规则优先级。
@@ -88,7 +88,7 @@ write-timeout = 5
 
 设备与透明流量处理改用 SagerNet/sing-tun，Windows 使用内嵌 Wintun，Linux 使用 TUN，macOS 使用 utun。`core.tun` 留空时自动分配名称，指定时必须尚不存在；macOS 名称必须为 utunN。
 
-- `core.stack = "system"` 为默认值，适用于普通构建；`"mixed"` 使用系统 TCP 和 gVisor UDP，必须用 `go build -tags with_gvisor` 构建。缺少构建能力时会返回明确错误，不静默切换协议栈。
+- 在 `[core]` 下设置 `stack = "system"` 或 `stack = "mixed"`；示例显式选择默认的 `system`，使用系统 TCP 和 sing-tun UDP，适用于普通构建。`mixed` 使用系统 TCP 和 gVisor UDP，必须用 `go build -tags with_gvisor` 构建。缺少构建能力时会返回明确错误，不静默切换协议栈；修改协议栈需要重启。
 - `core.auto-route = false` 保留原来的 Fake-IP 子网和显式 CIDR 接管；`true` 添加 `0.0.0.0/1` 与 `128.0.0.0/1` 路由，实现 IPv4 全局接管，同时保留原默认路由供退出后使用。已有更具体路由仍按系统路由优先级处理。
 - 全局接管必须指定 `core.outbound-interface`，代理连接、直连连接和上游 DNS 查询使用这个真实接口。回环地址上的本地代理和 DNS stub 使用原回环路径。出口不能与 TUN 同名；IP-CIDR 默认捕获路由同样要求指定出口。接口切换需要修改配置并重启。
 - `core.network` 的接口地址之后一个地址供协议栈使用，两者均不会分配为 Fake-IP。该地址必须保留至少一个后继主机地址。
