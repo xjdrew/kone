@@ -460,9 +460,10 @@ async function mount(page, options = {}) {
       404,
     );
   });
-  await page.goto("/#token=local-test-only");
+  const bootstrapPage = options.bootstrapPage;
+  await page.goto("/#token=local-test-only" + (bootstrapPage ? `&page=${encodeURIComponent(bootstrapPage)}` : ""));
   await expect(
-    page.getByRole("heading", { name: "首页", exact: true }),
+    page.getByRole("heading", { name: bootstrapPage === "diagnostics" ? "诊断" : "首页", exact: true }),
   ).toBeVisible();
   await expect(page.locator("#runtime-status")).toContainText("已暂停");
   return data;
@@ -476,6 +477,18 @@ async function navigate(page, name) {
     await page.locator("#menu-toggle").click();
   await page.locator(`.nav-link[data-page=${name}]`).click();
 }
+
+test("@compat desktop diagnostic deep link opens diagnostics without starting a probe", async ({ page }) => {
+  const data = await mount(page, { bootstrapPage: "diagnostics" });
+  await expect(page).toHaveURL(/#diagnostics$/);
+  await expect(page.locator("#diagnose-target")).toBeVisible();
+  await expect(page.locator(".nav-link[data-page=diagnostics]")).toHaveClass(/active/);
+  expect(data.requests.some((request) => request.path === "/diagnostics" && request.method === "GET")).toBe(true);
+  expect(data.requests.filter((request) => request.path === "/session")).toHaveLength(1);
+  expect(data.writes).toHaveLength(0);
+  expect(data.requests.every((request) => !Object.hasOwn(request.query, "token"))).toBe(true);
+  expect(page.url()).not.toContain("local-test-only");
+});
 
 test("@compat uses embedded offline assets, removes token fragment, and renders native measured paths", async ({
   page,

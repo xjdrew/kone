@@ -23,8 +23,8 @@ func ownedResolverProfile() string {
 		"SupplementalMatchDomains : <array> {\n0 : \n}\n}\n"
 }
 
-const darwinOwnedResolver = "resolver #1\n nameserver[0] : 127.0.0.1\n port : 1053\n"
-const darwinPhysicalResolver = "resolver #2\n nameserver[0] : 192.0.2.53\n search domain[0] : home.test\n"
+const darwinOwnedResolver = "resolver #1\n nameserver[0] : 127.0.0.1\n port : 1053\n order : 1\n"
+const darwinPhysicalResolver = "resolver #2\n nameserver[0] : 192.0.2.53\n search domain[0] : home.test\n order : 200000\n"
 const darwinVPNResolver = "resolver #3\n domain : corp.test\n nameserver[0] : 10.0.0.53\n if_index : 5 (utun9)\n flags : Supplemental, Scoped\n"
 
 func TestDarwinDNSDiscoveryExcludesOnlyVerifiedOwnedResolverAcrossProcesses(t *testing.T) {
@@ -87,6 +87,23 @@ func TestDarwinDNSDiscoveryNeverGuessesLoopbackOwnership(t *testing.T) {
 		require.Equal(t, []string{"127.0.0.1:1053"}, observed.DefaultServers)
 		require.False(t, observed.ownedDefaultExcluded)
 	}
+}
+
+func TestDarwinDNSDiscoveryExcludesVerifiedRootSupplementalResolver(t *testing.T) {
+	read := func(_ context.Context, script string) ([]byte, error) {
+		if script == darwinDNSStoreList {
+			return []byte("subKey [0] = " + ownedResolverKey), nil
+		}
+		return []byte(ownedResolverProfile()), nil
+	}
+	root := strings.Replace(darwinOwnedResolver, "resolver #1\n", "resolver #1\n domain : .\n", 1)
+	observed, err := discoverDarwinDNSContext(t.Context(), []byte(root+darwinPhysicalResolver+darwinVPNResolver), read)
+	require.NoError(t, err)
+	require.True(t, observed.ownedDefaultExcluded)
+	require.Equal(t, []string{"192.0.2.53:53"}, observed.DefaultServers)
+	require.Len(t, observed.Scopes, 1)
+	require.Equal(t, "corp.test", observed.Scopes[0].Suffix)
+	require.Equal(t, []string{"10.0.0.53:53"}, observed.Scopes[0].Servers)
 }
 
 func TestDarwinDNSDiscoveryFailsClosedOnUnverifiableOwnedSettings(t *testing.T) {

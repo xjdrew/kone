@@ -4,7 +4,7 @@
 
 菜单使用系统 `/usr/bin/osascript` 的 JavaScript for Automation Objective-C bridge 调用 AppKit，不增加 CGO 或第三方桌面框架。它只创建自己的 `NSStatusBar`、`NSMenu` 与 target/action 对象，不向其他应用发送 Apple Events，也不请求辅助功能权限。实现依据 [Apple 的 JXA bridge 说明](https://devstreaming-cdn.apple.com/videos/wwdc/2014/306xxjtg7uz13v0/306/306_javascript_for_automation.pdf) 和 [NSStatusItem API](https://developer.apple.com/documentation/appkit/nsstatusitem?language=objc)。
 
-Go 父进程通过有界管道发送缓存状态和可用动作；脚本仅能返回“打开管理、启用、暂停、诊断、退出”枚举。凭据、管理令牌、代理 URL 和完整配置不经过该协议。点击动作仍由 Go 控制层处理，原生菜单不直接发网络请求。状态未知时不显示已接管，操作按钮按实际状态启停。
+Go 父进程通过有界管道发送缓存状态和可用动作；脚本仅能返回“打开管理、启用、暂停、诊断、退出”枚举。凭据、管理令牌、代理 URL 和完整配置不经过该协议。点击动作仍由 Go 控制层处理，原生菜单不直接发网络请求。“诊断”会直接打开管理页的诊断页面，不会自动发起探测。状态未知时不显示已接管，操作按钮按实际状态启停。
 
 脚本实际尝试创建 AppKit 菜单，检查显示环境、状态项和按钮，成功后才发送 `READY`。不因会话属性预先跳过全部图形能力。没有可用桌面时明确返回不可用；初始化、协议或进程失败时报告原因并保留 Web 管理。普通用户启动可尝试菜单入口，管理员进程不创建桌面菜单。
 

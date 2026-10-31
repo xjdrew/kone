@@ -18,6 +18,24 @@ import (
 
 func SupportsSystemDNS() bool { return darwinSystemDNSAcceptance }
 
+// The default error message never exposes resolver domains/addresses. Native
+// acceptance can explicitly request this bounded snapshot before rollback.
+type darwinDNSSelectionError struct{ diagnostic string }
+
+func (e *darwinDNSSelectionError) Error() string {
+	return "owned DNS key was not selected by the system resolver"
+}
+func (e *darwinDNSSelectionError) SystemDNSDiagnostic() string { return e.diagnostic }
+func darwinSelectionError(resolvers, profile []byte) error {
+	if len(resolvers) > 8192 {
+		resolvers = resolvers[:8192]
+	}
+	if len(profile) > 2048 {
+		profile = profile[:2048]
+	}
+	return &darwinDNSSelectionError{diagnostic: "Raw system resolvers:\n" + string(resolvers) + "\nOwned temporary profile:\n" + string(profile)}
+}
+
 func darwinSCRead(ctx context.Context, script string) ([]byte, error) {
 	command := exec.CommandContext(ctx, "/usr/sbin/scutil")
 	command.Stdin = strings.NewReader(script)
@@ -145,9 +163,11 @@ func (n systemNetwork) ConfigureSystemDNSLease(ctx context.Context, device Devic
 	}
 	selection, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	var lastResolvers []byte
 	for {
 		data, err := readDNSCommand(selection, "/usr/sbin/scutil", "--dns")
 		if err == nil {
+			lastResolvers = data
 			observed, err := parseDarwinDNSContext(data)
 			if err == nil && containsDNSValue(observed.DefaultServers, wanted) {
 				return cleanup, failures, nil
@@ -155,7 +175,10 @@ func (n systemNetwork) ConfigureSystemDNSLease(ctx context.Context, device Devic
 		}
 		select {
 		case <-selection.Done():
-			return cleanup, failures, errors.New("owned DNS key was not selected by the system resolver")
+			diagnosticCtx, stop := context.WithTimeout(ctx, time.Second)
+			profile, _ := darwinSCRead(diagnosticCtx, "show State:/Network/Service/"+id+"/DNS\nquit\n")
+			stop()
+			return cleanup, failures, darwinSelectionError(lastResolvers, profile)
 		case failure, open := <-failures:
 			if !open || failure == nil {
 				failure = errors.New("owned DNS session ended before system selection")

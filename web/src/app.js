@@ -3889,10 +3889,15 @@ setInterval(async () => {
 }, 1500);
 
 try {
-  model.page = pages.some((page) => page[0] === location.hash.slice(1))
-    ? location.hash.slice(1)
-    : "home";
-  model.state = await bootstrap();
+  try {
+    model.state = await bootstrap();
+  } finally {
+    // replaceState does not fire hashchange. Also retain the clean destination
+    // when authorization fails, so a later explicit login opens the right page.
+    model.page = pages.some((page) => page[0] === location.hash.slice(1))
+      ? location.hash.slice(1)
+      : "home";
+  }
   model.online = true;
   model.authenticated = true;
   model.lastSuccess = new Date().toISOString();

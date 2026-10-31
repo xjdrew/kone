@@ -171,7 +171,9 @@ func runContextWithElevation(ctx context.Context, args []string, stdout, stderr 
 						},
 						Diagnostics: func() {
 							if local, err := manager.LocalAccessURL(); err == nil {
-								_ = openBrowser(local)
+								if target, err := localManagementPageURL(local, "diagnostics"); err == nil {
+									_ = openBrowser(target)
+								}
 							}
 						},
 						State: func() string { return manager.State().DataState },

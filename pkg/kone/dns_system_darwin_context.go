@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -17,9 +18,9 @@ func parseDarwinDNSContextExcluding(data []byte, excluded map[string]bool) (DNSS
 		return context, errors.New("macOS DNS context exceeds output limit")
 	}
 	type resolver struct {
-		domain, device, options, port string
-		servers, search               []string
-		scoped                        bool
+		domain, device, options, port, order string
+		servers, search                      []string
+		scoped                               bool
 	}
 	var current *resolver
 	var resolvers []resolver
@@ -72,12 +73,17 @@ func parseDarwinDNSContextExcluding(data []byte, excluded map[string]bool) (DNSS
 			current.options = value
 		case key == "port":
 			current.port = value
+		case key == "order":
+			current.order = value
 		}
 	}
 	finish()
 	if err := scanner.Err(); err != nil {
 		return context, errors.New("macOS DNS context contains oversized lines")
 	}
+	var defaultOrder uint64 = 1 << 32
+	var defaultServers []string
+	defaultUnusable, defaultAmbiguous, unknownDefaultOrder := false, false, false
 	for _, resolver := range resolvers {
 		portValid := resolver.port == "" || validatePort(resolver.port) == nil
 		if resolver.port != "" && portValid {
@@ -102,12 +108,31 @@ func parseDarwinDNSContextExcluding(data []byte, excluded map[string]bool) (DNSS
 			}
 		}
 		suffixes := []string{}
-		if resolver.domain != "" {
+		if !resolver.scoped && (resolver.domain == "" || resolver.domain == ".") {
+			// Apple SearchOrder, rather than scutil's display position, chooses
+			// between the ordinary default and match-all supplemental resolvers.
+			order := uint64(200000)
+			if resolver.order != "" {
+				var err error
+				order, err = strconv.ParseUint(resolver.order, 10, 32)
+				if err != nil {
+					unknownDefaultOrder = true
+					continue
+				}
+			}
+			unusable := !valid || !portValid || len(servers) == 0 || resolver.options != ""
+			if order < defaultOrder {
+				defaultOrder = order
+				defaultServers = append([]string(nil), servers...)
+				defaultUnusable, defaultAmbiguous = unusable, false
+			} else if order == defaultOrder {
+				defaultUnusable = defaultUnusable || unusable
+				defaultAmbiguous = defaultAmbiguous || strings.Join(defaultServers, "|") != strings.Join(servers, "|")
+			}
+		} else if resolver.domain != "" {
 			suffixes = append(suffixes, resolver.domain)
 		} else if resolver.scoped {
 			suffixes = append(suffixes, resolver.search...)
-		} else if len(context.DefaultServers) == 0 && valid {
-			context.DefaultServers = append(context.DefaultServers, servers...)
 		}
 		for _, suffix := range suffixes {
 			if !validDNSSuffix(suffix) {
@@ -122,6 +147,12 @@ func parseDarwinDNSContextExcluding(data []byte, excluded map[string]bool) (DNSS
 			}
 			context.Scopes = append(context.Scopes, scope)
 		}
+	}
+	if defaultUnusable || defaultAmbiguous || unknownDefaultOrder {
+		context.RequireManual = true
+		context.Warnings = append(context.Warnings, "macOS default resolver order or transport is ambiguous; configure explicit DNS servers")
+	} else {
+		context.DefaultServers = defaultServers
 	}
 	if len(resolvers) == 0 {
 		return context, errors.New("macOS DNS context contains no resolvers")

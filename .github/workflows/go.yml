@@ -334,6 +334,7 @@ jobs:
       - name: Exercise owned utun and temporary system DNS lifecycle
         run: sudo -n env KONE_DARWIN_SYSTEM_TEST=1 KONE_DARWIN_DNS_SYSTEM_TEST=1 "$RUNNER_TEMP/kone-darwin-system.test" -test.run '^TestSystemDarwin(UTUN|DNSGuidance)$' -test.v -test.timeout 5m
       - name: Verify configd removes a dead owned DNS session automatically
+        if: ${{ !cancelled() }}
         run: sudo -n env KONE_DARWIN_DNS_SYSTEM_TEST=1 "$RUNNER_TEMP/kone-darwin-dns-session.test" -test.run '^TestDarwinOwnedSystemDNSSessionDeath$' -test.v -test.timeout 1m
 
   dns-system:

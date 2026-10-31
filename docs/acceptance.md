@@ -23,7 +23,7 @@
 | UI-04 | 原生采样路径桑基、守恒、其他合并、固定窗口/anchor/实际 flow IDs 分块钻取、等价路径列表 | [图形单测](../web/test/graph.test.mjs)、[观察](../pkg/kone/observation_test.go)、[高基数钻取](../web/e2e/console.spec.js) | 明细有展示/保留上限并提示；无流量不放生产演示数据；代理端点不当最终目的 |
 | UI-05 | 320px 八页面；360/390/430/768/1024px 首页；Chromium 全套及 WebKit/Firefox 关键页面、触控钻取、只读与弱网恢复项目 | [浏览器布局/截图](../web/e2e/console.spec.js)、[引擎与视口](../web/playwright.config.js)、[构建目标](../web/vite.config.js) | 按 engine/viewport 留存报告；自动化引擎不等于真实 iOS/Android，横竖屏/锁屏/软键盘仍需设备验收 |
 | UI-06 | 默认回环；主机显式私网 HTTPS、本地 CA、短期配对、只读/管理与撤销 | [LAN/TLS](../pkg/control/lan_test.go)、[会话](../pkg/control/server_test.go)、[访问说明](../README.md) | 不自动安装根证书、修改防火墙或开放路由器；手机证书信任/网络隔离需真机检查 |
-| DESK-01/02 | 默认管理、单实例和受控停机，三平台应用/安装包链路 | [CLI 与管理](../test/integration/control_test.go)、[打包工作流](../.github/workflows/go.yml)、[发布矩阵](releases.md) | 平台托盘、权限窗口与干净机器升级/卸载以具体平台验收为准；未签名/未公证不冒充完整发行体验 |
+| DESK-01/02 | 默认管理、单实例与受控停机；Windows 托盘、macOS 原生菜单及独立权限助手，三平台安装包链路 | [CLI 与管理](../test/integration/control_test.go)、[Mac 菜单与原生证据](macos-tray.md)、[打包工作流](../.github/workflows/go.yml)、[发布矩阵](releases.md) | 菜单/IPC/真实 TUN 已有原生自动验收；真实鼠标、权限弹窗、干净机器升级/卸载及签名/公证仍需部署验收 |
 | PERF-01/02 | 核心 CPU/分配、观察开关/查询与容量基线；system/mixed 真实 TUN direct TCP/UDP 的有限载荷与 RTT 采样 | [基线说明](performance.md)、[核心基准](../pkg/kone/core_benchmark_test.go)、[观察基准](../pkg/kone/observation_benchmark_test.go)、[原生采样](../test/integration/performance_linux_test.go) | 区分合成计数和实际转发；共享 runner 的有限回环采样不代表物理链路、加密代理或 Raspberry Pi 长时性能 |
 | DATA-01 | 有界本地文件、可信 SHA-256、来源许可版本、原子保存、回退与明确下次加载 | [GeoIP 数据](../pkg/geoip/database_test.go)、[控制 API](../pkg/control/geoip_test.go)、[端到端](../test/integration/geoip_test.go)、[界面校验](../web/e2e/console.spec.js) | 不根据输入 URL 自动下载；保存前需暂停，不替换旧流持有的数据快照 |
 | PROTO-01 | SOCKS5 原生 UDP、保留 direct/reject/显式回退；Linux/Windows 可选 IPv6 A/AAAA、规则、TCP/UDP、清理 | [Linux IPv6](../test/integration/ipv6_linux_test.go)、[Windows IPv6](../test/integration/ipv6_windows_test.go)、[IPv6 范围](ipv6.md)、[UDP 传输](../pkg/proxy) | macOS IPv6 启用明确拒绝；ICMP、任意分片/扩展头不在未验收时承诺 |
@@ -32,7 +32,7 @@
 
 ## 评审时按这条路径验证
 
-先检查最新 SHA 的 Go 三平台 race/覆盖率、Web、包安装、漏洞/模糊、Linux namespace 与 Windows 驱动任务结果，再从运行行为验收：
+先检查最新 SHA 的 Go 三平台 race/覆盖率、Web、包安装、漏洞/模糊、Linux namespace、Windows Wintun 与 macOS UTUN/菜单/权限助手任务结果，再从运行行为验收：
 
 1. 在独立配置目录打开无参数管理；确认未接管，纯直连可配置，坏代理不影响管理。
 2. 编辑入站/出站/规则/DNS；确认草稿、已保存、运行版本分开，重名/引用/凭据/并发冲突不会静默覆盖。

@@ -134,6 +134,37 @@ test("write version conflicts remain explicit and never automatically retry", as
   assert.equal(count, 1);
 });
 
+test("diagnostic bootstrap strips credentials before exchange and only navigates", async () => {
+  globalThis.location = { hash: "#token=diagnostic-one-use&page=diagnostics", pathname: "/", search: "" };
+  const calls = [];
+  globalThis.history = {
+    replaceState: (_state, _title, target) => {
+      assert.equal(target, "/#diagnostics");
+      globalThis.location.hash = "#diagnostics";
+    },
+  };
+  globalThis.fetch = async (path, options) => {
+    assert.equal(globalThis.location.hash, "#diagnostics");
+    calls.push({ path, ...options });
+    return new Response(JSON.stringify({ role: "admin", csrf_token: "diagnostic-csrf" }), { status: 200 });
+  };
+  await bootstrap();
+  assert.deepEqual(calls.map(({ path, method }) => [path, method]), [["/api/v1/session", "POST"], ["/api/v1/state", "GET"]]);
+  assert.equal(JSON.parse(calls[0].body).token, "diagnostic-one-use");
+  assert.equal(calls[1].headers.Authorization, undefined);
+  assert.ok(calls.every(({ path }) => !path.includes("token=") && !path.includes("diagnostics")));
+});
+
+test("bootstrap page parameters use an explicit home/diagnostics whitelist", async () => {
+  for (const page of ["settings", "https://example.com", "javascript:alert(1)", "diagnostics?probe=1", "DIAGNOSTICS"]) {
+    globalThis.location = { hash: `#token=once&page=${encodeURIComponent(page)}`, pathname: "/", search: "" };
+    let scrubbed = false;
+    globalThis.history = { replaceState: (_state, _title, target) => { assert.equal(target, "/#home"); scrubbed = true; } };
+    globalThis.fetch = async () => { assert.equal(scrubbed, true); return new Response(JSON.stringify({ role: "admin" }), { status: 200 }); };
+    await bootstrap();
+  }
+});
+
 test("an expired bootstrap token cannot override a later pairing session cookie", async () => {
   globalThis.location = { hash: "#token=expired", pathname: "/", search: "" };
   globalThis.history = { replaceState: () => {} };

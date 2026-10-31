@@ -109,11 +109,12 @@ export async function bootstrap() {
   const params = new URLSearchParams(location.hash.slice(1));
   const token = params.get("token");
   if (token) {
+    const page = params.get("page") === "diagnostics" ? "diagnostics" : "home";
     // Remove bootstrap credentials before creating links or making requests.
     history.replaceState(
       null,
       "",
-      `${location.pathname}${location.search}#home`,
+      `${location.pathname}${location.search}#${page}`,
     );
     bearer = token;
     try {

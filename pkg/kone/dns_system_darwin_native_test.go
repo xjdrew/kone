@@ -4,14 +4,27 @@ package kone
 
 import (
 	"context"
+	"encoding/json"
 	"net/netip"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestDarwinSystemDNSSelectionDiagnosticIsExplicitAndBounded(t *testing.T) {
+	err := darwinSelectionError([]byte(strings.Repeat("private-resolver", 2000)), []byte(strings.Repeat("private-profile", 2000)))
+	require.NotContains(t, err.Error(), "private")
+	encoded, marshalErr := json.Marshal(err)
+	require.NoError(t, marshalErr)
+	require.NotContains(t, string(encoded), "private")
+	snapshot := err.(interface{ SystemDNSDiagnostic() string }).SystemDNSDiagnostic()
+	require.Contains(t, snapshot, "private-resolver")
+	require.Less(t, len(snapshot), 10400)
+}
 
 func TestDarwinOwnedSystemDNSSessionDeath(t *testing.T) {
 	if os.Getenv("KONE_DARWIN_DNS_SYSTEM_TEST") != "1" {

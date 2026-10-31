@@ -183,11 +183,17 @@ func TestSystemDarwinDNSGuidance(t *testing.T) {
 				cfg.Rule = []kone.RuleConfig{{Schema: "DOMAIN", Pattern: name, Outbound: "offline"}, {Schema: "FINAL", Outbound: kone.BuiltinDirect}}
 				var options []kone.Option
 				if failure {
-					cfg.General.ManagerAddr = "127.0.0.1:0"
+					cfg.General.ManagerAddr = fmt.Sprintf("127.0.0.1:%d", darwinDNSPort(t))
 					options = append(options, kone.WithSockets(&darwinFailedManagerSockets{manager: cfg.General.ManagerAddr}))
 				}
 				one, err := kone.FromConfig(cfg, options...)
 				require.NoError(t, err)
+				require.NoError(t, one.SetCaptureRecorder(func(name string, index int) error {
+					if !strings.HasPrefix(name, "utun") || index <= 0 {
+						return errors.New("invalid exclusive utun identity")
+					}
+					return nil
+				}))
 				ctx, cancel := context.WithCancel(t.Context())
 				done := make(chan error, 1)
 				go func() { done <- one.Run(ctx) }()
@@ -196,12 +202,15 @@ func TestSystemDarwinDNSGuidance(t *testing.T) {
 				wait := func() error { once.Do(func() { result = darwinWait(t, done) }); return result }
 				t.Cleanup(func() { cancel(); _ = one.Close(); _ = wait() })
 				if failure {
-					require.ErrorContains(t, wait(), "manager")
+					runErr := wait()
+					darwinLogDNSDiagnostic(t, runErr)
+					require.ErrorContains(t, runErr, "manager")
 				} else {
 					select {
 					case <-one.Ready():
 					case err := <-done:
 						once.Do(func() { result = err })
+						darwinLogDNSDiagnostic(t, err)
 						t.Fatalf("start scoped system DNS: %v", err)
 					case <-time.After(10 * time.Second):
 						t.Fatal("system DNS did not start")
@@ -230,5 +239,13 @@ func TestSystemDarwinDNSGuidance(t *testing.T) {
 				}, 8*time.Second, 50*time.Millisecond, "stopping/late rollback must restore the original temporary resolver")
 			})
 		}
+	}
+}
+
+func darwinLogDNSDiagnostic(t *testing.T, err error) {
+	t.Helper()
+	var diagnostic interface{ SystemDNSDiagnostic() string }
+	if errors.As(err, &diagnostic) {
+		t.Log(diagnostic.SystemDNSDiagnostic())
 	}
 }

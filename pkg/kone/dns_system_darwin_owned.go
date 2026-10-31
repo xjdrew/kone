@@ -26,7 +26,13 @@ func discoverDarwinDNSContext(ctx context.Context, data []byte, readStore func(c
 		return observed, err
 	}
 	loopback := false
-	for _, server := range observed.DefaultServers {
+	defaults := append([]string(nil), observed.DefaultServers...)
+	for _, scope := range observed.Scopes {
+		if scope.Suffix == "." {
+			defaults = append(defaults, scope.Servers...)
+		}
+	}
+	for _, server := range defaults {
 		host, _, _ := net.SplitHostPort(server)
 		if ip, err := netip.ParseAddr(host); err == nil && ip.IsLoopback() {
 			loopback = true
