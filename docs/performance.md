@@ -23,6 +23,16 @@ CI 的 **Reproducible performance baseline** 先记录事实，不设置未经�
 
 观察基准中的载荷字节是合成计数。Go 输出的 `MB/s` 表示该计数操作承载的模拟字节量，**不能称为 TUN 吞吐、实际 TCP/UDP 转发速度或链路带宽**。system/mixed 构建都有这些核心指标，也不等于已经覆盖两种协议栈的报文处理差异。
 
+## 真实 TUN 的有限 runner 采样
+
+Linux 原生生命周期任务还在独立网络命名空间中运行 `TestSystemPerformanceBaseline`，分别验证 `system` 和 `mixed` 的真实 Fake-IP → TUN → direct TCP/UDP → 本地回显服务 → TUN 回程。它先生成虚拟地址，再热更新为直连；准备映射的代理出站不参与实际转发。
+
+每种协议比较三种模式：保留明细、仅独立整体计数，以及保留明细并以目标 200 次/秒并发查询一致的 Snapshot/Sankey。关闭明细不等于关闭整体计数或全部观察开销，输出记录实际完成的查询数。TCP 每轮每方向 16 KiB，UDP 每轮每方向 1200 字节；4 轮预热后计量 128 轮，整个采样有 20 秒上下文上限，每种协议栈的总往返载荷小于 16 MiB。
+
+`native-data-plane-baseline` 工件包含 `environment.txt` 和 `system.log`、`mixed.log`：前者记录精确 SHA、Go、OS/内核、CPU 型号/核数、内存和 race 构建参数；日志中的 `KONE_NATIVE_PERFORMANCE` JSON 记录完整回显验证的实际载荷字节、耗时、载荷吞吐、单轮 RTT 的 p50/p95/p99、同进程用户/内核 CPU 时间和查询数。百分位采用最近秩；TCP 的 RTT 对应一轮完整载荷回显。传输或退出清理失败仍使任务失败，性能数值不设置波动门禁。
+
+这是共享 runner、race 插桩、回环目标和测试夹具共同参与的集成采样。CPU 包括同进程的回显服务和查询负载；每轮校验也有开销。结果可追踪同类环境的变化，不能当作纯内核性能、物理链路上限、不同模式之间的因果结论，或 Raspberry Pi、HTTP/SOCKS5/SS 的实测吞吐。
+
 ## 本地复现与比较
 
 在隔离开发/性能环境中运行，不需要创建 TUN 或修改系统网络：
@@ -36,4 +46,4 @@ go tool pprof baseline/kone-system.test baseline/cpu-system.out
 
 比较时保留原始样本、SHA、工具链和硬件信息，区分共享 runner 波动与稳定变化。容量满额时整体计数仍须正确，查询不能改变转发策略；这些是正确性约束，由回归测试验证，不能用较快的平均耗时替代。
 
-尚需独立实验室基线：真实 TUN 的 system/mixed TCP/UDP 往返、HTTP/SOCKS5/SS 加密转发、MTU/分片、长时间管理负载，及 Raspberry Pi 上的吞吐、CPU、内存、丢弃与 p50/p95/p99 延迟。CI 的隔离网络命名空间/Windows 驱动测试目前是功能与恢复验收，不能将其成功解释成上述性能目标已测量。得到这些硬件基线后，再制定有依据的回退预算。
+尚需独立实验室基线：HTTP/SOCKS5/SS 加密转发、MTU/分片、长时间管理负载，及 Raspberry Pi 上的吞吐、CPU、内存、丢弃与 p50/p95/p99 延迟。除上述有明确计量边界的 Linux direct 采样外，原生协议/驱动测试仍是功能与恢复验收；不能把功能通过当作性能目标已测量。得到这些硬件基线后，再制定有依据的回退预算。

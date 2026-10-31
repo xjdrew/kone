@@ -260,6 +260,18 @@ jobs:
           go test -tags with_gvisor -race -c -o "$RUNNER_TEMP/kone-system.test" ./test/integration
       - name: Test real TUN in isolated network namespace
         run: |
+          set -euo pipefail
+          baseline="$RUNNER_TEMP/native-data-plane-baseline"
+          mkdir -p "$baseline"
+          {
+            git rev-parse HEAD
+            go version
+            uname -a
+            getconf _NPROCESSORS_ONLN
+            lscpu
+            head -n 5 /proc/meminfo
+            printf 'build flags: with_gvisor -race; namespaces: isolated per stack\n'
+          } > "$baseline/environment.txt"
           for stack in system mixed; do
           sudo unshare --net -- bash -c '
             set -e
@@ -267,9 +279,16 @@ jobs:
             export KONE_SYSTEM_TEST=1
             export KONE_SYSTEM_CLI="$1"
             export KONE_TEST_STACK="$3"
-            "$2" -test.run "^TestSystem(Lifecycle|Gateway|DNS|IPv6)" -test.v -test.timeout 180s
-          ' -- "$RUNNER_TEMP/kone-system-cli" "$RUNNER_TEMP/kone-system.test" "$stack"
+            "$2" -test.run "^TestSystem(Lifecycle|Gateway|DNS|IPv6|Performance)" -test.v -test.timeout 180s
+          ' -- "$RUNNER_TEMP/kone-system-cli" "$RUNNER_TEMP/kone-system.test" "$stack" | tee "$baseline/$stack.log"
           done
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: ${{ inputs.artifact-prefix }}native-data-plane-baseline
+          path: ${{ runner.temp }}/native-data-plane-baseline
+          if-no-files-found: error
+          overwrite: true
 
   windows-system:
     name: Windows Wintun lifecycle and traffic

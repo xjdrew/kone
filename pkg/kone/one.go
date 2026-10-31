@@ -130,7 +130,11 @@ func (one *One) Ready() <-chan struct{} { return one.ready }
 func (one *One) DNSSnapshot() (uint64, map[string]*DomainRecord) {
 	s := one.policy.Load()
 	records := one.domainRecords()
+	now := time.Now()
 	for _, record := range records {
+		if !record.resolutionFresh(now) {
+			record.resolved, record.RealIP = nil, nil
+		}
 		record.Proxy = s.rule.ProxyDNS(record.Hostname, record.resolved)
 	}
 	return s.version, records

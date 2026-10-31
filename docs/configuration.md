@@ -65,7 +65,7 @@ suffix = "168.192.in-addr.arpa"
 servers = ["192.168.1.53"]
 ```
 
-上面的参数均为可选项，含义及全部默认值见完整示例。`listen-port` 是 TUN 地址上的 KONE DNS 服务端口，同时监听 UDP/TCP；`servers` 是实际解析使用的上游，两者不同。上游 UDP 响应截断时，使用同一上游和出口重试 TCP。支持 IPv6 上游 DNS 和 AAAA 查询；Linux 可另外显式启用 IPv6 接管，默认只接管 IPv4。
+上面的参数均为可选项，含义及全部默认值见完整示例。`listen-port` 是 KONE DNS 服务端口，同时监听 UDP/TCP；Linux/Windows 使用 TUN 地址，macOS 使用本机回环入口；`servers` 是实际解析使用的上游，两者不同。上游 UDP 响应截断时，使用同一上游和出口重试 TCP。支持 IPv6 上游 DNS 和 AAAA 查询；Linux/Windows 可另外显式启用 IPv6 接管，默认只接管 IPv4。
 自动上游仅在创建 engine 时发现一次，生效服务器保存在运行实例中，配置仍保留“自动”状态。规则热更新不会重新读取已经被 KONE 改写的 Windows 网卡 DNS；改变 DNS 设置或系统网络需要重启。
 
 `[[dns.rules]]` 使用最长域名后缀匹配，自身和子域名均匹配，`suffix = "."` 为显式兜底。匹配后只查询该条规则中的服务器；超时或 NXDOMAIN 不会触发默认/公共 DNS 回退。反向解析域名也使用相同机制。同组上游并发解析，等待其他上游结果后才接受否定响应，避免较快的 NXDOMAIN 掩盖另一台服务器的有效回答。每组最多 16 台上游，最多 64 条分流规则。
@@ -134,7 +134,7 @@ udp-fallback = "direct"
 
 对没有 UDP 实现的协议，省略 `udp-fallback` 或设为空字符串表示默认拒绝；`"reject"` 表示明确拒绝。只允许内置 `direct`、`reject`，不接受未知名称、代理名称、自引用或回退链。SOCKS5/SS 优先使用原生 UDP，其连接、认证或转发失败不会执行直连回退；回退不是代理故障时的自动切换。回退不改变 TCP 和其他规则。环境变量覆盖代理 URL 时保留文件声明的回退策略；纯环境变量代理没有隐式回退。
 
-检查能力先于目标真实 DNS 解析和 UDP 拨号。热更新影响新会话，已有会话保留原快照。TCP/UDP 业务字节与 DNS 查询事件分开统计，不能把 DNS 记录数或 UDP 会话数当作字节流量。
+先确定规则，再检查能力；明确拒绝或不支持的出站不会为了发起连接而解析目标或拨号。依赖已观察 IP/CNAME 的规则重判须先刷新过期解析证据，不能用旧地址永久保留直连策略。热更新影响新会话，已有会话保留原快照。TCP/UDP 业务字节与 DNS 查询事件分开统计，不能把 DNS 记录数或 UDP 会话数当作字节流量。
 
 ## Shadowsocks 出站
 
@@ -146,7 +146,7 @@ name = "encrypted"
 url = "ss://aes-128-gcm:replace-with-your-password@proxy.example:8388"
 ```
 
-实现使用与官方 sing-box 相同版本的 [sing-shadowsocks2](https://github.com/SagerNet/sing-shadowsocks2)，遵守其 GPL-3.0-or-later 许可；协议范围依据 [Shadowsocks AEAD 文档](https://shadowsocks.org/doc/aead.html) 与 [SIP002](https://shadowsocks.org/doc/sip002.html)。互操作测试使用独立的本地 SIP004/SIP007 测试对端验证三种方法的 TCP/UDP 加密链路及篡改拒绝；这不替代各实际服务端版本的部署验收。
+实现使用与官方 sing-box 相同版本的 [sing-shadowsocks2](https://github.com/SagerNet/sing-shadowsocks2)，遵守其 GPL-3.0-or-later 许可；协议范围依据 [Shadowsocks AEAD 文档](https://shadowsocks.org/doc/aead.html) 与 [SIP002](https://shadowsocks.org/doc/sip002.html)。独立 SIP004/SIP007 测试对端覆盖加密及篡改拒绝，另与固定官方 shadowsocks-rust v1.25.0 镜像验证三种方法的真实 TCP/UDP 互操作，见 [服务端验收](shadowsocks-interop.md)。其他服务端/版本仍需独立验收。
 
 ## API 与目录迁移
 

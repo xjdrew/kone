@@ -24,7 +24,6 @@ function normalizeTrayState(input) {
 function run(argv) {
   ObjC.import("Foundation");
   ObjC.import("AppKit");
-  ObjC.import("CoreFoundation");
   ObjC.bindFunction("exit", ["void", ["int"]]);
   ObjC.bindFunction("fcntl", ["int", ["int", "int", "int"]]);
   ObjC.bindFunction("read", ["long", ["int", "void *", "unsigned long"]]);
@@ -38,6 +37,21 @@ function run(argv) {
   var item;
   var flags = -1;
   var timer;
+  function releaseNative() {
+    if (timer) {
+      timer.invalidate;
+      timer = undefined;
+    }
+    if (flags >= 0) {
+      $.fcntl(0, 4, flags);
+      flags = -1;
+    }
+    if (item && bar) {
+      bar.removeStatusItem(item);
+      item = undefined;
+    }
+    koneTrayObjects = undefined;
+  }
   try {
     // A background/SSH session is not proof that AppKit is unavailable. Ask
     // AppKit itself, without automating other apps or changing OS settings.
@@ -55,10 +69,17 @@ function run(argv) {
     var alive = true;
     var emitted = [];
     var entries = {};
-    var pendingError;
-    function stopLoop() {
-      app.stop($());
-      $.CFRunLoopStop($.CFRunLoopGetCurrent());
+    function stopLoop(error) {
+      // NSApplication.stop can wait for another native event after pipe EOF.
+      // Release our own UI first, then end only this companion normally.
+      if (error)
+        write(
+          errors,
+          "KONE_TRAY_ERROR: " +
+            String(error.message || "native input failure").slice(0, 240),
+        );
+      releaseNative();
+      $.exit(error ? 1 : 0);
     }
     function emit(action) {
       if (closing && action !== "OPEN") return;
@@ -83,8 +104,7 @@ function run(argv) {
               readState();
               if (!alive) stopLoop();
             } catch (error) {
-              pendingError = error;
-              stopLoop();
+              stopLoop(error);
             }
           },
         },
@@ -246,7 +266,6 @@ function run(argv) {
     // AppKit owns event dispatch and autorelease scopes. Explicit native pools
     // cannot safely span JXA bridge calls; do not push/pop them from JavaScript.
     app.run;
-    if (pendingError) throw pendingError;
   } catch (error) {
     var reason = String(error.message || "native tray failure");
     if (
@@ -266,9 +285,6 @@ function run(argv) {
     if (item && bar) bar.removeStatusItem(item);
     $.exit(1);
   } finally {
-    if (timer) timer.invalidate;
-    if (flags >= 0) $.fcntl(0, 4, flags);
-    if (item && bar) bar.removeStatusItem(item);
-    koneTrayObjects = undefined;
+    releaseNative();
   }
 }

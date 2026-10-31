@@ -114,8 +114,8 @@ func TestReloadReevaluatesCachedCNAMEAndIPRules(t *testing.T) {
 	one := testEngine(t)
 	record := one.dnsTable.Set("origin.example", "A")
 	one.dnsTable.SetRealIP(record.Hostname, &dns.Msg{Answer: []dns.RR{
-		&dns.CNAME{Hdr: dns.RR_Header{Name: "origin.example.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET}, Target: "cdn.example."},
-		&dns.A{Hdr: dns.RR_Header{Name: "cdn.example.", Rrtype: dns.TypeA, Class: dns.ClassINET}, A: net.ParseIP("203.0.113.1")},
+		&dns.CNAME{Hdr: dns.RR_Header{Name: "origin.example.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 60}, Target: "cdn.example."},
+		&dns.A{Hdr: dns.RR_Header{Name: "cdn.example.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}, A: net.ParseIP("203.0.113.1")},
 	}})
 	cfg := one.Snapshot().Config
 	cfg.Rule = []RuleConfig{{Schema: "DOMAIN", Pattern: "cdn.example", Outbound: "B"}, {Schema: "FINAL", Outbound: "direct"}}
