@@ -19,7 +19,7 @@ func ownedResolverProfile() string {
 		"__KONEOwner : " + ownedResolverID + "\n" +
 		"__KONEInterface : utun42\n" +
 		"ServerAddresses : <array> {\n0 : 127.0.0.1\n}\n" +
-		"ServerPort : 1053\nSearchOrder : 1\n" +
+		"ServerPort : 1053\nSupplementalMatchOrders : <array> {\n0 : 1\n}\n" +
 		"SupplementalMatchDomains : <array> {\n0 : \n}\n}\n"
 }
 
@@ -113,9 +113,9 @@ func TestDarwinDNSDiscoveryFailsClosedOnUnverifiableOwnedSettings(t *testing.T) 
 		"address":   strings.Replace(ownedResolverProfile(), "127.0.0.1", "192.0.2.1", 1),
 		"port":      strings.Replace(ownedResolverProfile(), "1053", "65536", 1),
 		"zero port": strings.Replace(ownedResolverProfile(), "1053", "0", 1),
-		"order":     strings.Replace(ownedResolverProfile(), "SearchOrder : 1", "SearchOrder : 2", 1),
+		"order":     strings.Replace(ownedResolverProfile(), "0 : 1\n", "0 : 2\n", 1),
 		"domain":    strings.Replace(ownedResolverProfile(), "0 : \n", "0 : corp.test\n", 1),
-		"extra":     strings.Replace(ownedResolverProfile(), "SearchOrder : 1", "Extra : yes\nSearchOrder : 1", 1),
+		"extra":     strings.Replace(ownedResolverProfile(), "ServerPort : 1053", "Extra : yes\nServerPort : 1053", 1),
 		"corrupt":   "__KONEOwner : broken",
 		"vanished":  "No such key",
 	} {
@@ -176,7 +176,7 @@ func TestDarwinDNSStoreKeysAreBoundedAndSafeForReadCommands(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, keys, 3)
 	for _, input := range []string{
-		"No such key", "", "\n",
+		"No such key", "no keys.", "", "\n",
 	} {
 		keys, err := parseDarwinDNSStoreKeys([]byte(input))
 		require.NoError(t, err)

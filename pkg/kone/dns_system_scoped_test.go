@@ -30,7 +30,7 @@ func scopedProfileText(profile scopedDNSProfile) []byte {
 	sort.Strings(keys)
 	for _, key := range keys {
 		values := profile[key]
-		if key == "ServerAddresses" || key == "SupplementalMatchDomains" {
+		if key == "ServerAddresses" || key == "SupplementalMatchDomains" || key == "SupplementalMatchOrders" {
 			fmt.Fprintf(&out, " %s : <array> {\n", key)
 			for index, value := range values {
 				fmt.Fprintf(&out, " %d : %s\n", index, value)
@@ -143,6 +143,8 @@ func TestScopedDNSLeaseOwnsOnlyOneTemporaryKeyAndConcurrentCleanup(t *testing.T)
 	cleanup, failures, err := f.configure(ctx, func() error { return nil })
 	require.NoError(t, err)
 	require.Contains(t, f.script, "add State:/Network/Service/"+testScopedDNSID+"/DNS temporary")
+	require.Contains(t, f.script, "d.add SupplementalMatchOrders * # 1\n")
+	require.NotContains(t, f.script, "d.add SearchOrder")
 	require.NotContains(t, f.script, "set ")
 	require.NotContains(t, f.script, "Global/")
 	require.NotContains(t, f.script, "remove ")

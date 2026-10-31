@@ -39,13 +39,13 @@ func scopedDNSScript(id, device string, address netip.Addr, port uint16) (string
 		return "", "", nil, errors.New("invalid owned DNS session parameters")
 	}
 	key := "State:/Network/Service/" + id + "/DNS"
-	profile := scopedDNSProfile{"__KONEOwner": {id}, "__KONEInterface": {device}, "ServerAddresses": {address.String()}, "ServerPort": {strconv.Itoa(int(port))}, "SearchOrder": {"1"}, "SupplementalMatchDomains": {""}}
-	// SearchOrder is a scalar CFNumber. An array of numeric strings would not be
-	// accepted as SupplementalMatchOrders. Empty match domain means default only;
-	// more-specific native VPN/split scopes retain their own longest match.
+	profile := scopedDNSProfile{"__KONEOwner": {id}, "__KONEInterface": {device}, "ServerAddresses": {address.String()}, "ServerPort": {strconv.Itoa(int(port))}, "SupplementalMatchOrders": {"1"}, "SupplementalMatchDomains": {""}}
+	// scutil accepts combined * and # flags: a CFArray containing CFNumbers.
+	// Explicit supplemental orders survive configd's per-service ranking, while
+	// scalar SearchOrder can be rewritten. More-specific VPN domains still win.
 	script := "open\nd.init\nd.add __KONEOwner " + id + "\nd.add __KONEInterface " + device +
 		"\nd.add ServerAddresses * " + address.String() + "\nd.add ServerPort # " + strconv.Itoa(int(port)) +
-		"\nd.add SearchOrder # 1\nd.add SupplementalMatchDomains * \"\"\nadd " + key + " temporary\n"
+		"\nd.add SupplementalMatchOrders * # 1\nd.add SupplementalMatchDomains * \"\"\nadd " + key + " temporary\n"
 	return key, script, profile, nil
 }
 

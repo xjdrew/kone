@@ -50,6 +50,42 @@ func darwinOSLookup(name string) ([]string, error) {
 	return addresses, nil
 }
 
+func darwinAssertDNSOrder(t *testing.T, port uint16, wanted string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	data, err := exec.CommandContext(ctx, "/usr/sbin/scutil", "--dns").Output()
+	require.NoError(t, err)
+	found := false
+	for _, block := range strings.Split(string(data), "resolver #")[1:] {
+		var actualPort, order string
+		loopback, scoped := false, false
+		for _, line := range strings.Split(block, "\n") {
+			key, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+			if !ok {
+				continue
+			}
+			key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+			switch {
+			case key == "port":
+				actualPort = value
+			case key == "order":
+				order = value
+			case strings.HasPrefix(key, "nameserver["):
+				loopback = loopback || value == "127.0.0.1"
+			case key == "flags":
+				scoped = strings.Contains(value, "Scoped")
+			}
+		}
+		if !scoped && loopback && actualPort == fmt.Sprint(port) {
+			found = true
+			require.Equal(t, wanted, order, "the OS must honor the explicit numeric supplemental order")
+		}
+	}
+	require.True(t, found, "owned resolver missing from the actual OS resolver configuration")
+	t.Logf("system resolver loopback:%d uses explicit supplemental order %s", port, wanted)
+}
+
 func darwinOriginalDNSFixture(t *testing.T) string {
 	t.Helper()
 	configuration := dnsconfig.ReadDnsConfig()
@@ -117,7 +153,7 @@ func darwinOriginalDNSFixture(t *testing.T) string {
 			t.Error("original fixture session did not close")
 		}
 	})
-	_, err = io.WriteString(input, "open\nd.init\nd.add __KONEFixture "+id+"\nd.add ServerAddresses * 127.0.0.1\nd.add ServerPort # "+fmt.Sprint(port)+"\nd.add SearchOrder # 100\nd.add SupplementalMatchDomains * \"\"\nadd "+key+" temporary\n")
+	_, err = io.WriteString(input, "open\nd.init\nd.add __KONEFixture "+id+"\nd.add ServerAddresses * 127.0.0.1\nd.add ServerPort # "+fmt.Sprint(port)+"\nd.add SupplementalMatchOrders * # 100\nd.add SupplementalMatchDomains * \"\"\nadd "+key+" temporary\n")
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -129,6 +165,7 @@ func darwinOriginalDNSFixture(t *testing.T) string {
 		result, err := darwinOSLookup("before-" + encoded + ".kone-system.test")
 		return err == nil && reflect.DeepEqual(result, []string{"192.0.2.9"})
 	}, 8*time.Second, 50*time.Millisecond, "temporary original resolver must be active before starting KONE")
+	darwinAssertDNSOrder(t, port, "100")
 	return endpoint
 }
 
@@ -215,6 +252,7 @@ func TestSystemDarwinDNSGuidance(t *testing.T) {
 					case <-time.After(10 * time.Second):
 						t.Fatal("system DNS did not start")
 					}
+					darwinAssertDNSOrder(t, cfg.DNS.ListenPort, "1")
 					freshConfig := *cfg
 					freshConfig.DNS = cfg.DNS
 					freshConfig.DNS.Servers = nil

@@ -103,7 +103,7 @@ func parseDarwinDNSStoreKeys(data []byte) ([]string, error) {
 	scanner.Buffer(make([]byte, 1024), 4096)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || line == "No such key" {
+		if line == "" || line == "No such key" || line == "no keys." {
 			continue
 		}
 		_, key, found := strings.Cut(line, " = ")

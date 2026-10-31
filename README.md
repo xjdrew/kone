@@ -14,7 +14,7 @@ These capabilities form the compatibility baseline for future refactoring. New f
 | --- | --- | --- |
 | F01 | Desktop and gateway deployment | Linux, macOS and Windows; Linux amd64, arm64 and ARMv7 builds, including Raspberry Pi gateways |
 | F02 | LAN traffic takeover | Selective Fake-IP/CIDR routing or optional full IPv4 capture; clients use the gateway and KONE DNS, with forwarding and firewall rules configured by the operator |
-| F03 | DNS and routing policy | Stable Fake-IP addresses; ordered domain, suffix, keyword, IPv4 CIDR, GeoIP, DIRECT, REJECT and final rules |
+| F03 | DNS and routing policy | Stable Fake-IP addresses; ordered domain, suffix, keyword, IPv4/IPv6 CIDR, GeoIP, DIRECT, REJECT and final rules, with protocol/port selectors and expiring domain rules |
 | F04 | Outbound policy | HTTP/HTTPS CONNECT TCP, SOCKS5 TCP/UDP and Shadowsocks AEAD2017 TCP/UDP; built-in direct/reject; unsupported proxy UDP is denied unless an explicit direct fallback is configured |
 | F05 | Safe rule reload | Atomic rule/proxy snapshots; virtual addresses and established connections survive reload |
 | F06 | Predictable lifecycle | Startup rollback, signal/context shutdown, owned route/device cleanup and failed TUN opens without panics |
@@ -22,6 +22,10 @@ These capabilities form the compatibility baseline for future refactoring. New f
 | F08 | Operation and diagnostics | Persistent authenticated management, strict TOML import/validation, live business-flow observation, DNS history and independent diagnostics |
 | F09 | Optional IPv6 on Linux and Windows | ULA virtual network, DNS AAAA and IPv6 capture/rules; disabled by default, with unsupported macOS activation rejected before changes |
 | F10 | Owned DNS guidance | Optional Linux systemd-resolved link integration after listeners are ready, with verified ownership and restoration before DNS shutdown |
+| F11 | Desktop lifecycle | Start with capture paused, preserve settings across restarts, and authorize a separate Windows/macOS network helper; manage capture from the native tray/menu |
+| F12 | Mobile management | Responsive offline console, explicit HTTPS LAN access, expiring pairing codes, read-only defaults and revocable sessions |
+| F13 | Country data updates | Bundled DB-IP Country Lite October 2026 IPv4 data, verified local imports and previous-version recovery |
+| F14 | Traceable delivery | Test-gated development releases for master commits, installable packages, matching source, versions and checksums |
 
 ## Build and run
 
