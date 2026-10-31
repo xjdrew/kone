@@ -143,7 +143,7 @@ jobs:
           go-version-file: go.mod
       - name: Build system tests and CLI
         run: |
-          go build -o "$RUNNER_TEMP/kone-system-cli" ./cmd/kone
+          go build -race -o "$RUNNER_TEMP/kone-system-cli" ./cmd/kone
           go test -race -c -o "$RUNNER_TEMP/kone-system.test" ./test/integration
       - name: Test real TUN in isolated network namespace
         run: |

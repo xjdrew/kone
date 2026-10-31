@@ -11,9 +11,10 @@ import (
 )
 
 type UDPTunnel struct {
-	session               *NatSession
-	cliaddr               *net.UDPAddr
-	localConn, remoteConn *net.UDPConn
+	session    *NatSession
+	cliaddr    *net.UDPAddr
+	localConn  net.PacketConn
+	remoteConn *net.UDPConn
 }
 
 func (t *UDPTunnel) Pump() error {
@@ -23,7 +24,7 @@ func (t *UDPTunnel) Pump() error {
 		if err != nil {
 			return err
 		}
-		if _, err = t.localConn.WriteToUDP(b[:n], t.cliaddr); err != nil {
+		if _, err = t.localConn.WriteTo(b[:n], t.cliaddr); err != nil {
 			return err
 		}
 	}
@@ -40,7 +41,7 @@ type UDPRelay struct {
 	workers   sync.WaitGroup
 }
 
-func (r *UDPRelay) grabTunnel(ctx context.Context, s *runtimeSnapshot, local *net.UDPConn, client *net.UDPAddr) *UDPTunnel {
+func (r *UDPRelay) grabTunnel(ctx context.Context, s *runtimeSnapshot, local net.PacketConn, client *net.UDPAddr) *UDPTunnel {
 	session := r.nat.getSession(uint16(client.Port))
 	if session == nil {
 		return nil
@@ -124,14 +125,18 @@ func (r *UDPRelay) close() {
 		delete(r.tunnels, key)
 	}
 }
-func (r *UDPRelay) serve(parent context.Context, conn *net.UDPConn) error {
+func (r *UDPRelay) serve(parent context.Context, conn net.PacketConn) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer func() { cancel(); conn.Close(); r.close(); r.workers.Wait() }()
 	packet := make([]byte, 65535)
 	for {
-		n, client, err := conn.ReadFromUDP(packet)
+		n, addr, err := conn.ReadFrom(packet)
 		if err != nil {
 			return err
+		}
+		client, ok := addr.(*net.UDPAddr)
+		if !ok {
+			continue
 		}
 		if tunnel := r.grabTunnel(ctx, r.one.policy.Load(), conn, client); tunnel != nil {
 			tunnel.remoteConn.Write(packet[:n])

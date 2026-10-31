@@ -79,6 +79,7 @@ table th.title {
 <tr><th>Total Hosts</th><td>{{.TotalHosts}}</td></tr>
 <tr><th>Total Websites</th><td>{{.TotalWebistes}}</td></tr>
 <tr><th>Total Proxies</th><td>{{.TotalProxies}}</td></tr>
+<tr><th>Dropped Statistics Entries</th><td>{{.DroppedEntries}}</td></tr>
 <tr><th>Total Traffic</th><td>{{formatNumberComma .TotalTraffic}}</td></tr>
 <tr><th>Upload Traffic</th><td>{{formatNumberComma .UploadTraffic}}</td></tr>
 <tr><th>Download Traffic</th><td>{{formatNumberComma .DownloadTraffic}}</td></tr>
@@ -273,6 +274,7 @@ func (m *Manager) indexHandle(w io.Writer, r *http.Request) error {
 		"TotalHosts":      len(m.hosts),
 		"TotalWebistes":   len(m.websites),
 		"TotalProxies":    len(m.proxies),
+		"DroppedEntries":  m.dropped.Load(),
 		"TotalTraffic":    upload + download,
 		"UploadTraffic":   upload,
 		"DownloadTraffic": download,

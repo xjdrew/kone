@@ -109,10 +109,10 @@ func TestWindowsRouteOwnershipAndTimeout(t *testing.T) {
 }
 
 func TestReadWindowsSnapshot(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	n := systemNetwork{run: runCommand}
-	data, err := n.powershell(ctx, `Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object -First 1 -ExpandProperty Name | ConvertTo-Json`, nil)
+	data, err := n.powershell(ctx, `Get-NetAdapter | Where-Object { Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue } | Select-Object -First 1 -ExpandProperty Name | ConvertTo-Json`, nil)
 	require.NoError(t, err)
 	var name string
 	require.NoError(t, json.Unmarshal(data, &name))

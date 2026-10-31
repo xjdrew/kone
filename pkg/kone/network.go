@@ -93,6 +93,7 @@ func (c *connections) add(conn net.Conn) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
+		conn.SetDeadline(time.Now())
 		conn.Close()
 		return false
 	}
@@ -108,6 +109,9 @@ func (c *connections) close() {
 	defer c.mu.Unlock()
 	c.closed = true
 	for conn := range c.items {
+		// TLS Close may write close_notify; an expired deadline prevents a
+		// stalled peer from delaying shutdown once per active connection.
+		conn.SetDeadline(time.Now())
 		conn.Close()
 		delete(c.items, conn)
 	}

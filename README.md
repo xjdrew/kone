@@ -60,7 +60,7 @@ pkg/tcpip/         validated IPv4 packet views
 pkg/geoip/         GeoIP lookup and legacy generated database
 pkg/dnsconfig/     in-tree system DNS discovery
 configs/           example TOML
-test/integration/  CLI tests without network administration privileges
+test/integration/  CLI tests and Linux namespace acceptance tests
 docs/              configuration, dependency decisions and deployment guides
 scripts/windows/  firewall helpers
 deploy/docker/    container build and Compose configuration

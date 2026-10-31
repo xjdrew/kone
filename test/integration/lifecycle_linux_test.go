@@ -300,7 +300,7 @@ func TestSystemLifecycleCLISignal(t *testing.T) {
 	defer func() { cmd.Process.Kill() }()
 	client := &http.Client{Timeout: 100 * time.Millisecond}
 	ready := false
-	for range 100 {
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
 		response, err := client.Get("http://" + cfg.General.ManagerAddr + "/")
 		if err == nil {
 			response.Body.Close()

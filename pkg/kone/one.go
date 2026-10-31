@@ -266,6 +266,9 @@ func (one *One) Run(parent context.Context) (result error) {
 	if device, err = one.network.Open(ctx, cfg.Core); err != nil {
 		return fmt.Errorf("open TUN: %w", err)
 	}
+	if device == nil {
+		return errors.New("network returned a nil TUN device")
+	}
 	cleanup, err := one.network.Configure(ctx, device, cfg.Core)
 	undo.add("interface configuration", cleanup)
 	if err != nil {
@@ -328,7 +331,7 @@ func (one *One) Run(parent context.Context) (result error) {
 		return nil
 	}
 	start("TCP relay", func() error { return one.tcpRelay.serve(ctx, tcp) })
-	start("UDP relay", func() error { return one.udpRelay.serve(ctx, udp.(*net.UDPConn)) })
+	start("UDP relay", func() error { return one.udpRelay.serve(ctx, udp) })
 	start("DNS cache", func() error { return one.dnsTable.Serve(ctx) })
 	start("TUN", func() error { return one.tun.serve(ctx) })
 	if one.manager != nil {
