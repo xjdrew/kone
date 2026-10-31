@@ -1,3 +1,11 @@
+# 2026/10/31 — sing-tun migration and gateway compatibility
+- Replace water with pinned SagerNet/sing-tun; use embedded Wintun on Windows without a preinstalled TAP adapter.
+- Move production transparent TCP/UDP handling to system/mixed stacks while retaining rule/proxy snapshots, Fake-IP stability and connection shutdown behavior.
+- Fix typed-nil device cleanup panics, preserve original startup errors, supervise terminal TUN I/O failures and reserve the stack forwarder address.
+- Preserve Raspberry Pi/LAN gateway routing; add optional full IPv4 capture and physical-interface binding for proxy, direct and DNS transports, including proxy hostname resolution.
+- Track owned Windows firewall rules and on-link routes; extend failure, flow, gateway and Wintun acceptance tests, mixed-stack race checks and ARMv7 builds.
+- Adopt GPL-3.0-or-later with original MIT/component notices preserved; reorganize README around stable product capabilities and refresh configuration/deployment documentation.
+
 # 2026/10/31 — runtime reliability
 - Add context-owned startup, cancellation, idempotent close and reverse-order network rollback; propagate component and cleanup failures.
 - Restore Windows adapter DNS/DHCP/MTU/metric and remove only owned addresses/routes; isolate newly created Linux/macOS devices.

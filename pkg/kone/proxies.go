@@ -10,7 +10,10 @@ import (
 	"github.com/xjdrew/kone/pkg/proxy"
 )
 
-type Proxies struct{ proxies map[string]*proxy.Proxy }
+type Proxies struct {
+	proxies map[string]*proxy.Proxy
+	dial    func(context.Context, string, string) (net.Conn, error)
+}
 
 func (p *Proxies) Dial(name, addr string) (net.Conn, error) {
 	return p.DialContext(context.Background(), name, addr)
@@ -21,17 +24,17 @@ func (p *Proxies) DialContext(ctx context.Context, name, addr string) (net.Conn,
 		return nil, errors.New("connection rejected by routing policy")
 	}
 	if name == "DIRECT" {
-		return proxy.Direct.DialContext(ctx, "tcp", addr)
+		return p.dial(ctx, "tcp", addr)
 	}
 	slog.Debug("Dialing proxy", "destination", addr, "proxy", name)
 	if dialer := p.proxies[name]; dialer != nil {
-		return dialer.DialContext(ctx, "tcp", addr)
+		return dialer.DialContextVia(ctx, "tcp", addr, p.dial)
 	}
 	return nil, fmt.Errorf("unknown proxy %q", name)
 }
 
 func NewProxies(config map[string]string) (*Proxies, error) {
-	p := &Proxies{proxies: make(map[string]*proxy.Proxy, len(config))}
+	p := &Proxies{proxies: make(map[string]*proxy.Proxy, len(config)), dial: proxy.Direct.DialContext}
 	for name, raw := range config {
 		dialer, err := proxy.FromUrl(raw)
 		if err != nil {

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+	singtun "github.com/sagernet/sing-tun"
 	"github.com/xjdrew/kone/pkg/dnsconfig"
 	"github.com/xjdrew/kone/pkg/proxy"
 )
@@ -32,20 +33,23 @@ type GeneralConfig struct {
 }
 
 type CoreConfig struct {
-	Tun             string   `toml:"tun"`
-	Network         string   `toml:"network"`
-	TcpListenPort   uint16   `toml:"tcp-listen-port"`
-	TcpNatPortStart uint16   `toml:"tcp-nat-port-start"`
-	TcpNatPortEnd   uint16   `toml:"tcp-nat-port-end"`
-	UdpListenPort   uint16   `toml:"udp-listen-port"`
-	UdpNatPortStart uint16   `toml:"udp-nat-port-start"`
-	UdpNatPortEnd   uint16   `toml:"udp-nat-port-end"`
-	DnsListenPort   uint16   `toml:"dns-listen-port"`
-	DnsTtl          uint     `toml:"dns-ttl"`
-	DnsPacketSize   uint16   `toml:"dns-packet-size"`
-	DnsReadTimeout  uint     `toml:"dns-read-timeout"`
-	DnsWriteTimeout uint     `toml:"dns-write-timeout"`
-	DnsServer       []string `toml:"dns-server"`
+	Tun               string   `toml:"tun"`
+	Stack             string   `toml:"stack"`
+	AutoRoute         bool     `toml:"auto-route"`
+	OutboundInterface string   `toml:"outbound-interface"`
+	Network           string   `toml:"network"`
+	TcpListenPort     uint16   `toml:"tcp-listen-port"`
+	TcpNatPortStart   uint16   `toml:"tcp-nat-port-start"`
+	TcpNatPortEnd     uint16   `toml:"tcp-nat-port-end"`
+	UdpListenPort     uint16   `toml:"udp-listen-port"`
+	UdpNatPortStart   uint16   `toml:"udp-nat-port-start"`
+	UdpNatPortEnd     uint16   `toml:"udp-nat-port-end"`
+	DnsListenPort     uint16   `toml:"dns-listen-port"`
+	DnsTtl            uint     `toml:"dns-ttl"`
+	DnsPacketSize     uint16   `toml:"dns-packet-size"`
+	DnsReadTimeout    uint     `toml:"dns-read-timeout"`
+	DnsWriteTimeout   uint     `toml:"dns-write-timeout"`
+	DnsServer         []string `toml:"dns-server"`
 }
 
 type RuleConfig struct {
@@ -65,7 +69,7 @@ type KoneConfig struct {
 func defaultConfig() *KoneConfig {
 	return &KoneConfig{
 		General: GeneralConfig{ManagerAddr: "127.0.0.1:9200", LogLevel: "info", LogFormat: "text"},
-		Core: CoreConfig{Network: "10.192.0.1/16", TcpListenPort: 82, TcpNatPortStart: 10000, TcpNatPortEnd: 60000,
+		Core: CoreConfig{Network: "10.192.0.1/16", Stack: "system", TcpListenPort: 82, TcpNatPortStart: 10000, TcpNatPortEnd: 60000,
 			UdpListenPort: 82, UdpNatPortStart: 10000, UdpNatPortEnd: 60000, DnsListenPort: DnsDefaultPort,
 			DnsTtl: DnsDefaultTtl, DnsPacketSize: DnsDefaultPacketSize, DnsReadTimeout: DnsDefaultReadTimeout, DnsWriteTimeout: DnsDefaultWriteTimeout},
 		Proxy: make(map[string]string),
@@ -181,8 +185,26 @@ func (cfg *KoneConfig) Validate() error {
 	if !prefix.Addr().IsGlobalUnicast() || prefix.Addr() == prefix.Masked().Addr() || prefix.Addr() == broadcastAddress(prefix) {
 		return errors.New("core.network must be a unicast host address, not the network or broadcast address")
 	}
+	if !prefix.Contains(prefix.Addr().Next()) || prefix.Addr().Next() == broadcastAddress(prefix) {
+		return errors.New("core.network must leave one additional host address for the TUN stack")
+	}
 	if strings.ContainsAny(cfg.Core.Tun, "\x00\r\n\t\"' ") {
 		return errors.New("core.tun contains unsupported characters")
+	}
+	if cfg.Core.Stack != "system" && cfg.Core.Stack != "mixed" {
+		return errors.New("core.stack must be system or mixed")
+	}
+	if cfg.Core.Stack == "mixed" && !singtun.WithGVisor {
+		return errors.New("core.stack=mixed requires a build with -tags with_gvisor")
+	}
+	if strings.ContainsAny(cfg.Core.OutboundInterface, "\x00\r\n\t\"'") {
+		return errors.New("core.outbound-interface contains unsupported characters")
+	}
+	if cfg.Core.AutoRoute && cfg.Core.OutboundInterface == "" {
+		return errors.New("core.auto-route requires core.outbound-interface to prevent routing loops")
+	}
+	if cfg.Core.OutboundInterface != "" && cfg.Core.OutboundInterface == cfg.Core.Tun {
+		return errors.New("core.outbound-interface must differ from core.tun")
 	}
 	if cfg.General.ManagerAddr != "" {
 		host, port, err := net.SplitHostPort(cfg.General.ManagerAddr)
@@ -263,6 +285,9 @@ func (cfg *KoneConfig) Validate() error {
 			p, err := netip.ParsePrefix(r.Pattern)
 			if err != nil || !p.Addr().Is4() {
 				return fail("IP-CIDR requires an IPv4 prefix")
+			}
+			if p.Bits() == 0 && r.Proxy != "DIRECT" && cfg.Core.OutboundInterface == "" {
+				return fail("a default capture route requires core.outbound-interface; prefer core.auto-route")
 			}
 		case "IP-CIDR6":
 			return fail("IPv6 interception is not supported yet")

@@ -1,5 +1,11 @@
 # 第一轮工程化与依赖决策
 
+## 后续决策：sing-tun 迁移（2026-10-31）
+
+维护者已接受 GPL-3.0-or-later。当前采用 SagerNet/sing-tun `v0.9.7-0.20261023115432-040db71fcd33`，对应 sing-box v1.14.4 使用的固定版本；移除 water。下文第一轮保留 water、维持 MIT 的决定为历史记录，不再代表现状。
+设备、system/mixed 数据面由 sing-tun 提供；网络变更仍通过 KONE 的 Network 边界执行可回滚操作，使用 external configuration 模式避免双重配置。旧报文/NAT 类型暂留以兼容嵌入 API，生产 Run 不再使用它们。
+普通构建默认 system，`with_gvisor` 构建可显式选择 mixed；CI 测试两种构建。网关保留 LAN 转发能力，新增全局 IPv4 捕获与代理/DNS 真实出口绑定，同时补 ARMv7 构建和独立 LAN 客户端验收。IPv6、UDP 代理出站、网络切换和崩溃恢复继续独立迭代。
+
 依赖检查日期：2026-10-31。版本通过 `go list -m -json module@latest` 查询，实际版本固定在 `go.mod` / `go.sum`。
 
 ## 本轮依赖处理

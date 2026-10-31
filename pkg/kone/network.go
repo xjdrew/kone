@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os/exec"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -17,6 +18,20 @@ import (
 type Device interface {
 	io.ReadWriteCloser
 	Name() string
+}
+
+// Interfaces holding a nil pointer are non-nil. Keep failed opens out of the
+// owned-resource set so cleanup never calls a promoted method on a nil receiver.
+func isNilInterface(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	}
+	return false
 }
 
 // Cleanup restores a successful network change. A non-nil cleanup returned

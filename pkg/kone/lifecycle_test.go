@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/xjdrew/kone/pkg/tcpip"
 )
 
 type memoryDevice struct {
@@ -153,7 +154,64 @@ proxy='REJECT'
 `)
 	one, err := FromConfig(cfg, WithNetwork(n), WithSockets(s), WithShutdownTimeout(time.Second))
 	require.NoError(t, err)
+	one.stackFactory = fixtureStackFactory(one)
 	return one
+}
+
+// Retain the old relay fault fixtures to verify existing embedding behavior;
+// real sing-tun packet/connection tests exercise the production stack separately.
+type fixtureStack struct {
+	start func() error
+	close func() error
+	wg    sync.WaitGroup
+}
+
+func (s *fixtureStack) Start() error { return s.start() }
+func (s *fixtureStack) Close() error { return s.close() }
+func (s *fixtureStack) Wait()        { s.wg.Wait() }
+func fixtureStackFactory(one *One) stackFactory {
+	return func(ctx context.Context, device Device, cfg CoreConfig, _ *flowHandler, failures chan<- error) (packetStack, error) {
+		s := &fixtureStack{}
+		var tcp net.Listener
+		var udp net.PacketConn
+		s.close = func() error {
+			if tcp != nil {
+				tcp.Close()
+			}
+			if udp != nil {
+				udp.Close()
+			}
+			one.tcpRelay.active.close()
+			one.udpRelay.close()
+			return nil
+		}
+		s.start = func() error {
+			var err error
+			tcp, err = one.sockets.Listen(ctx, "tcp4", net.JoinHostPort(one.ip.String(), "82"))
+			if err != nil {
+				return err
+			}
+			udp, err = one.sockets.ListenPacket(ctx, "udp4", net.JoinHostPort(one.ip.String(), "82"))
+			if err != nil {
+				return err
+			}
+			tun := &TunDriver{ifce: device, filters: map[tcpip.IPProtocol]PacketFilter{tcpip.ICMP: PacketFilterFunc(icmpFilterFunc), tcpip.TCP: one.tcpRelay, tcpip.UDP: one.udpRelay}}
+			for _, serve := range []func() error{func() error { return one.tcpRelay.serve(ctx, tcp) }, func() error { return one.udpRelay.serve(ctx, udp) }, func() error { return tun.serve(ctx) }} {
+				s.wg.Add(1)
+				go func() {
+					defer s.wg.Done()
+					if err := serve(); ctx.Err() == nil {
+						select {
+						case failures <- err:
+						default:
+						}
+					}
+				}()
+			}
+			return nil
+		}
+		return s, nil
+	}
 }
 
 func assertReleased(t *testing.T, n *memoryNetwork, s *loopSockets) {

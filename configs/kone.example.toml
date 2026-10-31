@@ -6,19 +6,18 @@ log-format = "text" # text or json; logs go to stderr
 
 [core]
 network = "10.192.0.1/16"
-# tun = "tun0" # Linux; macOS uses utunN, Windows an existing TAP adapter name
+# tun = "kone0" # new device name; macOS requires utunN; never reuse an existing adapter
+stack = "system" # "mixed" needs a build with -tags with_gvisor
+auto-route = false # true captures IPv4 traffic; requires the physical outbound interface
+# outbound-interface = "eth0" # e.g. eth0 on Raspberry Pi or Ethernet on Windows
 # Explicit upstreams make this example reproducible. Omit to use system DNS.
 dns-server = ["1.1.1.1", "8.8.8.8:53"]
 dns-ttl = 600
 dns-packet-size = 4096
 dns-read-timeout = 5
 dns-write-timeout = 5
-tcp-listen-port = 82
-tcp-nat-port-start = 10000
-tcp-nat-port-end = 60000 # exclusive
-udp-listen-port = 82
-udp-nat-port-start = 10000
-udp-nat-port-end = 60000 # exclusive
+# Old tcp/udp listener and NAT port options are accepted for config compatibility;
+# sing-tun now owns transparent listeners and session allocation.
 dns-listen-port = 53
 
 [proxies]

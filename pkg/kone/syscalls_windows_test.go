@@ -27,6 +27,43 @@ func decodePowerShell(t *testing.T, args []string) string {
 	return string(utf16.Decode(words))
 }
 
+func TestWindowsStackFirewallOwnership(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		calls := 0
+		n := systemNetwork{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			calls++
+			script := decodePowerShell(t, args)
+			require.Contains(t, script, "$_.DisplayName -eq $p.Rule")
+			if calls == 1 {
+				if existing {
+					return []byte("1"), nil
+				}
+				return []byte("0"), nil
+			}
+			require.Contains(t, script, "Remove-NetFirewallRule")
+			return nil, nil
+		}}
+		undo, err := n.PrepareStack(context.Background())
+		require.NoError(t, err)
+		if existing {
+			require.Nil(t, undo)
+		} else {
+			require.NoError(t, undo(context.Background()))
+		}
+	}
+	for _, reply := range []string{"invalid", "0"} {
+		n := systemNetwork{run: func(context.Context, string, ...string) ([]byte, error) {
+			if reply == "0" {
+				return nil, errors.New("access denied")
+			}
+			return []byte(reply), nil
+		}}
+		undo, err := n.PrepareStack(context.Background())
+		require.Error(t, err)
+		require.Nil(t, undo)
+	}
+}
+
 func TestWindowsConfigurationRollback(t *testing.T) {
 	for failAt := 0; failAt <= 5; failAt++ {
 		t.Run(string(rune('0'+failAt)), func(t *testing.T) {

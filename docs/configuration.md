@@ -61,6 +61,18 @@ proxy = "DIRECT"
 代理定义与规则作为同一版本快照原子更新；新的连接使用新定义，已建立连接保留原出站。
 端口、TUN、DNS、日志、管理地址及 CIDR 路由变化要求重启，失败更新保留原配置和版本。
 
+## TUN backend and stack
+
+设备与透明流量处理改用 SagerNet/sing-tun，Windows 使用内嵌 Wintun，Linux 使用 TUN，macOS 使用 utun。`core.tun` 留空时自动分配名称，指定时必须尚不存在；macOS 名称必须为 utunN。
+
+- `core.stack = "system"` 为默认值，适用于普通构建；`"mixed"` 使用系统 TCP 和 gVisor UDP，必须用 `go build -tags with_gvisor` 构建。缺少构建能力时会返回明确错误，不静默切换协议栈。
+- `core.auto-route = false` 保留原来的 Fake-IP 子网和显式 CIDR 接管；`true` 添加 `0.0.0.0/1` 与 `128.0.0.0/1` 路由，实现 IPv4 全局接管，同时保留原默认路由供退出后使用。已有更具体路由仍按系统路由优先级处理。
+- 全局接管必须指定 `core.outbound-interface`，代理连接、直连连接和上游 DNS 查询使用这个真实接口。它不能与 TUN 同名；IP-CIDR 默认捕获路由同样要求指定出口。接口切换需要修改配置并重启。
+- `core.network` 的接口地址之后一个地址供协议栈使用，两者均不会分配为 Fake-IP。该地址必须保留至少一个后继主机地址。
+- 原 `tcp/udp-listen-port` 与 NAT 端口范围仍接受并校验，方便旧配置迁移，但生产数据面的监听和会话现在由 sing-tun 分配。
+
+本轮保留 IPv4、现有规则与 UDP 直连行为；IPv6 拦截和 SOCKS5 UDP 出站仍未启用。采用 `mixed` 也不会改变出站协议能力。LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
+
 ## API 与目录迁移
 
 `github.com/xjdrew/kone` 改为 `github.com/xjdrew/kone/pkg/kone`；其他原子包也移动到 `pkg/`。

@@ -21,6 +21,13 @@ type DnsIPPool struct {
 	flags []bool
 }
 
+func (pool *DnsIPPool) reserve(ip net.IP) {
+	index := tcpip.ConvertIPv4ToUint32(ip) - pool.base
+	if index < pool.space {
+		pool.flags[index] = true
+	}
+}
+
 func (pool *DnsIPPool) Capacity() int {
 	return int(pool.space)
 }

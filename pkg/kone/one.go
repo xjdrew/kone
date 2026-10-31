@@ -7,14 +7,13 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/netip"
 	"reflect"
 	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/xjdrew/kone/pkg/tcpip"
 )
 
 type runtimeSnapshot struct {
@@ -41,6 +40,8 @@ type One struct {
 	network         Network
 	sockets         Sockets
 	shutdownTimeout time.Duration
+	stackFactory    stackFactory
+	flows           *flowHandler
 	dnsTable        *DnsTable
 	dns             *Dns
 	tcpRelay        *TCPRelay
@@ -53,7 +54,7 @@ type Option func(*One) error
 
 func WithNetwork(network Network) Option {
 	return func(one *One) error {
-		if network == nil {
+		if isNilInterface(network) {
 			return errors.New("network is nil")
 		}
 		one.network = network
@@ -62,7 +63,7 @@ func WithNetwork(network Network) Option {
 }
 func WithSockets(sockets Sockets) Option {
 	return func(one *One) error {
-		if sockets == nil {
+		if isNilInterface(sockets) {
 			return errors.New("sockets is nil")
 		}
 		one.sockets = sockets
@@ -113,7 +114,7 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	}
 	cfg = cloneConfig(cfg)
 	ip, subnet, _ := net.ParseCIDR(cfg.Core.Network)
-	one := &One{ip: ip.To4(), subnet: subnet, network: systemNetwork{run: runCommand, gateway: subnet.IP.String()}, sockets: &net.ListenConfig{}, shutdownTimeout: 15 * time.Second, done: make(chan struct{}), ready: make(chan struct{})}
+	one := &One{ip: ip.To4(), subnet: subnet, network: systemNetwork{run: runCommand, gateway: "0.0.0.0"}, sockets: &net.ListenConfig{}, stackFactory: newSingStack, shutdownTimeout: 15 * time.Second, done: make(chan struct{}), ready: make(chan struct{})}
 	for _, option := range options {
 		if err := option(one); err != nil {
 			return nil, err
@@ -123,14 +124,24 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	if err != nil {
 		return nil, err
 	}
+	dialer, err := outboundDialer(cfg.Core)
+	if err != nil {
+		return nil, err
+	}
+	p.dial = dialer.DialContext
+	one.flows = &flowHandler{one: one, dialer: dialer}
 	rule := NewRule(cfg.Rule)
 	p.bypassEndpoints(rule)
 	one.policy.Store(&runtimeSnapshot{version: 1, cfg: cfg, rule: rule, proxies: p})
 	one.dnsTable = NewDnsTable(ip, subnet)
+	// The system TCP forwarder uses the address after the TUN address.
+	next := netip.MustParseAddr(ip.String()).Next()
+	one.dnsTable.ipPool.reserve(net.IP(next.AsSlice()))
 	one.dnsTable.ttl = uint32(cfg.Core.DnsTtl)
 	if one.dns, err = NewDns(one, cfg.Core); err != nil {
 		return nil, err
 	}
+	one.dns.client.Dialer = dialer
 	one.tcpRelay = NewTCPRelay(one, cfg.Core)
 	one.udpRelay = NewUDPRelay(one, cfg.Core)
 	one.manager = NewManager(one, cfg)
@@ -169,6 +180,7 @@ func (one *One) Reload(cfg *KoneConfig) error {
 	if err != nil {
 		return err
 	}
+	p.dial = old.proxies.dial
 	rule := NewRule(cfg.Rule)
 	p.bypassEndpoints(rule)
 	one.policy.Store(&runtimeSnapshot{version: old.version + 1, cfg: cfg, rule: rule, proxies: p})
@@ -209,9 +221,9 @@ func (one *One) Run(parent context.Context) (result error) {
 	one.mu.Unlock()
 	var device Device
 	var undo undoStack
-	var tcp net.Listener
-	var udp, dnsConn net.PacketConn
+	var dnsConn net.PacketConn
 	var manager net.Listener
+	var stack packetStack
 	var wg sync.WaitGroup
 	errorsCh := make(chan error, 6)
 	defer func() {
@@ -227,17 +239,21 @@ func (one *One) Run(parent context.Context) (result error) {
 		cleanupCtx, stop := context.WithTimeout(context.Background(), one.shutdownTimeout)
 		defer stop()
 		// Stop admission and active flows before restoring system networking.
-		for _, c := range []interface{ Close() error }{tcp, udp, manager} {
+		for _, c := range []interface{ Close() error }{manager} {
 			if c != nil {
 				c.Close()
 			}
 		}
 		one.tcpRelay.active.close()
 		one.udpRelay.close()
+		one.flows.close()
 		if dnsConn != nil {
 			dnsConn.Close()
 		}
 		var cleanup []error
+		if !isNilInterface(stack) {
+			cleanup = append(cleanup, stack.Close())
+		}
 		if one.dns.started.Load() {
 			cleanup = append(cleanup, one.dns.server.ShutdownContext(cleanupCtx))
 		}
@@ -249,6 +265,10 @@ func (one *One) Run(parent context.Context) (result error) {
 		if device != nil {
 			cleanup = append(cleanup, device.Close())
 		}
+		if waiter, ok := stack.(interface{ Wait() }); ok && !isNilInterface(stack) {
+			waiter.Wait()
+		}
+		one.flows.workers.Wait()
 		wg.Wait()
 		one.tcpRelay.nat.clear()
 		one.udpRelay.nat.clear()
@@ -263,7 +283,11 @@ func (one *One) Run(parent context.Context) (result error) {
 	}
 	cfg := one.policy.Load().cfg
 	var err error
-	if device, err = one.network.Open(ctx, cfg.Core); err != nil {
+	opened, err := one.network.Open(ctx, cfg.Core)
+	if !isNilInterface(opened) {
+		device = opened
+	}
+	if err != nil {
 		return fmt.Errorf("open TUN: %w", err)
 	}
 	if device == nil {
@@ -274,13 +298,25 @@ func (one *One) Run(parent context.Context) (result error) {
 	if err != nil {
 		return fmt.Errorf("configure TUN: %w", err)
 	}
-	one.tun = &TunDriver{ifce: device, filters: map[tcpip.IPProtocol]PacketFilter{tcpip.ICMP: PacketFilterFunc(icmpFilterFunc), tcpip.TCP: one.tcpRelay, tcpip.UDP: one.udpRelay}}
 	lc := one.sockets
-	if tcp, err = lc.Listen(ctx, "tcp4", net.JoinHostPort(one.ip.String(), fmt.Sprint(cfg.Core.TcpListenPort))); err != nil {
-		return fmt.Errorf("TCP listener: %w", err)
+	if preparer, ok := one.network.(interface {
+		PrepareStack(context.Context) (Cleanup, error)
+	}); ok {
+		cleanup, err := preparer.PrepareStack(ctx)
+		undo.add("stack prerequisites", cleanup)
+		if err != nil {
+			return fmt.Errorf("prepare TUN stack: %w", err)
+		}
 	}
-	if udp, err = lc.ListenPacket(ctx, "udp4", net.JoinHostPort(one.ip.String(), fmt.Sprint(cfg.Core.UdpListenPort))); err != nil {
-		return fmt.Errorf("UDP listener: %w", err)
+	stack, err = one.stackFactory(ctx, device, cfg.Core, one.flows, errorsCh)
+	if err != nil {
+		return fmt.Errorf("create TUN stack: %w", err)
+	}
+	if isNilInterface(stack) {
+		return errors.New("stack factory returned a nil stack")
+	}
+	if err := stack.Start(); err != nil {
+		return fmt.Errorf("start TUN stack: %w", err)
 	}
 	if dnsConn, err = lc.ListenPacket(ctx, "udp", one.dns.server.Addr); err != nil {
 		return fmt.Errorf("DNS listener: %w", err)
@@ -292,12 +328,37 @@ func (one *One) Run(parent context.Context) (result error) {
 		one.manager.server = &http.Server{Handler: one.manager.Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	}
 	seen := make(map[string]bool)
+	if cfg.Core.AutoRoute {
+		for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
+			_, subnet, _ := net.ParseCIDR(cidr)
+			cleanup, err := one.network.AddRoute(ctx, device, subnet)
+			undo.add("capture route "+cidr, cleanup)
+			if err != nil {
+				return fmt.Errorf("add route %s: %w", cidr, err)
+			}
+			seen[cidr] = true
+		}
+	}
 	for _, pattern := range one.policy.Load().rule.patterns {
 		if p, ok := pattern.(IPCIDRPattern); ok && p.Proxy() != "DIRECT" && !seen[p.ipNet.String()] {
-			cleanup, err := one.network.AddRoute(ctx, device, p.ipNet)
-			undo.add("route "+p.ipNet.String(), cleanup)
-			if err != nil {
-				return fmt.Errorf("add route %s: %w", p.ipNet, err)
+			routes := []*net.IPNet{p.ipNet}
+			if p.ipNet.String() == "0.0.0.0/0" {
+				routes = nil
+				for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
+					_, subnet, _ := net.ParseCIDR(cidr)
+					routes = append(routes, subnet)
+				}
+			}
+			for _, route := range routes {
+				if seen[route.String()] {
+					continue
+				}
+				cleanup, err := one.network.AddRoute(ctx, device, route)
+				undo.add("route "+route.String(), cleanup)
+				if err != nil {
+					return fmt.Errorf("add route %s: %w", route, err)
+				}
+				seen[route.String()] = true
 			}
 			seen[p.ipNet.String()] = true
 		}
@@ -330,10 +391,7 @@ func (one *One) Run(parent context.Context) (result error) {
 	case <-ctx.Done():
 		return nil
 	}
-	start("TCP relay", func() error { return one.tcpRelay.serve(ctx, tcp) })
-	start("UDP relay", func() error { return one.udpRelay.serve(ctx, udp) })
 	start("DNS cache", func() error { return one.dnsTable.Serve(ctx) })
-	start("TUN", func() error { return one.tun.serve(ctx) })
 	if one.manager != nil {
 		start("manager", func() error { return one.manager.server.Serve(manager) })
 	}

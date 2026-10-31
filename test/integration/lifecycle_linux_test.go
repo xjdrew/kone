@@ -67,6 +67,9 @@ udp-nat-port-end=11000
 	if err != nil {
 		t.Fatal(err)
 	}
+	if stack := os.Getenv("KONE_TEST_STACK"); stack != "" {
+		cfg.Core.Stack = stack
+	}
 	return cfg
 }
 
@@ -115,7 +118,7 @@ func systemStart(t *testing.T, cfg *kone.KoneConfig) (*kone.One, context.CancelF
 }
 
 func TestSystemLifecyclePortFailure(t *testing.T) {
-	for _, kind := range []string{"tcp", "udp", "dns", "manager"} {
+	for _, kind := range []string{"dns", "manager"} {
 		t.Run(kind, func(t *testing.T) {
 			cfg := systemConfig(t)
 			var occupied io.Closer

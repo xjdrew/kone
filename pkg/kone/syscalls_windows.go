@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"unicode/utf16"
-
-	"github.com/songgao/water"
 )
 
 // Encode both the script and its JSON parameters: adapter names and addresses
@@ -26,13 +26,6 @@ func (n systemNetwork) powershell(ctx context.Context, script string, params any
 		binary.LittleEndian.PutUint16(encoded[i*2:], w)
 	}
 	return n.run(ctx, "powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded))
-}
-
-func (n systemNetwork) Open(ctx context.Context, cfg CoreConfig) (Device, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return water.New(water.Config{DeviceType: water.TUN, PlatformSpecificParams: water.PlatformSpecificParams{ComponentID: "tap0901", InterfaceName: cfg.Tun, Network: cfg.Network}})
 }
 
 type windowsSettings struct {
@@ -126,3 +119,28 @@ func (n systemNetwork) AddRoute(ctx context.Context, d Device, subnet *net.IPNet
 }
 
 func fixTunIP(ip net.IP) net.IP { return ip }
+
+// sing-tun's system/mixed stack creates a TCP application firewall rule when
+// absent. Preserve an existing rule and remove only a rule acquired by this run.
+func (n systemNetwork) PrepareStack(ctx context.Context) (Cleanup, error) {
+	path, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		return nil, err
+	}
+	p := map[string]any{"Rule": "sing-tun (" + path + ")"}
+	data, err := n.powershell(ctx, `@(Get-NetFirewallRule -ErrorAction Stop | Where-Object { $_.DisplayName -eq $p.Rule }).Count | ConvertTo-Json`, p)
+	if err != nil {
+		return nil, err
+	}
+	var count int
+	if err := json.Unmarshal(data, &count); err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		return nil, nil
+	}
+	return func(ctx context.Context) error {
+		_, err := n.powershell(ctx, `Get-NetFirewallRule -ErrorAction Stop | Where-Object { $_.DisplayName -eq $p.Rule } | Remove-NetFirewallRule`, p)
+		return err
+	}, nil
+}
