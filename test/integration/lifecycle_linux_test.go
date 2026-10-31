@@ -65,12 +65,6 @@ udp-nat-port-end=11000
 [dns]
 servers=["127.0.0.1:5353"]
 listen-port=%d
-[[outbounds]]
-name="local"
-type="direct"
-[[outbounds]]
-name="blocked"
-type="reject"
 `, port("tcp"), port("tcp"), udpPort, dnsPort)))
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +171,7 @@ func TestSystemLifecycleRouteFailure(t *testing.T) {
 	cfg := systemConfig(t)
 	systemCommand(t, "route", "add", "203.0.113.0/24", "dev", "lo")
 	defer systemCommand(t, "route", "del", "203.0.113.0/24", "dev", "lo")
-	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Outbound: "blocked"}, {Schema: "IP-CIDR", Pattern: "203.0.113.0/24", Outbound: "blocked"}}
+	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Outbound: kone.BuiltinReject}, {Schema: "IP-CIDR", Pattern: "203.0.113.0/24", Outbound: kone.BuiltinReject}}
 	one, err := kone.FromConfig(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -199,7 +193,7 @@ func TestSystemLifecycleRouteFailure(t *testing.T) {
 
 func TestSystemLifecycleExclusiveDevice(t *testing.T) {
 	cfg := systemConfig(t)
-	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Outbound: "blocked"}}
+	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Outbound: kone.BuiltinReject}}
 	_, cancel, done := systemStart(t, cfg)
 	// Bypass KONE's friendly name precheck and exercise kernel-level exclusive
 	// creation, protecting against two processes racing that precheck.

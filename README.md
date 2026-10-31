@@ -39,7 +39,7 @@ On Windows, build `dist/kone.exe` and run it from an administrator terminal. See
 
 ## Configuration and compatibility
 
-Configuration is **TOML**. Named `[[outbounds]]` entries explicitly select proxy, direct or reject behavior; rules reference them using `outbound`. The optional `[dns]` section uses system DNS upstreams by default. Start with [the complete annotated example](configs/kone.example.toml) and [the migration guide](docs/configuration.md). For LAN traffic, follow [Raspberry Pi / Linux gateway setup](docs/guides/how-to-use-with-raspberry-pi.md).
+Configuration is **TOML**. Declare named proxies with `[[outbounds]]` and `type = "proxy"`. Rules reference a proxy name or the built-in `direct` / `reject` targets using `outbound`; these built-ins need no configuration and their names are reserved. The optional `[dns]` section uses system DNS upstreams by default. Start with [the complete annotated example](configs/kone.example.toml) and [the migration guide](docs/configuration.md). For LAN traffic, follow [Raspberry Pi / Linux gateway setup](docs/guides/how-to-use-with-raspberry-pi.md).
 
 The manager defaults to `http://127.0.0.1:9200/`. Set `general.manager-addr = ""` to disable it. Configuration pages redact proxy credentials. Rule reload uses:
 

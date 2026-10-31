@@ -88,7 +88,7 @@ func TestSystemGatewayLANFullCapture(t *testing.T) {
 	cfg.Core.OutboundInterface = "wan0"
 	cfg.DNS.Servers = []string{fmt.Sprintf("203.0.113.53:%d", dnsPort)}
 	cfg.Outbounds = append(cfg.Outbounds, kone.OutboundConfig{Name: "Gateway", Type: kone.OutboundProxy, URL: fmt.Sprintf("http://203.0.113.2:%d", proxyPort)})
-	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "203.0.113.9/32", Outbound: "local"}, {Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Outbound: "blocked"}, {Schema: "FINAL", Outbound: "Gateway"}}
+	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "203.0.113.9/32", Outbound: kone.BuiltinDirect}, {Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Outbound: kone.BuiltinReject}, {Schema: "FINAL", Outbound: "Gateway"}}
 	_, stop, done := systemStart(t, cfg)
 	client := exec.CommandContext(ctx, "ip", "netns", "exec", clientNS, executable, "-test.run=^TestGatewayNamespaceHelper$", "-test.timeout=20s")
 	client.Env = append(os.Environ(), "KONE_GATEWAY_ROLE=client", fmt.Sprintf("KONE_GATEWAY_DNS=10.203.0.1:%d", cfg.DNS.ListenPort), fmt.Sprintf("KONE_GATEWAY_UDP_PORT=%d", udpPort), fmt.Sprintf("KONE_GATEWAY_DIRECT_PORT=%d", directPort))

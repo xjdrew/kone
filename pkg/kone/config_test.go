@@ -12,8 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testOutbounds = "[[outbounds]]\nname='DIRECT'\ntype='direct'\n[[outbounds]]\nname='REJECT'\ntype='reject'\n"
-const baseConfig = testOutbounds + "[dns]\nservers = ['1.1.1.1', '2001:4860:4860::8888']\n[core]\n"
+const baseConfig = "[dns]\nservers = ['1.1.1.1', '2001:4860:4860::8888']\n[core]\n"
 
 func outboundByName(cfg *KoneConfig, name string) *OutboundConfig {
 	for i := range cfg.Outbounds {
@@ -67,7 +66,7 @@ pattern = 'example.com'
 outbound = 'Proxy1'
 [[rules]]
 type = 'FINAL'
-outbound = 'DIRECT'
+outbound = 'direct'
 `)
 	require.Equal(t, "127.0.0.1:9200", cfg.General.ManagerAddr)
 	require.Equal(t, "json", cfg.General.LogFormat)
@@ -119,24 +118,28 @@ func TestConfigValidation(t *testing.T) {
 		{"bad DNS", "[dns]\nservers=['not-an-ip']", "dns.servers[1]"},
 		{"DNS loop", "[dns]\nservers=['10.192.0.1']", "virtual network"},
 		{"DNS port", "[dns]\nservers=['1.1.1.1:0']", "dns.servers[1]"},
-		{"duplicate outbound", baseConfig + "[[outbounds]]\nname='DIRECT'\ntype='proxy'\nurl='http://127.0.0.1:8080'", "duplicate outbound name"},
-		{"bad proxy", baseConfig + "[[outbounds]]\nname='A'\ntype='proxy'\nurl='ftp://127.0.0.1:8080'", "outbounds[3]"},
+		{"duplicate outbound", baseConfig + "[[outbounds]]\nname='A'\ntype='proxy'\nurl='http://127.0.0.1:8080'\n[[outbounds]]\nname='A'\ntype='proxy'\nurl='http://127.0.0.1:8081'", "duplicate outbound name"},
+		{"reserved direct", baseConfig + "[[outbounds]]\nname='direct'\ntype='proxy'\nurl='http://127.0.0.1:8080'", "reserved for built-in outbound direct"},
+		{"reserved reject case", baseConfig + "[[outbounds]]\nname='REJECT'\ntype='proxy'\nurl='http://127.0.0.1:8080'", "reserved for built-in outbound reject"},
+		{"bad proxy", baseConfig + "[[outbounds]]\nname='A'\ntype='proxy'\nurl='ftp://127.0.0.1:8080'", "outbounds[1]"},
 		{"proxy no port", baseConfig + "[[outbounds]]\nname='A'\ntype='proxy'\nurl='http://127.0.0.1'", "invalid proxy URL"},
 		{"empty outbound name", "[[outbounds]]\nname=''\ntype='direct'", "name must be nonempty"},
 		{"whitespace outbound name", "[[outbounds]]\nname=' bad'\ntype='direct'", "name must be nonempty"},
-		{"missing outbound type", "[[outbounds]]\nname='local'", "type must be"},
-		{"invalid outbound type", "[[outbounds]]\nname='local'\ntype='magic'", "type must be"},
-		{"direct with URL", "[[outbounds]]\nname='local'\ntype='direct'\nurl='http://127.0.0.1:8080'", "url is only valid"},
+		{"missing outbound type", "[[outbounds]]\nname='local'", "type must be proxy"},
+		{"invalid outbound type", "[[outbounds]]\nname='local'\ntype='magic'", "type must be proxy"},
+		{"configured direct", "[[outbounds]]\nname='local'\ntype='direct'", "direct/reject are built-in"},
+		{"configured reject", "[[outbounds]]\nname='blocked'\ntype='reject'", "direct/reject are built-in"},
 		{"legacy proxies", "[proxies]\nSecret='https://alice:secret@example.com:443'", "unknown configuration key"},
 		{"legacy DNS", "[core]\ndns-server=['1.1.1.1']", "unknown configuration key"},
-		{"legacy rule", baseConfig + "[[rules]]\ntype='FINAL'\nproxy='DIRECT'", "unknown configuration key"},
+		{"legacy rule", baseConfig + "[[rules]]\ntype='FINAL'\nproxy='direct'", "unknown configuration key"},
 		{"missing outbound", baseConfig + "[[rules]]\ntype='FINAL'\noutbound='Missing'", "undefined outbound"},
-		{"bad type", baseConfig + "[[rules]]\ntype='typo'\noutbound='DIRECT'", "unknown rule type"},
-		{"empty domain", baseConfig + "[[rules]]\ntype='DOMAIN'\noutbound='DIRECT'", "domain pattern"},
-		{"bad CIDR rule", baseConfig + "[[rules]]\ntype='IP-CIDR'\npattern='bad'\noutbound='DIRECT'", "IPv4 prefix"},
-		{"unsupported IPv6", baseConfig + "[[rules]]\ntype='IP-CIDR6'\npattern='::/0'\noutbound='DIRECT'", "IPv6 interception"},
-		{"country", baseConfig + "[[rules]]\ntype='GEOIP'\npattern='USA'\noutbound='DIRECT'", "country code"},
-		{"FINAL order", baseConfig + "[[rules]]\ntype='FINAL'\noutbound='DIRECT'\n[[rules]]\ntype='FINAL'\noutbound='REJECT'", "FINAL must be last"},
+		{"uppercase builtin reference", baseConfig + "[[rules]]\ntype='FINAL'\noutbound='DIRECT'", "undefined outbound"},
+		{"bad type", baseConfig + "[[rules]]\ntype='typo'\noutbound='direct'", "unknown rule type"},
+		{"empty domain", baseConfig + "[[rules]]\ntype='DOMAIN'\noutbound='direct'", "domain pattern"},
+		{"bad CIDR rule", baseConfig + "[[rules]]\ntype='IP-CIDR'\npattern='bad'\noutbound='direct'", "IPv4 prefix"},
+		{"unsupported IPv6", baseConfig + "[[rules]]\ntype='IP-CIDR6'\npattern='::/0'\noutbound='direct'", "IPv6 interception"},
+		{"country", baseConfig + "[[rules]]\ntype='GEOIP'\npattern='USA'\noutbound='direct'", "country code"},
+		{"FINAL order", baseConfig + "[[rules]]\ntype='FINAL'\noutbound='direct'\n[[rules]]\ntype='FINAL'\noutbound='reject'", "FINAL must be last"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { _, err := ParseConfig([]byte(tc.document)); require.ErrorContains(t, err, tc.want) })

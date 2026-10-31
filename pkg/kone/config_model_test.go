@@ -19,7 +19,7 @@ import (
 
 func TestDNSDefaultsUseSystemOnceAndSurviveReload(t *testing.T) {
 	cleanProxyEnv(t)
-	cfg, err := ParseConfig([]byte("[[outbounds]]\nname='local'\ntype='direct'\n[[rules]]\ntype='FINAL'\noutbound='local'"))
+	cfg, err := ParseConfig([]byte("[[rules]]\ntype='FINAL'\noutbound='direct'"))
 	require.NoError(t, err)
 	require.Empty(t, cfg.DNS.Servers)
 	require.Equal(t, uint16(53), cfg.DNS.ListenPort)
@@ -67,26 +67,19 @@ func TestEffectiveDNSConfigErrorsAndExplicitOverride(t *testing.T) {
 	}
 }
 
-func TestOutboundNamesDoNotSelectBehavior(t *testing.T) {
+func TestBuiltInOutboundsNeedNoConfiguration(t *testing.T) {
 	cleanProxyEnv(t)
 	cfg, err := ParseConfig([]byte(`
-[[outbounds]]
-name='DIRECT'
-type='proxy'
-url='http://127.0.0.1:8080'
-[[outbounds]]
-name='REJECT'
-type='direct'
-[[outbounds]]
-name='blocked'
-type='reject'
 [[rules]]
 type='FINAL'
-outbound='DIRECT'
+outbound='direct'
 `))
 	require.NoError(t, err)
 	rule := NewRule(cfg.Rule, cfg.Outbounds)
-	require.Equal(t, OutboundProxy, rule.OutboundType(rule.Proxy("example.com")))
+	require.Empty(t, cfg.Outbounds)
+	require.Equal(t, BuiltinDirect, rule.Proxy("example.com"))
+	require.Equal(t, OutboundDirect, rule.OutboundType(BuiltinDirect))
+	require.Equal(t, OutboundReject, rule.OutboundType(BuiltinReject))
 	p, err := NewOutbounds(cfg.Outbounds)
 	require.NoError(t, err)
 	var dialed []string
@@ -94,22 +87,24 @@ outbound='DIRECT'
 		dialed = append(dialed, address)
 		return nil, errors.New("dial stopped")
 	}
-	_, err = p.Dial("DIRECT", "192.0.2.4:80")
-	require.ErrorContains(t, err, "dial stopped")
-	require.Equal(t, []string{"127.0.0.1:8080"}, dialed)
-	dialed = nil
-	_, err = p.Dial("REJECT", "192.0.2.1:80")
+	_, err = p.Dial(BuiltinDirect, "192.0.2.1:80")
 	require.ErrorContains(t, err, "dial stopped")
 	require.Equal(t, []string{"192.0.2.1:80"}, dialed)
-	_, err = p.Dial("blocked", "192.0.2.2:80")
+	_, err = p.Dial(BuiltinReject, "192.0.2.2:80")
 	require.ErrorContains(t, err, "rejected")
 	_, err = p.Dial("missing", "192.0.2.2:80")
 	require.ErrorContains(t, err, "unknown outbound")
 	_, err = p.Dial("", "192.0.2.3:80")
-	require.ErrorContains(t, err, "dial stopped")
-	require.Equal(t, []string{"192.0.2.1:80", "192.0.2.3:80"}, dialed)
-	cfg.Outbounds[0].Type = "invalid"
-	_, err = NewOutbounds(cfg.Outbounds)
+	require.ErrorContains(t, err, "unknown outbound")
+	require.Equal(t, []string{"192.0.2.1:80"}, dialed)
+	implicit := NewRule(nil, nil)
+	require.Equal(t, BuiltinDirect, implicit.Proxy("unmatched.example"))
+	data, err := cfg.RedactedTOML()
+	require.NoError(t, err)
+	reparsed, err := ParseConfig(data)
+	require.NoError(t, err)
+	require.Empty(t, reparsed.Outbounds, "built-ins must not become file configuration")
+	_, err = NewOutbounds([]OutboundConfig{{Name: "direct", Type: OutboundProxy, URL: "http://127.0.0.1:8080"}})
 	require.Error(t, err)
 }
 
@@ -119,31 +114,52 @@ func TestEnvironmentOutboundOverrideAndConflict(t *testing.T) {
 	cfg := parseTestConfig(t, "[[outbounds]]\nname='http_proxy'\ntype='proxy'\nurl='http://127.0.0.1:8080'")
 	require.Equal(t, "http://127.0.0.1:8888", outboundByName(cfg, HTTP_PROXY).URL)
 	_, err := ParseConfig([]byte("[[outbounds]]\nname='http_proxy'\ntype='direct'"))
-	require.ErrorContains(t, err, "conflicts with a non-proxy outbound")
+	require.ErrorContains(t, err, "direct/reject are built-in")
 	_, err = ParseConfig([]byte("[[outbounds]]\nname='http_proxy'\ntype='proxy'\nurl='http://user:secret@127.0.0.1:bad'"))
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "secret")
 }
 
-func TestReloadOutboundKindAndCIDRProtection(t *testing.T) {
+func TestReloadBuiltInTargetsAndCIDRProtection(t *testing.T) {
 	cleanProxyEnv(t)
 	one := testEngine(t)
 	old := one.policy.Load()
 	cfg := one.Snapshot().Config
-	setTestOutbound(cfg, "A", OutboundDirect, "")
+	cfg.Rule[0].Outbound = BuiltinDirect
 	require.NoError(t, one.Reload(cfg))
-	require.Equal(t, OutboundDirect, one.policy.Load().rule.OutboundType("A"))
+	require.Equal(t, OutboundDirect, one.policy.Load().rule.OutboundType(one.policy.Load().rule.Proxy("example.com")))
 	require.Equal(t, OutboundProxy, old.rule.OutboundType("A"))
-	cfg.Rule = []RuleConfig{{Schema: "IP-CIDR", Pattern: "192.0.2.0/24", Outbound: "A"}}
+	cfg.Rule = []RuleConfig{{Schema: "IP-CIDR", Pattern: "192.0.2.0/24", Outbound: BuiltinDirect}}
 	routed, err := FromConfig(cfg)
 	require.NoError(t, err)
 	updated := routed.Snapshot().Config
-	setTestOutbound(updated, "A", OutboundProxy, "http://127.0.0.1:8080")
+	updated.Rule[0].Outbound = "A"
 	require.ErrorContains(t, routed.Reload(updated), "require restart")
 	require.Equal(t, uint64(1), routed.Snapshot().Version)
 }
 
-func TestNamedRejectAppliesAfterCNAMEAndIPResolution(t *testing.T) {
+func TestReloadWithOnlyBuiltInOutbounds(t *testing.T) {
+	cleanProxyEnv(t)
+	cfg := parseTestConfig(t, "[[rules]]\ntype='FINAL'\noutbound='direct'")
+	one, err := FromConfig(cfg)
+	require.NoError(t, err)
+	old := one.policy.Load()
+	updated := one.Snapshot().Config
+	updated.Rule[0].Outbound = BuiltinReject
+	require.NoError(t, one.Reload(updated))
+	require.Empty(t, one.Snapshot().Config.Outbounds)
+	require.Equal(t, BuiltinDirect, old.rule.Proxy("example.com"))
+	require.Equal(t, BuiltinReject, one.policy.Load().rule.Proxy("example.com"))
+	_, err = one.policy.Load().outbounds.Dial(BuiltinReject, "192.0.2.1:80")
+	require.ErrorContains(t, err, "rejected")
+	updated = one.Snapshot().Config
+	updated.Rule = nil
+	require.NoError(t, one.Reload(updated))
+	require.Equal(t, BuiltinDirect, one.policy.Load().rule.Proxy("example.com"))
+	require.Empty(t, one.Snapshot().Config.Outbounds)
+}
+
+func TestBuiltInRejectAppliesAfterCNAMEAndIPResolution(t *testing.T) {
 	cleanProxyEnv(t)
 	conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -166,12 +182,11 @@ func TestNamedRejectAppliesAfterCNAMEAndIPResolution(t *testing.T) {
 	}
 	defer func() { require.NoError(t, server.Shutdown()); require.NoError(t, <-done) }()
 	for _, rule := range []RuleConfig{
-		{Schema: "DOMAIN", Pattern: "blocked.example", Outbound: "deny"},
-		{Schema: "IP-CIDR", Pattern: "192.0.2.0/24", Outbound: "deny"},
+		{Schema: "DOMAIN", Pattern: "blocked.example", Outbound: BuiltinReject},
+		{Schema: "IP-CIDR", Pattern: "192.0.2.0/24", Outbound: BuiltinReject},
 	} {
 		cfg := parseTestConfig(t, "")
-		setTestOutbound(cfg, "deny", OutboundReject, "")
-		cfg.Rule = []RuleConfig{rule, {Schema: "FINAL", Outbound: "DIRECT"}}
+		cfg.Rule = []RuleConfig{rule, {Schema: "FINAL", Outbound: "direct"}}
 		cfg.DNS.Servers = []string{conn.LocalAddr().String()}
 		one, err := FromConfig(cfg)
 		require.NoError(t, err)

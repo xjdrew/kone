@@ -231,7 +231,7 @@ func TestGatewayConfigValidation(t *testing.T) {
 		_, err := ParseConfig([]byte(baseConfig + extra))
 		require.Error(t, err)
 	}
-	_, err := ParseConfig([]byte(baseConfig + "[[rules]]\ntype='IP-CIDR'\npattern='0.0.0.0/0'\noutbound='REJECT'"))
+	_, err := ParseConfig([]byte(baseConfig + "[[rules]]\ntype='IP-CIDR'\npattern='0.0.0.0/0'\noutbound='reject'"))
 	require.ErrorContains(t, err, "outbound-interface")
 	one := testEngine(t)
 	reserved := netip.MustParseAddr(one.ip.String()).Next()

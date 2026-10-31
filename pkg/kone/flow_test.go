@@ -31,19 +31,19 @@ func TestFlowDestinationUsesSnapshotAndVirtualAddress(t *testing.T) {
 	require.Equal(t, "example.com:443", addr)
 	require.Equal(t, "A", policy)
 	updated := one.Snapshot().Config
-	updated.Rule[0].Outbound = "DIRECT"
+	updated.Rule[0].Outbound = "direct"
 	require.NoError(t, one.Reload(updated))
 	addr, policy, err = h.destination(context.Background(), one.policy.Load(), destination, false)
 	require.NoError(t, err)
 	require.Equal(t, "192.0.2.10:443", addr)
-	require.Equal(t, "DIRECT", policy)
+	require.Equal(t, "direct", policy)
 	_, policy, err = h.destination(context.Background(), old, destination, false)
 	require.NoError(t, err)
 	require.Equal(t, "A", policy)
 	addr, _, err = h.destination(context.Background(), old, destination, true)
 	require.NoError(t, err)
 	require.Equal(t, "192.0.2.10:443", addr)
-	updated.Rule[0].Outbound = "REJECT"
+	updated.Rule[0].Outbound = "reject"
 	require.NoError(t, one.Reload(updated))
 	_, _, err = h.destination(context.Background(), one.policy.Load(), destination, true)
 	require.ErrorContains(t, err, "rejected")
@@ -81,7 +81,7 @@ func TestTransparentTCPFlowRetainsPolicyAndDrains(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, message, string(data))
 		updated := one.Snapshot().Config
-		updated.Rule = []RuleConfig{{Schema: "FINAL", Outbound: "REJECT"}}
+		updated.Rule = []RuleConfig{{Schema: "FINAL", Outbound: "reject"}}
 		require.NoError(t, one.Reload(updated))
 	}
 	one.flows.close()
@@ -101,7 +101,7 @@ func TestTransparentTCPRejectAndDialFailure(t *testing.T) {
 	one := testEngine(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	for _, policy := range []string{"A", "REJECT"} {
+	for _, policy := range []string{"A", "reject"} {
 		cfg := one.Snapshot().Config
 		cfg.Rule[0].Outbound = policy
 		require.NoError(t, one.Reload(cfg))

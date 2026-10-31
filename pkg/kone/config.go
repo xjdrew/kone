@@ -62,12 +62,22 @@ const (
 	OutboundProxy  OutboundType = "proxy"
 	OutboundDirect OutboundType = "direct"
 	OutboundReject OutboundType = "reject"
+	// BuiltinDirect and BuiltinReject are always available rule targets.
+	BuiltinDirect = string(OutboundDirect)
+	BuiltinReject = string(OutboundReject)
 )
 
 type OutboundConfig struct {
 	Name string       `toml:"name"`
 	Type OutboundType `toml:"type"`
 	URL  string       `toml:"url,omitempty"`
+}
+
+func builtinOutbounds() [2]OutboundConfig {
+	return [2]OutboundConfig{
+		{Name: BuiltinDirect, Type: OutboundDirect},
+		{Name: BuiltinReject, Type: OutboundReject},
+	}
 }
 
 type RuleConfig struct {
@@ -147,9 +157,6 @@ func ParseConfig(source any) (*KoneConfig, error) {
 			found := false
 			for i := range cfg.Outbounds {
 				if cfg.Outbounds[i].Name == key {
-					if cfg.Outbounds[i].Type != OutboundProxy {
-						return nil, fmt.Errorf("environment proxy %s conflicts with a non-proxy outbound", key)
-					}
 					cfg.Outbounds[i].URL = value
 					found = true
 					break
@@ -180,11 +187,19 @@ func ParseConfig(source any) (*KoneConfig, error) {
 }
 
 func validateOutbounds(config []OutboundConfig) (map[string]OutboundType, error) {
-	types := make(map[string]OutboundType, len(config))
+	types := make(map[string]OutboundType, len(config)+2)
+	for _, o := range builtinOutbounds() {
+		types[o.Name] = o.Type
+	}
 	for i, o := range config {
 		fail := func(reason string) error { return fmt.Errorf("outbounds[%d]: %s", i+1, reason) }
 		if o.Name == "" || strings.TrimSpace(o.Name) != o.Name || strings.ContainsAny(o.Name, "\x00\r\n\t") {
 			return nil, fail("name must be nonempty with no surrounding whitespace or control characters")
+		}
+		for _, builtin := range builtinOutbounds() {
+			if strings.EqualFold(o.Name, builtin.Name) {
+				return nil, fail("name is reserved for built-in outbound " + builtin.Name)
+			}
 		}
 		if _, exists := types[o.Name]; exists {
 			return nil, fail("duplicate outbound name " + o.Name)
@@ -195,11 +210,9 @@ func validateOutbounds(config []OutboundConfig) (map[string]OutboundType, error)
 				return nil, fail("invalid proxy URL (expected http, https or socks5 with host and port)")
 			}
 		case OutboundDirect, OutboundReject:
-			if o.URL != "" {
-				return nil, fail("url is only valid for type=proxy")
-			}
+			return nil, fail("direct/reject are built-in; reference them in rules without an outbounds entry")
 		default:
-			return nil, fail("type must be proxy, direct or reject")
+			return nil, fail("configured outbound type must be proxy; direct/reject are built-in")
 		}
 		types[o.Name] = o.Type
 	}

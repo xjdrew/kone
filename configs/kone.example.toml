@@ -56,8 +56,9 @@
 # read-timeout = 5
 # write-timeout = 5
 
-# 出站数组：name 是规则引用的唯一名称，不具有特殊行为，支持自定义名字。
-# type 必填：proxy、direct、reject。只有 proxy 可以且必须填写 url。
+# 出站数组只需声明代理；name 是规则引用的唯一名称，type 必须为 proxy。
+# direct（直连）和 reject（拒绝）是内置出站，无需声明；名称及其大小写变体保留。
+# 只使用内置出站时可省略整个 outbounds 数组。
 [[outbounds]]
 name = "office"
 type = "proxy"
@@ -66,22 +67,15 @@ type = "proxy"
 # 当前代理出站仅转发 TCP；UDP 保持直连行为，未实现 SOCKS5 UDP ASSOCIATE。
 url = "http://127.0.0.1:8080"
 
-[[outbounds]]
-name = "local"
-type = "direct" # KONE 接收流量后直接连接目标，不使用上游代理。
-
-[[outbounds]]
-name = "blocked"
-type = "reject" # 拒绝连接；匹配的域名 DNS 查询返回 REFUSED。
-
-# 规则按顺序匹配，outbound 必须引用上面已定义的名字。
+# 规则按顺序匹配，outbound 引用代理名称或内置 direct、reject（小写）。
+# direct：KONE 接收后直接连接目标；reject：拒绝连接，域名 DNS 查询返回 REFUSED。
 # type：DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD、IP-CIDR、GEOIP、FINAL。
 # pattern：域名/后缀/关键词、IPv4 CIDR 或大写两字母国家代码；FINAL 不填。
 # FINAL 可省略，但写出时必须是最后一条；没有匹配规则时隐式直连。
 [[rules]]
 type = "IP-CIDR"
 pattern = "192.168.0.0/16"
-outbound = "local"
+outbound = "direct"
 
 [[rules]]
 type = "DOMAIN-SUFFIX"
@@ -89,5 +83,10 @@ pattern = "example.com" # 匹配自身及子域名，不匹配 1example.com。
 outbound = "office"
 
 [[rules]]
+type = "DOMAIN-SUFFIX"
+pattern = "blocked.example"
+outbound = "reject"
+
+[[rules]]
 type = "FINAL"
-outbound = "local"
+outbound = "direct"

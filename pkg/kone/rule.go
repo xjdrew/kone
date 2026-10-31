@@ -41,12 +41,8 @@ type Rule struct {
 	outbounds     map[string]OutboundType
 }
 
-// An empty reference is the internal fallback/endpoint bypass, always direct.
-// Configured names have no special meaning, including DIRECT and REJECT.
+// Built-in and configured targets share the same immutable routing registry.
 func (rule *Rule) OutboundType(name string) OutboundType {
-	if name == "" {
-		return OutboundDirect
-	}
 	return rule.outbounds[name]
 }
 
@@ -59,8 +55,8 @@ func (rule *Rule) DirectDomain(domain string) {
 func (rule *Rule) Proxy(val interface{}) string {
 	if domain, ok := val.(string); ok {
 		if rule.directDomains[normalizeDomain(domain)] {
-			slog.Debug("Routing rule matched", "target", val, "proxy", "DIRECT")
-			return "" // internal direct endpoint bypass
+			slog.Debug("Routing rule matched", "target", val, "proxy", BuiltinDirect)
+			return BuiltinDirect
 		}
 	}
 
@@ -71,8 +67,8 @@ func (rule *Rule) Proxy(val interface{}) string {
 			return proxy
 		}
 	}
-	slog.Debug("Default routing policy selected", "target", val, "proxy", "")
-	return "" // implicit direct when no rule matches
+	slog.Debug("Default routing policy selected", "target", val, "proxy", BuiltinDirect)
+	return BuiltinDirect
 }
 
 func NewRule(rcs []RuleConfig, outbounds []OutboundConfig) *Rule {
@@ -81,6 +77,9 @@ func NewRule(rcs []RuleConfig, outbounds []OutboundConfig) *Rule {
 		outbounds:     map[string]OutboundType{},
 	}
 	for _, o := range outbounds {
+		rule.outbounds[o.Name] = o.Type
+	}
+	for _, o := range builtinOutbounds() {
 		rule.outbounds[o.Name] = o.Type
 	}
 

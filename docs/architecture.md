@@ -22,7 +22,7 @@ KONE DNS 服务、sing-tun 协议栈、KONE 流处理器和出站执行器都在
 这里发生两次不同的选择：
 
 1. **内核路由选择入口**：决定流量是否进入 TUN 设备。本机访问由本机路由决定；LAN 访问还需要网关转发和回程路由。
-2. **KONE 规则选择出站**：进入之后，按域名、IP 等选择已命名的出站。`outbound` 是名称引用；`type = "proxy" / "direct" / "reject"` 才决定行为。
+2. **KONE 规则选择出站**：进入之后，按域名、IP 等选择出站。`outbound` 引用配置的代理名称，或内置的 `direct`、`reject`。配置中的 `[[outbounds]]` 只声明 `type = "proxy"` 的代理；两个内置出站无需声明，名称保留且不能覆盖。
 
 `direct` 表示 KONE 接收后自行连接目标服务，仍经过 KONE 流处理器。内核路由没有选择 TUN 设备时，流量才完全绕过 KONE。`auto-route` 扩大入口捕获范围，不改变出站类型。
 
@@ -278,11 +278,11 @@ LAN 客户端先把流量交给 KONE 主机，再由其内核路由选择 TUN �
 | 客户端侧 TCP 连接 | 经透明改写交给 KONE 流处理器的 net.Conn；客户端仍认为对端是原目标/Fake-IP |
 | KONE 流处理器 | TCP/UDP 回调适配、Fake-IP 反查、规则选择、数据转发和资源登记代码；对应 flowHandler |
 | 配置快照 | 同一版本的规则、出站定义与配置；请求/连接读取后保持该版本 |
-| 出站 | 一个具名转发策略，包含 name、type 及代理类型所需的 URL；不是一个远端服务器 |
+| 出站 | 一个具名转发策略；代理由配置声明，direct/reject 由运行时内置；不是一个远端服务器 |
 | 出站执行器 | 根据出站定义创建连接的 KONE 代码；当前代理拨号接口只实现 TCP |
-| 代理出站 | type=proxy，使用 HTTP/HTTPS CONNECT 或 SOCKS5 TCP 通道；名称可以任意定义 |
-| 直连出站 | type=direct，KONE 自行连接真实目标；仍经过 KONE，不表示绕过 TUN |
-| 拒绝出站 | type=reject，不创建到目标的连接或 UDP socket |
+| 代理出站 | 配置 type=proxy，使用 HTTP/HTTPS CONNECT 或 SOCKS5 TCP 通道；名称自定义，但不能使用内置保留名 |
+| 直连出站 | 内置名称 direct，KONE 自行连接真实目标；无需配置声明，仍经过 KONE，不表示绕过 TUN |
+| 拒绝出站 | 内置名称 reject，不创建到目标的连接或 UDP socket；无需配置声明 |
 | 出站连接 | KONE 创建的客户端侧连接之外的 TCP 连接；直连时通向目标，代理时通向上游代理服务器 |
 | 上游代理服务器 | 接收 CONNECT/SOCKS5 等代理协议并连接目标服务的远端进程 |
 | 目标服务 | 客户端实际要访问的服务，例如 example.com 的 HTTPS 服务 |

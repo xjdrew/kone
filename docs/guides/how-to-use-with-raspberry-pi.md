@@ -54,14 +54,10 @@ name = "gateway"
 type = "proxy"
 url = "http://your-proxy.example:8080"
 
-[[outbounds]]
-name = "local"
-type = "direct"
-
 [[rules]]
 type = "IP-CIDR"
 pattern = "192.168.0.0/16"
-outbound = "local"
+outbound = "direct" # 内置直连出站，无需声明
 
 [[rules]]
 type = "FINAL"

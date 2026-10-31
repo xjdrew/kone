@@ -30,6 +30,24 @@ func buildBinary(t *testing.T, pkg string) (string, string) {
 
 func TestCLI(t *testing.T) {
 	root, binary := buildBinary(t, "./cmd/kone")
+	configs := t.TempDir()
+	for name, content := range map[string]string{
+		"builtins": `
+[[rules]]
+type = "DOMAIN-SUFFIX"
+pattern = "blocked.example"
+outbound = "reject"
+[[rules]]
+type = "FINAL"
+outbound = "direct"
+`,
+		"override": "[[outbounds]]\nname='DIRECT'\ntype='proxy'\nurl='http://127.0.0.1:8080'",
+		"alias":    "[[outbounds]]\nname='local'\ntype='direct'",
+	} {
+		if err := os.WriteFile(filepath.Join(configs, name+".toml"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for _, tc := range []struct {
 		name string
 		args []string
@@ -41,6 +59,9 @@ func TestCLI(t *testing.T) {
 		{"check", []string{"-check", "-config", "configs/kone.example.toml"}, "Configuration valid", 0},
 		{"positional", []string{"-check", "configs/kone.example.toml"}, "Configuration valid", 0},
 		{"missing", []string{"-check", "-config", "does-not-exist.toml"}, "Configuration error", 2},
+		{"builtins without outbounds", []string{"-check", "-config", filepath.Join(configs, "builtins.toml")}, "Configuration valid", 0},
+		{"builtin override", []string{"-check", "-config", filepath.Join(configs, "override.toml")}, "reserved for built-in outbound direct", 2},
+		{"builtin alias", []string{"-check", "-config", filepath.Join(configs, "alias.toml")}, "direct/reject are built-in", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command(binary, tc.args...)

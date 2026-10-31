@@ -6,7 +6,8 @@ Go 版本统一为 1.27.3。原 INI 文件不再加载，默认配置文件名�
 ## INI 到 TOML
 
 配置由 `[general]`、`[core]`、可选的 `[dns]`、`[[outbounds]]` 与 `[[rules]]` 组成。
-旧 `[proxies]` 字典改为出站数组；名字可以自定义，行为由 `type` 决定，规则使用 `outbound` 引用。
+旧 `[proxies]` 字典改为代理出站数组，使用自定义名字、`type = "proxy"` 和 URL 声明代理。规则使用 `outbound` 引用代理名，或直接引用内置的 `direct`、`reject`。
+`direct` 和 `reject` 始终可用，不需要配置条目；只使用它们时，整个 `[[outbounds]]` 数组都可以省略。已有 `type = "direct" / "reject"` 条目应删除，并将规则中的别名替换为 `direct` / `reject`。
 旧 `core.dns-*` 参数移动到 `[dns]` 并去掉 `dns-` 前缀；`dns-server` 改为 `dns.servers`。
 旧 INI、`[proxies]`、规则的 `proxy` 字段和 `core.dns-*` 都会被严格校验拒绝，不会静默忽略。
 
@@ -24,22 +25,19 @@ name = "office"
 type = "proxy"
 url = "http://127.0.0.1:8080"
 
-[[outbounds]]
-name = "local"
-type = "direct"
-
-[[outbounds]]
-name = "blocked"
-type = "reject"
-
 [[rules]]
 type = "DOMAIN-SUFFIX"
 pattern = "example.com"
 outbound = "office"
 
 [[rules]]
+type = "DOMAIN-SUFFIX"
+pattern = "blocked.example"
+outbound = "reject"
+
+[[rules]]
 type = "FINAL"
-outbound = "local"
+outbound = "direct"
 ```
 
 ## 可选的 DNS 配置
@@ -66,12 +64,12 @@ write-timeout = 5
 - 监听端口非零；NAT 范围为 `[start, end)`，必须有效，且不能包含对应 relay 的监听端口。
 - DNS 上游必须是 IP 地址，可带有效端口，不能指向虚拟网段。DNS TTL 必须在 1..4294967295 秒内，报文大小至少 512 字节，超时在 1..300 秒内。
 - 支持 `http://host:port`、`https://host:port`、`socks5://host:port`，端口必须显式提供；URL 不允许路径、查询或 fragment。IPv6 主机使用方括号。
-- 出站名必须非空、唯一，不含控制字符或首尾空白；名称区分大小写，没有 `DIRECT` / `REJECT` 等保留名称。类型只允许 `proxy`、`direct`、`reject`；proxy 必须有合法 URL，其他类型不得填写 URL。
-- 规则必须引用已定义的出站。名为 `DIRECT` 的 proxy 仍会代理，名为 `REJECT` 的 direct 仍会直连；只有 type 决定行为。没有规则匹配时隐式直连。
+- 代理出站名必须非空、唯一，不含控制字符或首尾空白。配置类型只允许 `proxy`，必须有合法 URL；内置出站不能通过配置声明或覆盖。
+- 规则引用已配置的代理名或内置小写 `direct` / `reject`，引用区分大小写。`direct`、`reject` 及其大小写变体均不能用作代理名称。没有规则匹配时使用内置 `direct`。
 - 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 当前会报不支持。
 - `DOMAIN-SUFFIX = example.com` 匹配自身和子域名，不匹配 `1example.com`。`DIRECT` CIDR 例外会保留规则优先级。
 
-`http_proxy`、`https_proxy`、`socks_proxy` 环境变量会定义或覆盖同名的 proxy 出站。未设置小写变量时读取大写形式；Windows 环境变量本身不区分大小写。与同名 direct/reject 冲突会报错，不改变其类型。文件中的重复定义或无效 URL 不会被环境变量掩盖。
+`http_proxy`、`https_proxy`、`socks_proxy` 环境变量会定义或覆盖同名的 proxy 出站。未设置小写变量时读取大写形式；Windows 环境变量本身不区分大小写。文件中的重复定义或无效 URL 不会被环境变量掩盖；内置出站不受这些环境变量影响。
 
 ## 日志与管理接口
 
@@ -83,7 +81,7 @@ write-timeout = 5
 
 热更新会重建代理端点的域名绕过，重新计算已有 DNS 映射的域名、CNAME、IP 策略，清除直连域名缓存，并保留虚拟 IP。
 新的 TCP 连接采用新策略；已建立连接和已有 UDP tunnel 按当前会话继续工作。
-出站定义与规则作为同一版本快照原子更新；新的连接使用新定义，已建立连接保留原出站。域名/最终规则的出站类型也可以热更新；若类型变化会改变 CIDR 捕获，则要求重启。
+代理出站定义与规则作为同一版本快照原子更新；新的连接使用新定义，已建立连接保留原出站。域名/最终规则可在代理名、`direct` 和 `reject` 之间热更新；若更新改变 CIDR 捕获，则要求重启。内置出站始终存在，不会作为配置条目写入快照的配置或管理页 TOML。
 端口、TUN、DNS、日志、管理地址及 CIDR 路由变化要求重启，失败更新保留原配置和版本。
 
 ## TUN backend and stack

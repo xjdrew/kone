@@ -26,9 +26,6 @@ func (p *Outbounds) Dial(name, addr string) (net.Conn, error) {
 
 func (p *Outbounds) DialContext(ctx context.Context, name, addr string) (net.Conn, error) {
 	outbound, ok := p.entries[name]
-	if name == "" {
-		outbound, ok = configuredOutbound{kind: OutboundDirect}, true
-	}
 	if !ok {
 		return nil, fmt.Errorf("unknown outbound %q", name)
 	}
@@ -48,14 +45,14 @@ func NewOutbounds(config []OutboundConfig) (*Outbounds, error) {
 	if _, err := validateOutbounds(config); err != nil {
 		return nil, err
 	}
-	p := &Outbounds{entries: make(map[string]configuredOutbound, len(config)), dial: proxy.Direct.DialContext}
+	p := &Outbounds{entries: make(map[string]configuredOutbound, len(config)+2), dial: proxy.Direct.DialContext}
+	for _, o := range builtinOutbounds() {
+		p.entries[o.Name] = configuredOutbound{kind: o.Type}
+	}
 	for _, o := range config {
-		entry := configuredOutbound{kind: o.Type}
-		if o.Type == OutboundProxy {
-			entry.proxy, _ = proxy.FromUrl(o.URL) // validated above; never log credentials
-			slog.Debug("Proxy configured", "outbound", o.Name, "scheme", entry.proxy.Url.Scheme, "endpoint", entry.proxy.Url.Host)
-		}
-		p.entries[o.Name] = entry
+		dialer, _ := proxy.FromUrl(o.URL) // validated above; never log credentials
+		slog.Debug("Proxy configured", "outbound", o.Name, "scheme", dialer.Url.Scheme, "endpoint", dialer.Url.Host)
+		p.entries[o.Name] = configuredOutbound{kind: OutboundProxy, proxy: dialer}
 	}
 	return p, nil
 }

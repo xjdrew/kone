@@ -1,7 +1,8 @@
 # 2026/10/31 — forked TUN fixes and explicit configuration model
 - Move sing-tun fixes to a reviewable PR in xjdrew/sing-tun; pin its commit through a remote module replacement and remove the in-tree source copy.
 - Normalize Wintun HRESULT adapter errors so standard Go error matching recognizes duplicate devices; retain PE/session/exclusive-creation race and native regressions in fork CI.
-- Replace the proxies dictionary and magic rule actions with named outbounds arrays carrying explicit proxy/direct/reject types; rules reference outbound names, with duplicate/type/URL/reference validation and atomic reload.
+- Replace the proxies dictionary with named proxy outbounds arrays; rules reference proxy names or built-in direct/reject targets, with duplicate/type/URL/reference validation and atomic reload.
+- Make direct/reject always-available reserved targets without configuration entries; reject declarations and name overrides, preserve built-ins during reload, and cover configuration-free routing with unit, CLI and gateway regressions.
 - Move DNS settings from core into an optional dns section. Resolve omitted upstreams from system settings once before startup, preserve automatic configuration through reload, and reject invalid/self-routed upstreams.
 - Keep loopback proxies and local DNS stubs on the loopback path when a physical outbound interface is selected.
 - Document every supported configuration key and its default in the example, comment optional defaults, and add schema-completeness, DNS-default, outbound-policy and migration regressions.

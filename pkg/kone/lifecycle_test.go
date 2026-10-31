@@ -146,11 +146,11 @@ func lifecycleEngine(t *testing.T, n *memoryNetwork, s *loopSockets) *One {
 	cfg := parseTestConfig(t, `[[rules]]
 type='IP-CIDR'
 pattern='198.51.100.0/24'
-outbound='REJECT'
+outbound='reject'
 [[rules]]
 type='IP-CIDR'
 pattern='203.0.113.0/24'
-outbound='REJECT'
+outbound='reject'
 `)
 	one, err := FromConfig(cfg, WithNetwork(n), WithSockets(s), WithShutdownTimeout(time.Second))
 	require.NoError(t, err)

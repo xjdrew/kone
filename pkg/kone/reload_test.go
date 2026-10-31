@@ -33,8 +33,8 @@ func TestReloadPreservesProxyBypass(t *testing.T) {
 	cleanProxyEnv(t)
 	one := testEngine(t)
 	require.NoError(t, one.Reload(one.Snapshot().Config))
-	require.Empty(t, one.policy.Load().rule.Proxy("PROXY.EXAMPLE.COM."))
-	require.Empty(t, one.policy.Load().rule.Proxy("127.0.0.1"))
+	require.Equal(t, BuiltinDirect, one.policy.Load().rule.Proxy("PROXY.EXAMPLE.COM."))
+	require.Equal(t, BuiltinDirect, one.policy.Load().rule.Proxy("127.0.0.1"))
 	require.Equal(t, "A", one.policy.Load().rule.Proxy("other.example.com"))
 }
 
@@ -52,7 +52,7 @@ func TestReloadUpdatesCachedPolicyAndPreservesAddress(t *testing.T) {
 	require.True(t, record.IP.Equal(got.IP))
 	require.False(t, one.dnsTable.IsNonProxyDomain("direct.example"))
 	// Caller mutations do not alter the active snapshot.
-	cfg.Rule[0].Outbound = "REJECT"
+	cfg.Rule[0].Outbound = "reject"
 	require.Equal(t, "B", one.policy.Load().rule.Proxy("example.com"))
 }
 
@@ -94,7 +94,7 @@ func TestCachedVirtualAddressCanBecomeDirect(t *testing.T) {
 	answer := &dns.Msg{Answer: []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET}, A: net.ParseIP("203.0.113.10")}}}
 	one.dnsTable.SetRealIP(record.Hostname, answer)
 	cfg := one.Snapshot().Config
-	cfg.Rule[0].Outbound = "DIRECT"
+	cfg.Rule[0].Outbound = "direct"
 	require.NoError(t, one.Reload(cfg))
 	relay := NewTCPRelay(one, cfg.Core)
 	_, port := relay.nat.allocSession(net.IPv4(192, 168, 1, 2), record.IP, 50000, 443)
@@ -104,7 +104,7 @@ func TestCachedVirtualAddressCanBecomeDirect(t *testing.T) {
 	var data ConnData
 	addr, policy := relay.realRemoteHost(flowConn{Conn: left, remote: &net.TCPAddr{IP: record.IP, Port: int(port)}}, &data)
 	require.Equal(t, "203.0.113.10:443", addr)
-	require.Equal(t, "DIRECT", policy)
+	require.Equal(t, "direct", policy)
 	require.Equal(t, "example.com", data.Dst)
 }
 
@@ -148,7 +148,7 @@ func TestReloadReevaluatesCachedCNAMEAndIPRules(t *testing.T) {
 		&dns.A{Hdr: dns.RR_Header{Name: "cdn.example.", Rrtype: dns.TypeA, Class: dns.ClassINET}, A: net.ParseIP("203.0.113.1")},
 	}})
 	cfg := one.Snapshot().Config
-	cfg.Rule = []RuleConfig{{Schema: "DOMAIN", Pattern: "cdn.example", Outbound: "B"}, {Schema: "FINAL", Outbound: "DIRECT"}}
+	cfg.Rule = []RuleConfig{{Schema: "DOMAIN", Pattern: "cdn.example", Outbound: "B"}, {Schema: "FINAL", Outbound: "direct"}}
 	require.NoError(t, one.Reload(cfg))
 	require.Equal(t, "B", policyFor(one, record.Hostname))
 	require.True(t, record.IP.Equal(one.dnsTable.Get(record.Hostname).IP))
