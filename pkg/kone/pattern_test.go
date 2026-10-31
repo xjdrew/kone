@@ -9,7 +9,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/xjdrew/kone/pkg/tcpip"
+	"net/netip"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -38,8 +38,8 @@ func TestDomainSuffixPattern(t *testing.T) {
 }
 
 func TestDirectCIDRRuleKeepsItsPriority(t *testing.T) {
-	rule := NewRule([]RuleConfig{{Schema: "IP-CIDR", Pattern: "10.1.0.0/16", Proxy: "DIRECT"}, {Schema: "IP-CIDR", Pattern: "10.0.0.0/8", Proxy: "A"}})
-	assert.Equal(t, "DIRECT", rule.Proxy(net.ParseIP("10.1.2.3")))
+	rule := NewRule([]RuleConfig{{Schema: "IP-CIDR", Pattern: "10.1.0.0/16", Outbound: BuiltinDirect}, {Schema: "IP-CIDR", Pattern: "10.0.0.0/8", Outbound: "A"}}, []OutboundConfig{{Name: "A"}})
+	assert.Equal(t, "direct", rule.Proxy(net.ParseIP("10.1.2.3")))
 	assert.Equal(t, "A", rule.Proxy(net.ParseIP("10.2.2.3")))
 }
 
@@ -59,18 +59,23 @@ func TestIPCountryPattern(t *testing.T) {
 	assert.Equal(t, "A", pattern.Proxy())
 	assert.True(t, pattern.Match(net.ParseIP("216.58.197.99")))  // google.hk
 	assert.False(t, pattern.Match(net.ParseIP("110.242.68.66"))) // baidu.com, china
+	assert.True(t, pattern.Match(netip.MustParseAddr("216.58.197.99")))
+	assert.False(t, pattern.Match(netip.MustParseAddr("2001:db8::1")))
 }
 
 func TestIPCIDRPattern(t *testing.T) {
-	_, ipNet, _ := net.ParseCIDR("192.168.100.1/16")
-	pattern := NewIPCIDRPattern("D", ipNet)
+	prefix := netip.MustParsePrefix("192.168.100.1/16")
+	pattern := NewIPCIDRPattern("D", prefix)
 	assert.Equal(t, "D", pattern.Proxy())
 	assert.False(t, pattern.Match(net.ParseIP("192.167.255.255")))
 	assert.True(t, pattern.Match(net.ParseIP("192.168.0.0")))
 	assert.True(t, pattern.Match(net.ParseIP("192.168.255.255")))
 	assert.True(t, pattern.Match(net.ParseIP("192.168.108.255")))
-	assert.False(t, pattern.Match(tcpip.ConvertIPv4ToUint32(net.ParseIP("192.167.255.255"))))
-	assert.True(t, pattern.Match(tcpip.ConvertIPv4ToUint32(net.ParseIP("192.168.0.0"))))
-	assert.True(t, pattern.Match(tcpip.ConvertIPv4ToUint32(net.ParseIP("192.168.255.255"))))
-	assert.True(t, pattern.Match(tcpip.ConvertIPv4ToUint32(net.ParseIP("192.168.108.255"))))
+	assert.False(t, pattern.Match(netip.MustParseAddr("192.167.255.255")))
+	assert.True(t, pattern.Match(netip.MustParseAddr("192.168.0.0")))
+	assert.True(t, pattern.Match(netip.MustParseAddr("192.168.255.255")))
+	assert.True(t, pattern.Match(netip.MustParseAddr("192.168.108.255")))
+	assert.True(t, pattern.Match(netip.MustParseAddr("::ffff:192.168.108.255")))
+	assert.False(t, pattern.Match(netip.MustParseAddr("2001:db8::1")))
+	assert.False(t, pattern.Match(netip.Addr{}))
 }

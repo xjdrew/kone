@@ -35,7 +35,13 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test with race detector
-        run: go test -race -count=1 '-coverpkg=./...' '-coverprofile=coverage.out' -covermode=atomic ./...
+        shell: pwsh
+        run: |
+          $packages = (go list ./...) -join ','
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -race -count=1 "-coverpkg=$packages" '-coverprofile=coverage.out' -covermode=atomic ./...
+      - name: Test optional mixed stack
+        run: go test -tags with_gvisor -race -count=1 ./...
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-${{ matrix.os }}
@@ -68,7 +74,10 @@ jobs:
           persist-credentials: false
       - name: Measure base with the same toolchain and flags
         working-directory: .coverage-base
-        run: go test -race -count=1 '-coverpkg=./...' '-coverprofile=../coverage-base.out' -covermode=atomic ./...
+        run: |
+          $packages = (go list ./...) -join ','
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -race -count=1 "-coverpkg=$packages" '-coverprofile=../coverage-base.out' -covermode=atomic ./...
       - name: Reject coverage regression
         run: go run ./cmd/covercheck -base coverage-base.out -head .coverage-head/coverage.out
       - uses: actions/upload-artifact@v7.0.2
@@ -103,9 +112,18 @@ jobs:
             for arch in amd64 arm64; do
               suffix=""
               if [ "$os" = windows ]; then suffix=".exe"; fi
-              GOOS="$os" GOARCH="$arch" go build -trimpath -o "dist/kone-$os-$arch$suffix" ./cmd/kone
+              GOOS="$os" GOARCH="$arch" go build -tags with_gvisor -trimpath -o "dist/kone-$os-$arch$suffix" ./cmd/kone
             done
           done
+          GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -o dist/kone-linux-armv7 ./cmd/kone
+          cp LICENSE LICENSE-MIT dist/
+          cp -R licenses dist/
+      - name: Bundle corresponding source and dependency notices
+        run: |
+          mkdir -p "$RUNNER_TEMP/kone-source"
+          git archive HEAD | tar -xf - -C "$RUNNER_TEMP/kone-source"
+          go mod vendor -o "$RUNNER_TEMP/kone-source/vendor"
+          tar -czf dist/kone-source.tar.gz -C "$RUNNER_TEMP/kone-source" .
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: binaries
@@ -120,7 +138,7 @@ jobs:
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-      - run: go test ./pkg/tcpip -run '^$' -fuzz '^FuzzParseIPv4$' -fuzztime 15s
+      - run: go test ./pkg/kone -run '^$' -fuzz '^FuzzParseConfig$' -fuzztime 15s
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   docker:
@@ -143,14 +161,35 @@ jobs:
           go-version-file: go.mod
       - name: Build system tests and CLI
         run: |
-          go build -race -o "$RUNNER_TEMP/kone-system-cli" ./cmd/kone
-          go test -race -c -o "$RUNNER_TEMP/kone-system.test" ./test/integration
+          go build -tags with_gvisor -race -o "$RUNNER_TEMP/kone-system-cli" ./cmd/kone
+          go test -tags with_gvisor -race -c -o "$RUNNER_TEMP/kone-system.test" ./test/integration
       - name: Test real TUN in isolated network namespace
         run: |
+          for stack in system mixed; do
           sudo unshare --net -- bash -c '
             set -e
             ip link set lo up
             export KONE_SYSTEM_TEST=1
             export KONE_SYSTEM_CLI="$1"
-            "$2" -test.run "^TestSystemLifecycle" -test.v -test.timeout 120s
-          ' -- "$RUNNER_TEMP/kone-system-cli" "$RUNNER_TEMP/kone-system.test"
+            export KONE_TEST_STACK="$3"
+            "$2" -test.run "^TestSystem(Lifecycle|Gateway)" -test.v -test.timeout 180s
+          ' -- "$RUNNER_TEMP/kone-system-cli" "$RUNNER_TEMP/kone-system.test" "$stack"
+          done
+
+  windows-system:
+    name: Windows Wintun lifecycle and traffic
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '1'
+      KONE_WINDOWS_SYSTEM_TEST: '1'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Regress upstream PE loader pointer bounds
+        run: go test -race -count=1 github.com/sagernet/sing-tun/internal/wintun github.com/sagernet/sing-tun/internal/wintun/memmod
+      - name: Test embedded Wintun without TAP installation
+        run: go test -tags with_gvisor -race -failfast -count=1 -timeout 12m -run '^TestSystemWindowsWintun$' -v ./test/integration

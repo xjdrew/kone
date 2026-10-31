@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf16"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/windows"
 )
 
 func decodePowerShell(t *testing.T, args []string) string {
@@ -25,6 +28,116 @@ func decodePowerShell(t *testing.T, args []string) string {
 		words[i] = binary.LittleEndian.Uint16(data[i*2:])
 	}
 	return string(utf16.Decode(words))
+}
+
+func TestWindowsStackFirewallOwnership(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		calls := 0
+		n := systemNetwork{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+			calls++
+			script := decodePowerShell(t, args)
+			if calls == 1 {
+				require.Contains(t, script, "$_.DisplayName -eq $p.Rule")
+				if existing {
+					return []byte("1"), nil
+				}
+				return []byte("0"), nil
+			}
+			if calls == 2 {
+				require.Contains(t, script, "New-NetFirewallRule")
+				require.Contains(t, script, "-Name $p.Name")
+				require.Contains(t, script, "-LocalAddress $p.IP")
+				require.Contains(t, script, "-Program $p.Program")
+				return nil, nil
+			}
+			require.Contains(t, script, "Remove-NetFirewallRule")
+			require.Contains(t, script, "$_.Name -eq $p.Name")
+			require.NotContains(t, script, "$_.DisplayName")
+			return nil, nil
+		}}
+		undo, err := n.PrepareStack(context.Background(), CoreConfig{Network: "10.192.0.1/16"})
+		require.NoError(t, err)
+		if existing {
+			require.Nil(t, undo)
+		} else {
+			require.NoError(t, undo(context.Background()))
+		}
+	}
+	for _, reply := range []string{"invalid", "0"} {
+		n := systemNetwork{run: func(context.Context, string, ...string) ([]byte, error) {
+			if reply == "0" {
+				return nil, errors.New("access denied")
+			}
+			return []byte(reply), nil
+		}}
+		undo, err := n.PrepareStack(context.Background(), CoreConfig{Network: "10.192.0.1/16"})
+		require.Error(t, err)
+		require.Nil(t, undo)
+	}
+}
+
+func TestWindowsFirewallExpandsShortExecutablePath(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "long executable directory")
+	require.NoError(t, os.Mkdir(dir, 0700))
+	program := filepath.Join(dir, "firewall-test.exe")
+	require.NoError(t, os.WriteFile(program, nil, 0600))
+	ptr, err := windows.UTF16PtrFromString(program)
+	require.NoError(t, err)
+	buffer := make([]uint16, 32768)
+	n, err := windows.GetShortPathName(ptr, &buffer[0], uint32(len(buffer)))
+	require.NoError(t, err)
+	require.Less(t, n, uint32(len(buffer)))
+	short := windows.UTF16ToString(buffer[:n])
+	previous := os.Args[0]
+	os.Args[0] = short
+	defer func() { os.Args[0] = previous }()
+	canonical, err := filepath.EvalSymlinks(program)
+	require.NoError(t, err)
+	calls := 0
+	network := systemNetwork{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls++
+		script := decodePowerShell(t, args)
+		_, encoded, found := strings.Cut(script, "FromBase64String('")
+		require.True(t, found)
+		encoded, _, _ = strings.Cut(encoded, "')")
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		require.NoError(t, err)
+		var params map[string]string
+		require.NoError(t, json.Unmarshal(data, &params))
+		require.Equal(t, canonical, params["Program"])
+		require.Equal(t, "sing-tun ("+short+")", params["Rule"])
+		if calls == 1 {
+			return []byte("0"), nil
+		}
+		return nil, nil
+	}}
+	undo, err := network.PrepareStack(context.Background(), CoreConfig{Network: "10.192.0.1/16"})
+	require.NoError(t, err)
+	require.NoError(t, undo(context.Background()))
+	require.Equal(t, 3, calls)
+}
+
+func TestWindowsPartialFirewallFailureIsOwned(t *testing.T) {
+	calls := 0
+	failure := errors.New("injected firewall failure")
+	n := systemNetwork{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls++
+		switch calls {
+		case 1:
+			return []byte("0"), nil
+		case 2:
+			require.Contains(t, decodePowerShell(t, args), "New-NetFirewallRule")
+			return nil, failure
+		default:
+			require.Contains(t, decodePowerShell(t, args), "Remove-NetFirewallRule")
+			return nil, nil
+		}
+	}}
+	undo, err := n.PrepareStack(context.Background(), CoreConfig{Network: "10.192.0.1/16"})
+	require.ErrorIs(t, err, failure)
+	require.NotNil(t, undo)
+	require.NoError(t, undo(context.Background()))
+	require.Equal(t, 3, calls)
 }
 
 func TestWindowsConfigurationRollback(t *testing.T) {
@@ -54,6 +167,9 @@ func TestWindowsConfigurationRollback(t *testing.T) {
 			require.NotNil(t, cleanup)
 			require.NoError(t, cleanup(context.Background()))
 			joined := strings.Join(calls, "\n")
+			if failAt != 1 {
+				require.Contains(t, joined, "if($p.Auto -eq 'Enabled')")
+			}
 			require.NotContains(t, joined, "Remove-NetRoute")
 			require.Contains(t, joined, "-NlMtuBytes $p.OldMTU")
 			if failAt == 0 {
@@ -74,6 +190,32 @@ func TestWindowsSnapshotErrorsDoNotMutate(t *testing.T) {
 		require.Nil(t, undo)
 		require.Equal(t, 1, calls)
 	}
+}
+
+func TestNewWintunWithoutIPv4AddressCanBeConfigured(t *testing.T) {
+	calls := 0
+	configuredL3 := false
+	n := systemNetwork{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls++
+		script := decodePowerShell(t, args)
+		if calls == 1 {
+			require.Contains(t, script, "CmdletizationQuery_NotFound*")
+			require.Contains(t, script, "-ErrorAction Stop")
+			return []byte(`{"Index":42,"MTU":1500,"Metric":0,"AutomaticMetric":"Enabled","DHCP":"Disabled","StaticDNS":false,"DNS":[],"Addresses":[]}`), nil
+		}
+		if strings.Contains(script, "-Forwarding Enabled") {
+			configuredL3 = true
+			require.Contains(t, script, "-DadTransmits 0")
+		}
+		return nil, nil
+	}}
+	device := &singDevice{Tun: &stubTun{memoryDevice: newMemoryDevice()}, name: "kone-test"}
+	defer device.Close()
+	undo, err := n.Configure(context.Background(), device, CoreConfig{Network: "10.192.0.1/16"})
+	require.NoError(t, err)
+	require.NoError(t, undo(context.Background()))
+	require.Equal(t, 10, calls)
+	require.True(t, configuredL3)
 }
 
 func TestWindowsRouteOwnershipAndTimeout(t *testing.T) {

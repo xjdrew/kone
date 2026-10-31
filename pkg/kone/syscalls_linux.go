@@ -2,24 +2,10 @@ package kone
 
 import (
 	"context"
-	"fmt"
+
 	"net"
 	"strconv"
-
-	"github.com/songgao/water"
 )
-
-func (n systemNetwork) Open(ctx context.Context, cfg CoreConfig) (Device, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if cfg.Tun != "" {
-		if _, err := net.InterfaceByName(cfg.Tun); err == nil {
-			return nil, fmt.Errorf("refusing to modify existing interface %q", cfg.Tun)
-		}
-	}
-	return water.New(water.Config{DeviceType: water.TUN, PlatformSpecificParams: water.PlatformSpecificParams{Name: cfg.Tun}})
-}
 
 func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) (Cleanup, error) {
 	var undo undoStack

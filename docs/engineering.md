@@ -1,5 +1,12 @@
 # 第一轮工程化与依赖决策
 
+## 后续决策：sing-tun 迁移（2026-10-31）
+
+维护者已接受 GPL-3.0-or-later。当前采用 SagerNet/sing-tun `v0.9.7-0.20261023115432-040db71fcd33`，对应 sing-box v1.14.4 使用的固定版本；移除 water。下文第一轮保留 water、维持 MIT 的决定为历史记录，不再代表现状。
+真实 Windows race 验收复现 DLL 加载器的越界巨型数组转换。修补已通过 xjdrew/sing-tun 的 [独立 PR #1](https://github.com/xjdrew/sing-tun/pull/1) 审查并合并，包含精确切片、session 失败清理、独占创建及 HRESULT 错误规范化；KONE 通过远程 replace 固定引用合并提交 `fc4685fee0a3`，不再复制源码。详见 [依赖与修补](sing-tun.md)。指针检查和真实 Wintun/race 验收继续启用。
+设备、system/mixed 数据面由 sing-tun 提供；网络变更仍通过 KONE 的 Network 边界执行可回滚操作，使用 external configuration 模式避免双重配置。旧报文/NAT/relay API、兼容端口配置和 pkg/tcpip 已移除；Fake-IP 地址池与 CIDR 使用 net/netip。代理 UDP 按能力默认拒绝，只允许显式的 direct/reject 回退。
+普通构建默认 system，`with_gvisor` 构建可显式选择 mixed；CI 测试两种构建。网关保留 LAN 转发能力，新增全局 IPv4 捕获与代理/DNS 真实出口绑定，同时补 ARMv7 构建和独立 LAN 客户端验收。IPv6、UDP 代理出站、网络切换和崩溃恢复继续独立迭代。
+
 依赖检查日期：2026-10-31。版本通过 `go list -m -json module@latest` 查询，实际版本固定在 `go.mod` / `go.sum`。
 
 ## 本轮依赖处理
@@ -49,14 +56,15 @@ CLI 使用标准库 `signal.NotifyContext`，由 engine 统一负责关闭与恢
 基线会重新运行测试，不依赖历史 artifact；失败、缺失或无有效语句的覆盖率报告均使门禁失败。
 使用 Windows runner 和 PR 的 Go 工具链作为统一口径，避免跨平台语句集合不同，也兼容旧 `master` 的 Unix 构建问题。
 
-三平台测试均使用 `-coverpkg=./...`，包含未执行代码的包；按语句数加权并合并重复 block，使用精确分数比较，不以四舍五入后的百分比判定。
+三平台通过 `go list ./...` 枚举 KONE 模块的全部包，并将显式列表传给 `-coverpkg`，包含未执行代码的包；按语句数加权并合并重复 block，使用精确分数比较，不以四舍五入后的百分比判定。base 与 PR 使用同一枚举方式。
+第三方 sing-tun 作为固定的外部 fork 模块，不进入 KONE 覆盖率分母；其修补由 fork CI 和 KONE 的 Windows 模块 race 回归、真实驱动/网关验收单独验证。覆盖率始终统计 KONE 模块全部包。
 单元测试和 `test/integration` 中的 CLI 端到端测试一起执行；覆盖率统计使用 `go test` 生成的 profile，独立子进程的覆盖数据不会自动并入。
 本地比较：`go run ./cmd/covercheck -base base.out -head head.out`。工具包含单元测试和实际编译执行的端到端用例，验证下降、持平、提升、重复 block 和无效报告。
 
 ## 下一轮边界
 
 生命周期、启动失败回滚、正常退出恢复、快照及故障注入已纳入第二轮，设计和验收方式见 [运行可靠性](runtime.md)。
-Linux 的真实 TUN 场景在隔离网络命名空间执行；Windows TAP、macOS 的特权驱动验收与网络切换、进程崩溃后的恢复仍需后续完善。
+Linux 的真实 TUN 场景在隔离网络命名空间执行；本轮迁移新增 Windows Wintun 真实流量与回滚验收。macOS 的特权驱动验收、网络切换和进程崩溃后的恢复仍需后续完善。
 
-数据面仍以 IPv4 TCP 为主；完整 UDP 代理、IPv6、DNS TCP/截断回退、上游 DNS 取消与出站路由绕过属于后续功能与可靠性迭代。
+数据面仍以 IPv4 TCP 为主；上游 DNS 取消和出站接口绑定已实现。完整 UDP 代理、IPv6、DNS TCP/截断回退属于后续功能迭代。
 内嵌 GeoIP 数据来自旧生成文件；后续应引入可更新的数据来源、版本/校验和及许可说明，避免仅替换查询库却继续使用旧数据。

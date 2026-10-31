@@ -5,9 +5,11 @@ Go 版本统一为 1.27.3。原 INI 文件不再加载，默认配置文件名�
 
 ## INI 到 TOML
 
-旧配置段 `[General]`、`[Core]`、`[Proxy]` 分别改为 `[general]`、`[core]`、`[proxies]`。
-保留 `tcp-listen-port` 等原选项的连字符命名；字符串必须加引号，DNS 列表使用 TOML 数组。
-原 `[Rule]` 中的逗号规则改为有序的 `[[rules]]` 表：
+配置由 `[general]`、`[core]`、可选的 `[dns]`、`[[outbounds]]` 与 `[[rules]]` 组成。
+旧 `[proxies]` 字典改为代理出站数组，只使用自定义 `name` 和 `url` 声明代理，不再配置出站 `type`；代理协议由 URL 的 scheme 决定。规则使用 `outbound` 引用代理名，或直接引用内置的 `direct`、`reject`。
+`direct` 和 `reject` 始终可用，不需要配置条目；只使用它们时，整个 `[[outbounds]]` 数组都可以省略。已有 `type = "direct" / "reject"` 条目应删除，并将规则中的别名替换为 `direct` / `reject`。
+旧 `core.dns-*` 参数移动到 `[dns]` 并去掉 `dns-` 前缀；`dns-server` 改为 `dns.servers`。
+旧 INI、`[proxies]`、规则的 `proxy` 字段和 `core.dns-*` 都会被严格校验拒绝，不会静默忽略。
 
 ```toml
 [general]
@@ -17,36 +19,57 @@ log-format = "json"
 
 [core]
 network = "10.192.0.1/16"
-dns-server = ["1.1.1.1", "8.8.8.8:53", "[2001:4860:4860::8888]:53"]
+stack = "system"
 
-[proxies]
-Office = "http://127.0.0.1:8080"
+[[outbounds]]
+name = "office"
+url = "http://127.0.0.1:8080"
 
 [[rules]]
 type = "DOMAIN-SUFFIX"
 pattern = "example.com"
-proxy = "Office"
+outbound = "office"
+
+[[rules]]
+type = "DOMAIN-SUFFIX"
+pattern = "blocked.example"
+outbound = "reject"
 
 [[rules]]
 type = "FINAL"
-proxy = "DIRECT"
+outbound = "direct"
 ```
 
-未配置 `dns-server` 时读取系统 DNS。读取失败或不存在可用服务器时返回错误，需显式指定上游。
-支持 IPv6 上游 DNS 地址，但这不代表支持 IPv6 流量接管。
+## 可选的 DNS 配置
+
+`[dns]` 整段可以省略。未设置 `servers` 或设置为 `[]` 时，启动前读取系统当前 DNS 服务器用于真实解析，不硬编码公共 DNS 回退。读取失败、没有可用服务器或上游指向虚拟网段时，启动返回错误。`-check` 校验静态配置，不探测运行环境中的 DNS 可用性。
+
+```toml
+[dns]
+servers = ["1.1.1.1", "8.8.8.8:53", "[2001:4860:4860::8888]:53"]
+listen-port = 53
+ttl = 600
+packet-size = 4096
+read-timeout = 5
+write-timeout = 5
+```
+
+上面的参数均为可选项，含义及全部默认值见完整示例。`listen-port` 是 TUN 地址上的 KONE DNS 服务端口；`servers` 是实际解析使用的上游，两者不同。支持 IPv6 上游 DNS 地址，但尚不接管 IPv6 流量。
+自动上游仅在创建 engine 时发现一次，生效服务器保存在运行实例中，配置仍保留“自动”状态。规则热更新不会重新读取已经被 KONE 改写的 Windows 网卡 DNS；改变 DNS 设置或系统网络需要重启。
 
 ## 校验规则
 
 - 未知配置键、错误类型、重复 TOML 键都会报错；解析错误包含位置且不会回显配置中的密码。
 - `network` 必须是 IPv4 单播主机地址加 `/8` 至 `/30` 前缀，不能使用网段地址或广播地址。
-- 监听端口非零；NAT 范围为 `[start, end)`，必须有效，且不能包含对应 relay 的监听端口。
+- DNS 监听端口非零；管理监听地址必须包含合法端口。协议栈内部端口与会话映射由 sing-tun 管理。
 - DNS 上游必须是 IP 地址，可带有效端口，不能指向虚拟网段。DNS TTL 必须在 1..4294967295 秒内，报文大小至少 512 字节，超时在 1..300 秒内。
 - 支持 `http://host:port`、`https://host:port`、`socks5://host:port`，端口必须显式提供；URL 不允许路径、查询或 fragment。IPv6 主机使用方括号。
-- 规则必须引用已定义的代理或 `DIRECT` / `REJECT`。代理名不能占用这两个保留名称。
+- 代理出站使用 `name`、`url` 和可选的 `udp-fallback`；旧的出站 `type` 字段应删除，否则会报未知配置键。名称必须非空、唯一，不含控制字符或首尾空白，URL 必须合法；内置出站不能通过配置声明或覆盖。
+- 规则引用已配置的代理名或内置小写 `direct` / `reject`，引用区分大小写。`direct`、`reject` 及其大小写变体均不能用作代理名称。没有规则匹配时使用内置 `direct`。
 - 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 当前会报不支持。
 - `DOMAIN-SUFFIX = example.com` 匹配自身和子域名，不匹配 `1example.com`。`DIRECT` CIDR 例外会保留规则优先级。
 
-`http_proxy`、`https_proxy`、`socks_proxy` 环境变量会定义或覆盖同名代理。未设置小写变量时读取大写形式；Windows 环境变量本身不区分大小写。未写 `[proxies]` 段也可使用这些变量。
+`http_proxy`、`https_proxy`、`socks_proxy` 环境变量会定义或覆盖同名的 proxy 出站。未设置小写变量时读取大写形式；Windows 环境变量本身不区分大小写。文件中的重复定义或无效 URL 不会被环境变量掩盖；内置出站不受这些环境变量影响。
 
 ## 日志与管理接口
 
@@ -57,9 +80,38 @@ proxy = "DIRECT"
 修改配置文件后用 `POST /reload/` 更新规则；GET 不触发修改。
 
 热更新会重建代理端点的域名绕过，重新计算已有 DNS 映射的域名、CNAME、IP 策略，清除直连域名缓存，并保留虚拟 IP。
-新的 TCP 连接采用新策略；已建立连接和已有 UDP tunnel 按当前会话继续工作。
-代理定义与规则作为同一版本快照原子更新；新的连接使用新定义，已建立连接保留原出站。
+新的 TCP 连接与 UDP 会话采用新策略；已建立的连接和 UDP 会话保留创建时的快照，包括 UDP 回退设置。
+代理出站定义与规则作为同一版本快照原子更新；新的连接使用新定义，已建立连接保留原出站。域名/最终规则可在代理名、`direct` 和 `reject` 之间热更新；若更新改变 CIDR 捕获，则要求重启。内置出站始终存在，不会作为配置条目写入快照的配置或管理页 TOML。
 端口、TUN、DNS、日志、管理地址及 CIDR 路由变化要求重启，失败更新保留原配置和版本。
+
+## TUN backend and stack
+
+设备与透明流量处理改用 SagerNet/sing-tun，Windows 使用内嵌 Wintun，Linux 使用 TUN，macOS 使用 utun。`core.tun` 留空时自动分配名称，指定时必须尚不存在；macOS 名称必须为 utunN。
+
+- 在 `[core]` 下设置 `stack = "system"` 或 `stack = "mixed"`；示例显式选择默认的 `system`，使用系统 TCP 和 sing-tun UDP，适用于普通构建。`mixed` 使用系统 TCP 和 gVisor UDP，必须用 `go build -tags with_gvisor` 构建。缺少构建能力时会返回明确错误，不静默切换协议栈；修改协议栈需要重启。
+- `core.auto-route = false` 保留原来的 Fake-IP 子网和显式 CIDR 接管；`true` 添加 `0.0.0.0/1` 与 `128.0.0.0/1` 路由，实现 IPv4 全局接管，同时保留原默认路由供退出后使用。已有更具体路由仍按系统路由优先级处理。
+- 全局接管必须指定 `core.outbound-interface`，代理连接、直连连接和上游 DNS 查询使用这个真实接口。回环地址上的本地代理和 DNS stub 使用原回环路径。出口不能与 TUN 同名；IP-CIDR 默认捕获路由同样要求指定出口。接口切换需要修改配置并重启。
+- `core.network` 的接口地址之后一个地址供协议栈使用，两者均不会分配为 Fake-IP。该地址必须保留至少一个后继主机地址。
+- 旧 `tcp-listen-port`、`udp-listen-port`、`tcp-nat-port-start/end`、`udp-nat-port-start/end` 已移除，旧配置必须删除这些键，严格校验会明确报错。内部监听和会话映射由 sing-tun 分配。
+
+IPv6 拦截和 SOCKS5 UDP 出站仍未启用。采用 `mixed` 不改变出站协议能力。LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
+
+## UDP 策略与显式回退
+
+`direct` 规则直连 UDP，`reject` 规则始终拒绝且不回退。当前 HTTP、HTTPS CONNECT、SOCKS5 出站只实现 TCP，因此选中代理时默认拒绝 UDP，并记录出站名和不支持 UDP 的原因；拒绝不会把 UDP 转换为 TCP。
+
+只有确实允许绕过代理发送 UDP 时，才为该代理显式设置：
+
+```toml
+[[outbounds]]
+name = "office"
+url = "socks5://127.0.0.1:1080"
+udp-fallback = "direct"
+```
+
+省略 `udp-fallback` 或设为空字符串表示默认拒绝；`"reject"` 表示明确拒绝。只允许内置 `direct`、`reject`，不接受未知名称、代理名称、自引用或回退链。回退只影响对应代理的 UDP，不改变 TCP 和其他规则。环境变量覆盖代理 URL 时保留文件声明的回退策略；纯环境变量代理没有隐式回退。
+
+检查能力先于目标真实 DNS 解析和 UDP 拨号。热更新影响新会话，已有会话保留原快照。管理流量统计仍只记录 TCP，不能把 DNS 记录数或 UDP 会话数当作同一流量指标。
 
 ## API 与目录迁移
 

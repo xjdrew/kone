@@ -18,10 +18,10 @@ func TestConcurrentSnapshotGenerations(t *testing.T) {
 	one := testEngine(t)
 	initial := one.policy.Load()
 	a, b := one.Snapshot().Config, one.Snapshot().Config
-	a.Proxy["A"] = "http://127.0.0.1:8081"
-	a.Rule[0].Proxy = "A"
-	b.Proxy["A"] = "http://127.0.0.1:8082"
-	b.Rule[0].Proxy = "B"
+	setTestOutbound(a, "A", "http://127.0.0.1:8081")
+	a.Rule[0].Outbound = "A"
+	setTestOutbound(b, "A", "http://127.0.0.1:8082")
+	b.Rule[0].Outbound = "B"
 	var wg sync.WaitGroup
 	for worker := 0; worker < 4; worker++ {
 		wg.Add(1)
@@ -30,13 +30,13 @@ func TestConcurrentSnapshotGenerations(t *testing.T) {
 			for i := 0; i < 100; i++ {
 				s := one.policy.Load()
 				target := s.rule.Proxy("example.com")
-				if s.version > 1 && ((s.cfg.Proxy["A"] == a.Proxy["A"] && target != "A") || (s.cfg.Proxy["A"] == b.Proxy["A"] && target != "B")) {
+				if s.version > 1 && ((outboundByName(s.cfg, "A").URL == outboundByName(a, "A").URL && target != "A") || (outboundByName(s.cfg, "A").URL == outboundByName(b, "A").URL && target != "B")) {
 					t.Error("mixed policy generation")
 					return
 				}
 				copy := one.Snapshot()
-				copy.Config.Proxy["A"] = "caller mutation"
-				copy.Config.Rule[0].Proxy = "caller mutation"
+				setTestOutbound(copy.Config, "A", "caller mutation")
+				copy.Config.Rule[0].Outbound = "caller mutation"
 			}
 		}()
 	}
@@ -49,7 +49,7 @@ func TestConcurrentSnapshotGenerations(t *testing.T) {
 	}
 	wg.Wait()
 	require.Equal(t, uint64(101), one.Snapshot().Version)
-	require.Equal(t, "http://Proxy.Example.com:8080", initial.cfg.Proxy["A"])
+	require.Equal(t, "http://Proxy.Example.com:8080", outboundByName(initial.cfg, "A").URL)
 	require.Equal(t, "A", initial.rule.Proxy("example.com"))
 }
 
@@ -72,7 +72,7 @@ func TestReloadDoesNotWaitForUpstreamDNS(t *testing.T) {
 		t.Fatal("upstream query not received")
 	}
 	updated := one.Snapshot().Config
-	updated.Rule[0].Proxy = "B"
+	updated.Rule[0].Outbound = "B"
 	reloaded := make(chan error, 1)
 	go func() { reloaded <- one.Reload(updated) }()
 	select {
@@ -90,7 +90,7 @@ func TestStaleDirectDNSCacheCannotOverrideReload(t *testing.T) {
 	one := testEngine(t)
 	old := one.Snapshot().Version
 	updated := one.Snapshot().Config
-	updated.Rule[0].Proxy = "B"
+	updated.Rule[0].Outbound = "B"
 	require.NoError(t, one.Reload(updated))
 	one.dnsTable.SetNonProxyDomain("example.com", 600, old) // old lookup finishes after publication
 	r := new(dns.Msg)

@@ -17,7 +17,7 @@ func TestRun(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	filename := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(filename, []byte("[core]\ndns-server=['1.1.1.1']\n"), 0600))
+	require.NoError(t, os.WriteFile(filename, []byte("[dns]\nservers=['1.1.1.1']\n"), 0600))
 	for _, tc := range []struct {
 		name     string
 		args     []string

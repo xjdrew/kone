@@ -9,6 +9,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -78,8 +79,8 @@ func (record *DomainRecord) Touch() {
 }
 
 type DnsTable struct {
-	ipNet  *net.IPNet // local network
-	ipPool *DnsIPPool // dns ip pool
+	ipNet  netip.Prefix // local network
+	ipPool *DnsIPPool   // dns ip pool
 	ttl    uint32
 
 	// hijacked domain records
@@ -97,7 +98,8 @@ type directRecord struct {
 }
 
 func (c *DnsTable) IsLocalIP(ip net.IP) bool {
-	return c.ipNet.Contains(ip)
+	address, _ := netip.AddrFromSlice(ip)
+	return c.ipNet.Contains(address.Unmap())
 }
 
 func (c *DnsTable) get(domain string) *DomainRecord {
@@ -118,7 +120,8 @@ func (c *DnsTable) GetByIP(ip net.IP) *DomainRecord {
 }
 
 func (c *DnsTable) Contains(ip net.IP) bool {
-	return c.ipPool.Contains(ip)
+	address, _ := netip.AddrFromSlice(ip)
+	return c.ipPool.Contains(address.Unmap())
 }
 
 func (c *DnsTable) Get(domain string) *DomainRecord {
@@ -145,10 +148,11 @@ func (c *DnsTable) Set(domain string, proxy string) *DomainRecord {
 	}
 
 	// alloc a ip
-	ip := c.ipPool.Alloc(domain)
-	if ip == nil {
+	address := c.ipPool.Alloc(domain)
+	if !address.IsValid() {
 		return nil
 	}
+	ip := net.IP(address.AsSlice())
 
 	record = new(DomainRecord)
 	record.IP = ip
@@ -256,7 +260,8 @@ func (c *DnsTable) clearExpiredDomain(now time.Time) {
 		}
 		delete(c.records, domain)
 		delete(c.ip2Domain, record.IP.String())
-		c.ipPool.Release(record.IP)
+		address, _ := netip.AddrFromSlice(record.IP)
+		c.ipPool.Release(address)
 		slog.Debug("Virtual IP released", "domain", domain, "ip", record.IP.String(), "hits", record.Hits)
 	}
 }
@@ -279,8 +284,11 @@ func (c *DnsTable) Serve(ctx context.Context) error {
 func NewDnsTable(ip net.IP, subnet *net.IPNet) *DnsTable {
 	c := new(DnsTable)
 	c.ttl = DnsDefaultTtl
-	c.ipNet = subnet
-	c.ipPool = NewDnsIPPool(ip, subnet)
+	address, _ := netip.AddrFromSlice(ip)
+	ones, _ := subnet.Mask.Size()
+	prefix := netip.PrefixFrom(address.Unmap(), ones)
+	c.ipNet = prefix.Masked()
+	c.ipPool = NewDnsIPPool(prefix)
 	c.records = make(map[string]*DomainRecord)
 	c.ip2Domain = make(map[string]string)
 	c.nonProxyDomains = make(map[string]directRecord)

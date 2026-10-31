@@ -2,14 +2,15 @@ package kone
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"unicode/utf16"
-
-	"github.com/songgao/water"
 )
 
 // Encode both the script and its JSON parameters: adapter names and addresses
@@ -26,13 +27,6 @@ func (n systemNetwork) powershell(ctx context.Context, script string, params any
 		binary.LittleEndian.PutUint16(encoded[i*2:], w)
 	}
 	return n.run(ctx, "powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded))
-}
-
-func (n systemNetwork) Open(ctx context.Context, cfg CoreConfig) (Device, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return water.New(water.Config{DeviceType: water.TUN, PlatformSpecificParams: water.PlatformSpecificParams{ComponentID: "tap0901", InterfaceName: cfg.Tun, Network: cfg.Network}})
 }
 
 type windowsSettings struct {
@@ -52,7 +46,8 @@ $i=Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily IPv4;
 $dns=Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4;
 $key='HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\'+([guid]$a.InterfaceGuid).ToString('B');
 $static=(Get-ItemProperty -LiteralPath $key).NameServer;
-[pscustomobject]@{Index=[int]$a.ifIndex;MTU=[int]$i.NlMtu;Metric=[int]$i.InterfaceMetric;AutomaticMetric=$i.AutomaticMetric.ToString();DHCP=$i.Dhcp.ToString();DNS=@($dns.ServerAddresses);StaticDNS=![string]::IsNullOrWhiteSpace($static);Addresses=@(Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 | Select-Object IPAddress,PrefixLength)} | ConvertTo-Json -Depth 5 -Compress`
+try { $addresses=@(Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction Stop) } catch { if($_.FullyQualifiedErrorId -notlike 'CmdletizationQuery_NotFound*'){throw}; $addresses=@() };
+[pscustomobject]@{Index=[int]$a.ifIndex;MTU=[int]$i.NlMtu;Metric=[int]$i.InterfaceMetric;AutomaticMetric=$i.AutomaticMetric.ToString();DHCP=$i.Dhcp.ToString();DNS=@($dns.ServerAddresses);StaticDNS=![string]::IsNullOrWhiteSpace($static);Addresses=@($addresses | Select-Object IPAddress,PrefixLength)} | ConvertTo-Json -Depth 5 -Compress`
 
 func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) (Cleanup, error) {
 	data, err := n.powershell(ctx, readWindowsSettings, map[string]any{"Name": d.Name()})
@@ -84,10 +79,18 @@ func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) 
 		return nil
 	}
 	p := map[string]any{"Index": old.Index, "IP": ip.String(), "Prefix": prefix, "MTU": MTU, "OldMTU": old.MTU, "Metric": old.Metric, "Auto": old.AutomaticMetric, "DNS": old.DNS, "StaticDNS": old.StaticDNS}
+	if _, owned := d.(*singDevice); owned {
+		// A newly owned L3 adapter needs the same kernel TCP prerequisites as
+		// sing-tun's native Windows configurator. Device removal rolls these
+		// temporary interface flags back; no pre-existing adapter is changed.
+		if _, err := n.powershell(ctx, `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -Forwarding Enabled -RouterDiscovery Disabled -DadTransmits 0`, p); err != nil {
+			return nil, err
+		}
+	}
 	if err := apply("MTU", `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -NlMtuBytes $p.MTU`, `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -NlMtuBytes $p.OldMTU`, p); err != nil {
 		return undo.restore, err
 	}
-	if err := apply("metric", `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1`, `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -InterfaceMetric $p.Metric -AutomaticMetric $p.Auto`, p); err != nil {
+	if err := apply("metric", `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1`, `if($p.Auto -eq 'Enabled'){Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -AutomaticMetric Enabled}else{Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric $p.Metric}`, p); err != nil {
 		return undo.restore, err
 	}
 	if old.DHCP == "Enabled" {
@@ -126,3 +129,46 @@ func (n systemNetwork) AddRoute(ctx context.Context, d Device, subnet *net.IPNet
 }
 
 func fixTunIP(ip net.IP) net.IP { return ip }
+
+// Establish the required TCP exception explicitly: upstream's COM firewall
+// helper discards errors and can leave an otherwise ready tunnel unusable.
+// Scope the rule to this program and owned TUN IP, and remove only our rule.
+func (n systemNetwork) PrepareStack(ctx context.Context, cfg CoreConfig) (Cleanup, error) {
+	path, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		return nil, err
+	}
+	// Firewall application filters need the canonical executable path. In
+	// particular, go test can run from a DOS 8.3 TEMP path (RUNNER~1).
+	program, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve firewall executable: %w", err)
+	}
+	ip, _, err := net.ParseCIDR(cfg.Network)
+	if err != nil {
+		return nil, err
+	}
+	// Keep the upstream display name so its helper recognizes the exception,
+	// but use a unique safe ID to clean up exactly the rule we created.
+	p := map[string]any{"Name": "Kone-TCP-" + rand.Text(), "Rule": "sing-tun (" + path + ")", "Program": program, "IP": ip.String()}
+	data, err := n.powershell(ctx, `@(Get-NetFirewallRule -ErrorAction Stop | Where-Object { $_.DisplayName -eq $p.Rule }).Count | ConvertTo-Json`, p)
+	if err != nil {
+		return nil, err
+	}
+	var count int
+	if err := json.Unmarshal(data, &count); err != nil {
+		return nil, err
+	}
+	if count > 0 {
+		return nil, nil
+	}
+	cleanup := func(ctx context.Context) error {
+		_, err := n.powershell(ctx, `Get-NetFirewallRule -ErrorAction Stop | Where-Object { $_.Name -eq $p.Name } | Remove-NetFirewallRule`, p)
+		return err
+	}
+	_, err = n.powershell(ctx, `New-NetFirewallRule -Name $p.Name -DisplayName $p.Rule -Program $p.Program -LocalAddress $p.IP -Direction Inbound -Action Allow -Protocol TCP -Profile Any | Out-Null`, p)
+	if err != nil {
+		err = fmt.Errorf("create TCP firewall exception for %q at %s: %w", program, ip, err)
+	}
+	return cleanup, err
+}

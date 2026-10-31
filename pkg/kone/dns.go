@@ -107,12 +107,12 @@ func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.M
 	if record != nil {
 		policy = s.rule.ProxyDNS(domain, record.resolved)
 	}
-	if policy == "REJECT" {
+	if s.rule.OutboundType(policy) == OutboundReject {
 		reply := new(dns.Msg)
 		reply.SetRcode(r, dns.RcodeRefused)
 		return reply, nil
 	}
-	if policy != "DIRECT" {
+	if s.rule.OutboundType(policy) != OutboundDirect {
 		if record == nil {
 			record = d.one.dnsTable.Set(domain, policy)
 		}
@@ -126,7 +126,12 @@ func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.M
 		return msg, err
 	}
 	policy = s.rule.ProxyDNS(domain, msg)
-	if policy != "DIRECT" {
+	if s.rule.OutboundType(policy) == OutboundReject {
+		reply := new(dns.Msg)
+		reply.SetRcode(r, dns.RcodeRefused)
+		return reply, nil
+	}
+	if s.rule.OutboundType(policy) != OutboundDirect {
 		record = d.one.dnsTable.Set(domain, policy)
 		if record == nil {
 			return nil, errors.New("virtual IP pool exhausted")
@@ -163,12 +168,12 @@ func (d *Dns) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	}
 }
 
-func NewDns(one *One, cfg CoreConfig) (*Dns, error) {
+func NewDns(one *One, cfg DNSConfig) (*Dns, error) {
 	d := &Dns{one: one, ctx: context.Background()}
-	addr := net.JoinHostPort(fixTunIP(one.ip).String(), strconv.Itoa(int(cfg.DnsListenPort)))
-	d.server = &dns.Server{Net: "udp", Addr: addr, Handler: d, UDPSize: int(cfg.DnsPacketSize), ReadTimeout: time.Duration(cfg.DnsReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.DnsWriteTimeout) * time.Second}
-	d.client = &dns.Client{Net: "udp", UDPSize: cfg.DnsPacketSize, Timeout: time.Duration(cfg.DnsReadTimeout+cfg.DnsWriteTimeout) * time.Second, ReadTimeout: time.Duration(cfg.DnsReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.DnsWriteTimeout) * time.Second}
-	for _, server := range cfg.DnsServer {
+	addr := net.JoinHostPort(fixTunIP(one.ip).String(), strconv.Itoa(int(cfg.ListenPort)))
+	d.server = &dns.Server{Net: "udp", Addr: addr, Handler: d, UDPSize: int(cfg.PacketSize), ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
+	d.client = &dns.Client{Net: "udp", UDPSize: cfg.PacketSize, Timeout: time.Duration(cfg.ReadTimeout+cfg.WriteTimeout) * time.Second, ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
+	for _, server := range cfg.Servers {
 		normalized, err := normalizeDNSServer(server)
 		if err != nil {
 			return nil, err

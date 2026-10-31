@@ -16,7 +16,7 @@ func normalizeDomain(domain string) string { return strings.TrimSuffix(strings.T
 // ProxyDNS uses the first non-direct answer policy and retains endpoint bypass.
 func (rule *Rule) ProxyDNS(domain string, msg *dns.Msg) string {
 	policy := rule.Proxy(domain)
-	if policy != "DIRECT" || rule.directDomains[normalizeDomain(domain)] || msg == nil {
+	if rule.OutboundType(policy) != OutboundDirect || rule.directDomains[normalizeDomain(domain)] || msg == nil {
 		return policy
 	}
 	for _, rr := range msg.Answer {
@@ -28,16 +28,22 @@ func (rule *Rule) ProxyDNS(domain string, msg *dns.Msg) string {
 		default:
 			continue
 		}
-		if policy != "DIRECT" {
+		if rule.OutboundType(policy) != OutboundDirect {
 			return policy
 		}
 	}
-	return "DIRECT"
+	return policy
 }
 
 type Rule struct {
 	directDomains map[string]bool // always direct connect for proxy domain
 	patterns      []Pattern
+	outbounds     map[string]OutboundType
+}
+
+// Built-in and configured targets share the same immutable routing registry.
+func (rule *Rule) OutboundType(name string) OutboundType {
+	return rule.outbounds[name]
 }
 
 func (rule *Rule) DirectDomain(domain string) {
@@ -49,8 +55,8 @@ func (rule *Rule) DirectDomain(domain string) {
 func (rule *Rule) Proxy(val interface{}) string {
 	if domain, ok := val.(string); ok {
 		if rule.directDomains[normalizeDomain(domain)] {
-			slog.Debug("Routing rule matched", "target", val, "proxy", "DIRECT")
-			return "DIRECT" // direct
+			slog.Debug("Routing rule matched", "target", val, "proxy", BuiltinDirect)
+			return BuiltinDirect
 		}
 	}
 
@@ -61,13 +67,20 @@ func (rule *Rule) Proxy(val interface{}) string {
 			return proxy
 		}
 	}
-	slog.Debug("Default routing policy selected", "target", val, "proxy", "")
-	return "DIRECT" // direct connect
+	slog.Debug("Default routing policy selected", "target", val, "proxy", BuiltinDirect)
+	return BuiltinDirect
 }
 
-func NewRule(rcs []RuleConfig) *Rule {
+func NewRule(rcs []RuleConfig, outbounds []OutboundConfig) *Rule {
 	rule := &Rule{
 		directDomains: map[string]bool{},
+		outbounds:     map[string]OutboundType{},
+	}
+	for _, o := range outbounds {
+		rule.outbounds[o.Name] = OutboundProxy
+	}
+	for name, kind := range builtinOutbounds() {
+		rule.outbounds[name] = kind
 	}
 
 	for _, rc := range rcs {

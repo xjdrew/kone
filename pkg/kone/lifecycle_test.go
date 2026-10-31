@@ -116,7 +116,7 @@ func (s *loopSockets) Listen(ctx context.Context, network, address string) (net.
 	defer s.mu.Unlock()
 	_, port, _ := net.SplitHostPort(address)
 	bind := "127.0.0.1:0"
-	if s.failAt == "tcp" && len(s.tcp) == 0 || s.failAt == "manager" && port == "9200" {
+	if s.failAt == "manager" && port == "9200" {
 		bind = s.occupied
 	}
 	ln, err := s.lc.Listen(ctx, network, bind)
@@ -129,7 +129,7 @@ func (s *loopSockets) ListenPacket(ctx context.Context, network, address string)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	bind := "127.0.0.1:0"
-	if s.failAt == "udp" && len(s.udp) == 0 || s.failAt == "dns" && len(s.udp) == 1 {
+	if s.failAt == "dns" {
 		bind = s.occupied
 	}
 	conn, err := s.lc.ListenPacket(ctx, network, bind)
@@ -145,17 +145,52 @@ func lifecycleEngine(t *testing.T, n *memoryNetwork, s *loopSockets) *One {
 	cfg := parseTestConfig(t, `[[rules]]
 type='IP-CIDR'
 pattern='198.51.100.0/24'
-proxy='REJECT'
+outbound='reject'
 [[rules]]
 type='IP-CIDR'
 pattern='203.0.113.0/24'
-proxy='REJECT'
+outbound='reject'
 `)
 	one, err := FromConfig(cfg, WithNetwork(n), WithSockets(s), WithShutdownTimeout(time.Second))
 	require.NoError(t, err)
+	one.stackFactory = fixtureStackFactory(one)
 	return one
 }
 
+// Model only the stack lifecycle boundary. Packet processing belongs to
+// sing-tun and is exercised by native system/mixed acceptance tests.
+type fixtureStack struct {
+	start func() error
+	close func() error
+	wg    sync.WaitGroup
+}
+
+func (s *fixtureStack) Start() error { return s.start() }
+func (s *fixtureStack) Close() error { return s.close() }
+func (s *fixtureStack) Wait()        { s.wg.Wait() }
+func fixtureStackFactory(one *One) stackFactory {
+	return func(ctx context.Context, device Device, _ CoreConfig, _ *flowHandler, failures chan<- error) (packetStack, error) {
+		s := &fixtureStack{close: func() error { return nil }}
+		s.start = func() error {
+			if sockets, ok := one.sockets.(*loopSockets); ok && sockets.failAt == "stack" {
+				return errors.New("injected stack start failure")
+			}
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				_, err := device.Read(make([]byte, MTU))
+				if ctx.Err() == nil {
+					select {
+					case failures <- err:
+					default:
+					}
+				}
+			}()
+			return nil
+		}
+		return s, nil
+	}
+}
 func assertReleased(t *testing.T, n *memoryNetwork, s *loopSockets) {
 	t.Helper()
 	require.Equal(t, int32(1), n.device.closes.Load())
@@ -205,7 +240,7 @@ func waitRun(t *testing.T, done <-chan error) error {
 }
 
 func TestLifecycleStartupRollback(t *testing.T) {
-	for _, kind := range []string{"configure", "route", "tcp", "udp", "dns", "manager"} {
+	for _, kind := range []string{"configure", "route", "stack", "dns", "manager"} {
 		t.Run(kind, func(t *testing.T) {
 			n, s := newMemoryNetwork(), &loopSockets{}
 			var occupied io.Closer
@@ -214,13 +249,15 @@ func TestLifecycleStartupRollback(t *testing.T) {
 				n.failConfigure = true
 			case "route":
 				n.failRoute = true
-			case "tcp", "manager":
+			case "stack":
+				s.failAt = kind
+			case "manager":
 				ln, err := net.Listen("tcp", "127.0.0.1:0")
 				require.NoError(t, err)
 				occupied = ln
 				s.occupied = ln.Addr().String()
 				s.failAt = kind
-			case "udp", "dns":
+			case "dns":
 				conn, err := net.ListenPacket("udp", "127.0.0.1:0")
 				require.NoError(t, err)
 				occupied = conn

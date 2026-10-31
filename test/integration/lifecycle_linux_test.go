@@ -18,6 +18,7 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/pelletier/go-toml/v2"
+	singtun "github.com/sagernet/sing-tun"
 	"github.com/xjdrew/kone/pkg/kone"
 )
 
@@ -46,26 +47,21 @@ func systemConfig(t *testing.T) *kone.KoneConfig {
 		defer conn.Close()
 		return conn.LocalAddr().(*net.UDPAddr).Port
 	}
-	dnsPort, udpPort := port("udp"), port("udp")
-	for dnsPort == udpPort {
-		udpPort = port("udp")
-	}
+	dnsPort := port("udp")
 	cfg, err := kone.ParseConfig([]byte(fmt.Sprintf(`[general]
 manager-addr="127.0.0.1:%d"
 [core]
 tun="kone-e2e"
 network="10.203.0.1/24"
-dns-server=["127.0.0.1:5353"]
-tcp-listen-port=%d
-udp-listen-port=%d
-dns-listen-port=%d
-tcp-nat-port-start=10000
-tcp-nat-port-end=11000
-udp-nat-port-start=10000
-udp-nat-port-end=11000
-`, port("tcp"), port("tcp"), udpPort, dnsPort)))
+[dns]
+servers=["127.0.0.1:5353"]
+listen-port=%d
+`, port("tcp"), dnsPort)))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if stack := os.Getenv("KONE_TEST_STACK"); stack != "" {
+		cfg.Core.Stack = stack
 	}
 	return cfg
 }
@@ -115,22 +111,18 @@ func systemStart(t *testing.T, cfg *kone.KoneConfig) (*kone.One, context.CancelF
 }
 
 func TestSystemLifecyclePortFailure(t *testing.T) {
-	for _, kind := range []string{"tcp", "udp", "dns", "manager"} {
+	for _, kind := range []string{"dns", "manager"} {
 		t.Run(kind, func(t *testing.T) {
 			cfg := systemConfig(t)
 			var occupied io.Closer
-			if kind == "tcp" || kind == "manager" {
+			if kind == "manager" {
 				ln, err := net.Listen("tcp4", "0.0.0.0:0")
 				if err != nil {
 					t.Fatal(err)
 				}
 				occupied = ln
 				port := ln.Addr().(*net.TCPAddr).Port
-				if kind == "tcp" {
-					cfg.Core.TcpListenPort = uint16(port)
-				} else {
-					cfg.General.ManagerAddr = fmt.Sprintf("127.0.0.1:%d", port)
-				}
+				cfg.General.ManagerAddr = fmt.Sprintf("127.0.0.1:%d", port)
 			} else {
 				conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
 				if err != nil {
@@ -138,11 +130,7 @@ func TestSystemLifecyclePortFailure(t *testing.T) {
 				}
 				occupied = conn
 				port := uint16(conn.LocalAddr().(*net.UDPAddr).Port)
-				if kind == "udp" {
-					cfg.Core.UdpListenPort = port
-				} else {
-					cfg.Core.DnsListenPort = port
-				}
+				cfg.DNS.ListenPort = port
 			}
 			defer occupied.Close()
 			one, err := kone.FromConfig(cfg)
@@ -166,7 +154,7 @@ func TestSystemLifecycleRouteFailure(t *testing.T) {
 	cfg := systemConfig(t)
 	systemCommand(t, "route", "add", "203.0.113.0/24", "dev", "lo")
 	defer systemCommand(t, "route", "del", "203.0.113.0/24", "dev", "lo")
-	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Proxy: "REJECT"}, {Schema: "IP-CIDR", Pattern: "203.0.113.0/24", Proxy: "REJECT"}}
+	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Outbound: kone.BuiltinReject}, {Schema: "IP-CIDR", Pattern: "203.0.113.0/24", Outbound: kone.BuiltinReject}}
 	one, err := kone.FromConfig(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -184,6 +172,30 @@ func TestSystemLifecycleRouteFailure(t *testing.T) {
 	if routes := systemCommand(t, "route", "show", "203.0.113.0/24"); !strings.Contains(routes, "dev lo") {
 		t.Fatalf("pre-existing route removed: %s", routes)
 	}
+}
+
+func TestSystemLifecycleExclusiveDevice(t *testing.T) {
+	cfg := systemConfig(t)
+	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Outbound: kone.BuiltinReject}}
+	_, cancel, done := systemStart(t, cfg)
+	// Bypass KONE's friendly name precheck and exercise kernel-level exclusive
+	// creation, protecting against two processes racing that precheck.
+	duplicate, err := singtun.New(singtun.Options{Name: cfg.Core.Tun, MTU: 1500, EXP_ExternalConfiguration: true, EXP_Exclusive: true})
+	if err == nil {
+		duplicate.Close()
+		t.Fatal("existing TUN was attached by another owner")
+	}
+	query := new(dns.Msg)
+	query.SetQuestion("ownership.example.", dns.TypeA)
+	answer, _, err := (&dns.Client{Timeout: time.Second}).Exchange(query, fmt.Sprintf("10.203.0.1:%d", cfg.DNS.ListenPort))
+	if err != nil || answer.Rcode != dns.RcodeRefused {
+		t.Fatalf("original engine damaged: %v %v", err, answer)
+	}
+	cancel()
+	if err := systemWait(t, done); err != nil {
+		t.Fatal(err)
+	}
+	noSystemInterface(t, cfg)
 }
 
 func localConnectProxy(t *testing.T, body string) *httptest.Server {
@@ -221,13 +233,13 @@ func localConnectProxy(t *testing.T, body string) *httptest.Server {
 func TestSystemLifecycleTrafficAndReload(t *testing.T) {
 	cfg := systemConfig(t)
 	oldProxy, newProxy := localConnectProxy(t, "old"), localConnectProxy(t, "new")
-	cfg.Proxy = map[string]string{"A": oldProxy.URL}
-	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Proxy: "A"}}
+	cfg.Outbounds = append(cfg.Outbounds, kone.OutboundConfig{Name: "A", URL: oldProxy.URL})
+	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Outbound: "A"}}
 	one, cancel, done := systemStart(t, cfg)
 	request := new(dns.Msg)
 	request.SetQuestion("example.com.", dns.TypeA)
 	dnsClient := &dns.Client{Timeout: time.Second}
-	answer, _, err := dnsClient.Exchange(request, fmt.Sprintf("10.203.0.1:%d", cfg.Core.DnsListenPort))
+	answer, _, err := dnsClient.Exchange(request, fmt.Sprintf("10.203.0.1:%d", cfg.DNS.ListenPort))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,14 +264,14 @@ func TestSystemLifecycleTrafficAndReload(t *testing.T) {
 	}
 	get("old")
 	updated := one.Snapshot().Config
-	updated.Proxy["A"] = newProxy.URL
+	updated.Outbounds[len(updated.Outbounds)-1].URL = newProxy.URL
 	if err := one.Reload(updated); err != nil {
 		t.Fatal(err)
 	}
 	get("old") // established TCP flow retains its original proxy generation
 	transport.CloseIdleConnections()
 	get("new")
-	answer, _, err = dnsClient.Exchange(request, fmt.Sprintf("10.203.0.1:%d", cfg.Core.DnsListenPort))
+	answer, _, err = dnsClient.Exchange(request, fmt.Sprintf("10.203.0.1:%d", cfg.DNS.ListenPort))
 	if err != nil {
 		t.Fatal(err)
 	}
