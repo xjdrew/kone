@@ -1,63 +1,72 @@
-//
-//   date  : 2016-02-18
-//   author: xjdrew
-//
-
 package main
 
 import (
 	"flag"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 
-	"github.com/op/go-logging"
-	"github.com/xjdrew/kone"
+	"github.com/xjdrew/kone/pkg/kone"
 )
 
 var VERSION = "0.3-dev"
 
-var logger = logging.MustGetLogger("kone")
-
-func init() {
-	logging.SetFormatter(logging.MustStringFormatter(
-		`%{color}%{time:06-01-02 15:04:05.000} %{level:.4s} @%{shortfile}%{color:reset} %{message}`,
-	))
-	logging.SetBackend(logging.NewLogBackend(os.Stdout, "", 0))
-}
-
-func main() {
-	version := flag.Bool("version", false, "Get version info")
-	debug := flag.Bool("debug", false, "Print debug info")
-	config := flag.String("config", "config.ini", "config file")
-	flag.Parse()
-
+func run(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("kone", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	version := flags.Bool("version", false, "Print version")
+	debug := flags.Bool("debug", false, "Enable structured debug logs")
+	check := flags.Bool("check", false, "Validate configuration without changing system networking")
+	filename := flags.String("config", "config.toml", "TOML configuration file")
+	if err := flags.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
 	if *version {
-		fmt.Printf("Version: %s\n", VERSION)
-		os.Exit(1)
+		fmt.Fprintf(stdout, "Version: %s\n", VERSION)
+		return 0
 	}
-
-	if *debug {
-		logging.SetLevel(logging.DEBUG, "kone")
-	} else {
-		logging.SetLevel(logging.INFO, "kone")
+	if flags.NArg() > 1 {
+		fmt.Fprintln(stderr, "expected at most one configuration filename")
+		return 2
 	}
-
-	configFile := *config
-	if configFile == "" {
-		configFile = flag.Arg(0)
+	if flags.NArg() == 1 {
+		explicit := false
+		flags.Visit(func(f *flag.Flag) {
+			if f.Name == "config" {
+				explicit = true
+			}
+		})
+		if explicit {
+			fmt.Fprintln(stderr, "use either -config or a positional filename")
+			return 2
+		}
+		*filename = flags.Arg(0)
 	}
-	logger.Infof("using config file: %v", configFile)
-
-	cfg, err := kone.ParseConfig(configFile)
+	cfg, err := kone.ParseConfig(*filename)
 	if err != nil {
-		logger.Error(err.Error())
-		os.Exit(2)
+		fmt.Fprintf(stderr, "Configuration error: %s\n", err)
+		return 2
 	}
-
+	if err := kone.ConfigureLogging(stderr, cfg.General, *debug); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	if *check {
+		fmt.Fprintln(stdout, "Configuration valid")
+		return 0
+	}
+	slog.Info("Starting KONE", "config", *filename, "version", VERSION)
 	one, err := kone.FromConfig(cfg)
 	if err != nil {
-		logger.Error(err.Error())
-		os.Exit(3)
+		slog.Error("Startup failed", "error", err)
+		return 3
 	}
 	one.Serve()
+	return 0
 }
+
+func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }

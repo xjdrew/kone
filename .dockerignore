@@ -1,0 +1,6 @@
+.git
+dist
+*.exe
+coverage*
+config.toml
+*.local.toml

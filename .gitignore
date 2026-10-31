@@ -7,3 +7,7 @@ v2raya
 /kone.exe
 /coverage.txt
 cmd/kone/local.ini
+/config.toml
+*.local.toml
+/dist/
+/coverage.out

@@ -1,33 +1,95 @@
-# This workflow will build a golang project
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
-
 name: Go
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [master, 'codex/**']
   pull_request:
-    branches: [ "master" ]
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify module checksums
+        run: go mod verify
+      - name: Vet
+        run: go vet ./...
+      - name: Test with race detector
+        run: go test -race -count=1 -coverprofile=coverage.out -covermode=atomic ./...
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: coverage-${{ matrix.os }}
+          path: coverage.out
 
   build:
+    name: Build all supported targets
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Check formatting and module files
+        run: |
+          test -z "$(gofmt -l cmd pkg test)"
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - name: Cross compile
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist
+          for os in linux darwin windows; do
+            for arch in amd64 arm64; do
+              suffix=""
+              if [ "$os" = windows ]; then suffix=".exe"; fi
+              GOOS="$os" GOARCH="$arch" go build -trimpath -o "dist/kone-$os-$arch$suffix" ./cmd/kone
+            done
+          done
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: binaries
+          path: dist/
 
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.20'
+  robustness:
+    name: Fuzz and vulnerability checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test ./pkg/tcpip -run '^$' -fuzz '^FuzzParseIPv4$' -fuzztime 15s
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
-    - name: Build
-      run: go build -v ./cmd/kone
-
-    - name: Test
-      run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
-
-    - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v3
-      env:
-        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+  docker:
+    name: Container smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - run: docker build -f deploy/docker/Dockerfile -t kone:ci .
+      - run: docker run --rm kone:ci -check -config /etc/kone/config.toml
