@@ -52,16 +52,6 @@ func (s *heldAcceptSockets) Listen(ctx context.Context, network, addr string) (n
 	return s.listener, nil
 }
 
-type releaseOnRestoreNetwork struct {
-	*memoryNetwork
-	release func()
-}
-
-func (n releaseOnRestoreNetwork) Configure(ctx context.Context, device Device, cfg CoreConfig) (Cleanup, error) {
-	undo, err := n.memoryNetwork.Configure(ctx, device, cfg)
-	return func(ctx context.Context) error { defer n.release(); return undo(ctx) }, err
-}
-
 func TestManagerShutdownBeforeServeUnregistersListener(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -76,8 +66,11 @@ func TestManagerShutdownBeforeServeUnregistersListener(t *testing.T) {
 			defer release()
 			listener := &heldAcceptListener{entered: make(chan struct{}), release: released, closeError: tc.err}
 			one.sockets = &heldAcceptSockets{loopSockets: sockets, listener: listener}
-			one.network = releaseOnRestoreNetwork{memoryNetwork: network, release: release}
 			_, done := runReady(t, one)
+			// Shutdown invokes callbacks after closing tracked listeners, before
+			// waiting for Serve to exit. Release Accept only after that second
+			// Close attempt; waiting for network rollback would deadlock here.
+			one.manager.server.RegisterOnShutdown(release)
 			select {
 			case <-listener.entered:
 			case <-time.After(time.Second):
