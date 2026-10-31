@@ -16,6 +16,7 @@
 - Extend the full-capture LAN scenario with an explicit DIRECT TCP exception alongside proxy, UDP and REJECT traffic.
 - Create the required Windows inbound TCP exception explicitly, scoped to this executable and owned TUN address, instead of relying on upstream's silently failing COM helper; roll it back on startup failure and exit.
 - Use a unique Windows firewall rule ID and remove that exact ID, retaining the upstream display name; normalize DOS 8.3 executable paths for the application filter and make absent-rule rollback idempotent.
+- Verify real Windows firewall rules are absent after occupied-port rollback and normal shutdown in both system and mixed stacks.
 
 # 2026/10/31 — runtime reliability
 - Add context-owned startup, cancellation, idempotent close and reverse-order network rollback; propagate component and cleanup failures.

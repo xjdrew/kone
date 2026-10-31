@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -41,6 +43,22 @@ func TestSystemWindowsWintun(t *testing.T) {
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "SOCKS_PROXY"} {
 		t.Setenv(key, "")
 	}
+	program, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := base64.StdEncoding.EncodeToString([]byte("sing-tun (" + program + ")"))
+	assertFirewallClean := func(t *testing.T) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		script := `$ErrorActionPreference='Stop'; $name=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('` + rule + `')); @(Get-NetFirewallRule | Where-Object { $_.DisplayName -eq $name }).Count`
+		out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+		if err != nil || strings.TrimSpace(string(out)) != "0" {
+			t.Fatalf("owned TCP firewall rule leaked: %s (%v)", out, err)
+		}
+	}
+	assertFirewallClean(t)
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "CONNECT" {
 			http.Error(w, "CONNECT required", 400)
@@ -156,6 +174,7 @@ proxy="Win"
 				if err := one.Close(); err != nil {
 					t.Fatal(err)
 				}
+				assertFirewallClean(t)
 				for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
 					if _, err := net.InterfaceByName(name); err != nil {
 						break
