@@ -57,9 +57,11 @@ func TestDomainKeywordPattern(t *testing.T) {
 func TestIPCountryPattern(t *testing.T) {
 	pattern := NewGEOIPPattern("A", "US")
 	assert.Equal(t, "A", pattern.Proxy())
-	assert.True(t, pattern.Match(net.ParseIP("216.58.197.99")))  // google.hk
-	assert.False(t, pattern.Match(net.ParseIP("110.242.68.66"))) // baidu.com, china
-	assert.True(t, pattern.Match(netip.MustParseAddr("216.58.197.99")))
+	// Countries are dataset results, not a company's registration country.
+	// These samples are checked against the bundled DB-IP monthly source.
+	assert.True(t, pattern.Match(net.ParseIP("8.8.8.8")))
+	assert.False(t, pattern.Match(net.ParseIP("114.114.114.114")))
+	assert.True(t, pattern.Match(netip.MustParseAddr("8.8.8.8")))
 	assert.False(t, pattern.Match(netip.MustParseAddr("2001:db8::1")))
 }
 

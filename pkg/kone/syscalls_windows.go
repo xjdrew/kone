@@ -68,6 +68,17 @@ func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) 
 			return nil, fmt.Errorf("virtual address %s already exists on %s", ip, d.Name())
 		}
 	}
+	var ipv6Snapshot *windowsIPv6Settings
+	if cfg.IPv6Network != "" {
+		settings, err := n.readIPv6Settings(ctx, d, cfg)
+		if err != nil {
+			return nil, err
+		}
+		if settings.Index != old.Index {
+			return nil, fmt.Errorf("owned interface identity changed while reading IPv6 settings")
+		}
+		ipv6Snapshot = &settings
+	}
 	var undo undoStack
 	apply := func(name, script, restore string, params any) error {
 		// Property setters can complete before a timeout is observed. Restore
@@ -104,10 +115,20 @@ func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) 
 	if err := apply("DNS", `Get-DnsClientServerAddress -InterfaceIndex $p.Index -AddressFamily IPv4 | Set-DnsClientServerAddress -ServerAddresses @($p.IP)`, `$dns=Get-DnsClientServerAddress -InterfaceIndex $p.Index -AddressFamily IPv4; if($p.StaticDNS){$dns | Set-DnsClientServerAddress -ServerAddresses @($p.DNS)}else{$dns | Set-DnsClientServerAddress -ResetServerAddresses}`, p); err != nil {
 		return undo.restore, err
 	}
+	if ipv6Snapshot != nil {
+		cleanup, err := n.configureIPv6(ctx, d, cfg, *ipv6Snapshot)
+		undo.add("IPv6 interface", cleanup)
+		if err != nil {
+			return undo.restore, err
+		}
+	}
 	return undo.restore, nil
 }
 
 func (n systemNetwork) AddRoute(ctx context.Context, d Device, subnet *net.IPNet) (Cleanup, error) {
+	if subnet != nil && subnet.IP.To4() == nil {
+		return n.addWindowsIPv6Route(ctx, d, subnet)
+	}
 	p := map[string]any{"Name": d.Name(), "Prefix": subnet.String(), "Gateway": n.gateway}
 	data, err := n.powershell(ctx, `$a=Get-NetAdapter -Name ([System.Management.Automation.WildcardPattern]::Escape($p.Name)); @(Get-NetRoute -DestinationPrefix $p.Prefix -InterfaceIndex $a.ifIndex -PolicyStore ActiveStore -AddressFamily IPv4 -NextHop $p.Gateway -ErrorAction SilentlyContinue).Count | ConvertTo-Json`, p)
 	if err != nil {
@@ -151,6 +172,13 @@ func (n systemNetwork) PrepareStack(ctx context.Context, cfg CoreConfig) (Cleanu
 	// Keep the upstream display name so its helper recognizes the exception,
 	// but use a unique safe ID to clean up exactly the rule we created.
 	p := map[string]any{"Name": "Kone-TCP-" + rand.Text(), "Rule": "sing-tun (" + path + ")", "Program": program, "IP": ip.String()}
+	if cfg.IPv6Network != "" {
+		ipv6, _, err := net.ParseCIDR(cfg.IPv6Network)
+		if err != nil {
+			return nil, err
+		}
+		p["IP"] = []string{ip.String(), ipv6.String()}
+	}
 	data, err := n.powershell(ctx, `@(Get-NetFirewallRule -ErrorAction Stop | Where-Object { $_.DisplayName -eq $p.Rule }).Count | ConvertTo-Json`, p)
 	if err != nil {
 		return nil, err

@@ -89,6 +89,9 @@ jobs:
           go test -race -count=1 "-coverpkg=$packages" '-coverprofile=coverage.out' -covermode=atomic ./...
       - name: Test optional mixed stack
         run: go test -tags with_gvisor -race -count=1 ./...
+      - name: Validate macOS AppKit and private helper boundaries
+        if: matrix.os == 'macos-latest'
+        run: go test -v -count=1 ./pkg/desktop -run '^TestDarwin(NativeTray(Selectors|PipeEOF)|AuthenticatedPrivateHelperLifecycleWithoutNetworkChanges)$'
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}coverage-${{ matrix.os }}
@@ -284,7 +287,7 @@ jobs:
       - name: Regress upstream PE loader pointer bounds
         run: go test -race -count=1 github.com/sagernet/sing-tun/internal/wintun github.com/sagernet/sing-tun/internal/wintun/memmod
       - name: Test embedded Wintun without TAP installation
-        run: go test -tags with_gvisor -race -failfast -count=1 -timeout 12m -run '^TestSystemWindowsWintun$' -v ./test/integration
+        run: go test -tags with_gvisor,kone_ipv6_acceptance -race -failfast -count=1 -timeout 12m -run '^TestSystemWindows(Wintun|IPv6Wintun)$' -v ./test/integration
 
   dns-system:
     name: Linux owned system DNS guidance

@@ -8,3 +8,8 @@ import "embed"
 //
 //go:embed all:dist
 var Files embed.FS
+
+// MacOSTrayScript is the fixed AppKit companion; stdin carries state only.
+//
+//go:embed native/tray-darwin.js
+var MacOSTrayScript string

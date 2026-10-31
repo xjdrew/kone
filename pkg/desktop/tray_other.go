@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package desktop
 
@@ -9,5 +9,5 @@ import (
 
 func TrayAvailable() bool { return false }
 func RunTray(context.Context, TrayActions) error {
-	return errors.New("native desktop tray is currently available on Windows only")
+	return errors.New("native desktop tray is unavailable on this platform")
 }

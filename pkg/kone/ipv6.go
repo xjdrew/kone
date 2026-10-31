@@ -14,7 +14,7 @@ import (
 func SupportsIPv6Capture() bool { return runtime.GOOS == "linux" }
 
 func validateIPv6Platform(cfg CoreConfig) error {
-	if cfg.IPv6Network != "" && !SupportsIPv6Capture() {
+	if cfg.IPv6Network != "" && !SupportsIPv6Capture() && !ipv6AcceptanceEnabled() {
 		return errors.New("IPv6 capture is currently supported only on Linux; Windows/macOS IPv6 capture is not yet validated")
 	}
 	return nil
