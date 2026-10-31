@@ -16,8 +16,14 @@
 # TUN 的 IPv4 主机地址/前缀，也是 Fake-IP 地址池；避免与现有网络冲突。
 # 当前支持 /8.. /30，并为 TUN 地址后的协议栈地址保留空间。
 # network = "10.192.0.1/16"
+# 可选 Linux IPv6 TUN/Fake-IP 网段；空字符串关闭。当前 Windows/macOS 明确拒绝启用。
+# 启用时指定不冲突的 ULA 主机/前缀（/64.. /120），例如 fd7a:203::1/120。
+# ipv6-network = ""
+# IPv6 全局接管；需要非空 ipv6-network 和真实出口 outbound-interface。
+# false 仅接管 IPv6 Fake-IP 子网及显式 IP-CIDR6 路由；不影响 IPv4 设置。
+# auto-route6 = false
 # system：系统 TCP + sing-tun UDP；mixed：系统 TCP + gVisor UDP。
-# mixed 需要以 -tags with_gvisor 构建；两者都只接管 IPv4。
+# mixed 需要以 -tags with_gvisor 构建；IPv6 需另外显式配置，仅 Linux 可启用。
 # 显式选择协议栈；省略时也默认为 system。修改后需要重启。
 stack = "system"
 # true 添加两条 /1 路由接管 IPv4；保留原默认路由，更具体路由仍优先。

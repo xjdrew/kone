@@ -26,7 +26,8 @@ type DomainRecord struct {
 	Hits    int
 	Expires time.Time
 
-	answer   *dns.A   // cache dns answer
+	answer   *dns.A // cache dns answer
+	answer6  *dns.AAAA
 	resolved *dns.Msg // original answers used to recompute IP/CNAME policy on reload
 }
 
@@ -39,6 +40,9 @@ func cloneRecord(record *DomainRecord) *DomainRecord {
 	copy.RealIP = append(net.IP(nil), record.RealIP...)
 	if record.answer != nil {
 		copy.answer = dns.Copy(record.answer).(*dns.A)
+	}
+	if record.answer6 != nil {
+		copy.answer6 = dns.Copy(record.answer6).(*dns.AAAA)
 	}
 	if record.resolved != nil {
 		copy.resolved = record.resolved.Copy()
@@ -58,8 +62,17 @@ func (record *DomainRecord) SetRealIP(msg *dns.Msg) {
 	for _, item := range msg.Answer {
 		switch answer := item.(type) {
 		case *dns.A:
+			if record.answer6 != nil || record.IP != nil && record.IP.To4() == nil {
+				continue
+			}
 			record.RealIP = append(net.IP(nil), answer.A...)
 			slog.Debug("DNS real address resolved", "domain", record.Hostname, "ip", answer.A)
+			return
+		case *dns.AAAA:
+			if record.answer6 == nil && (record.IP == nil || record.IP.To4() != nil) {
+				continue
+			}
+			record.RealIP = append(net.IP(nil), answer.AAAA...)
 			return
 		}
 	}
@@ -69,13 +82,23 @@ func (record *DomainRecord) Answer(request *dns.Msg) *dns.Msg {
 	rsp := new(dns.Msg)
 	rsp.SetReply(request)
 	rsp.RecursionAvailable = true
-	rsp.Answer = append(rsp.Answer, dns.Copy(record.answer))
+	if record.answer6 != nil {
+		rsp.Answer = append(rsp.Answer, dns.Copy(record.answer6))
+	} else {
+		rsp.Answer = append(rsp.Answer, dns.Copy(record.answer))
+	}
 	return rsp
 }
 
 func (record *DomainRecord) Touch() {
 	record.Hits++
-	record.Expires = time.Now().Add(time.Duration(record.answer.Hdr.Ttl) * time.Second)
+	ttl := uint32(DnsDefaultTtl)
+	if record.answer != nil {
+		ttl = record.answer.Hdr.Ttl
+	} else if record.answer6 != nil {
+		ttl = record.answer6.Hdr.Ttl
+	}
+	record.Expires = time.Now().Add(time.Duration(ttl) * time.Second)
 }
 
 type DnsTable struct {
@@ -159,8 +182,12 @@ func (c *DnsTable) Set(domain string, proxy string) *DomainRecord {
 	record.IP = ip
 	record.Hostname = domain
 	record.Proxy = proxy
-	record.answer = forgeIPv4Answer(domain, ip)
-	record.answer.Hdr.Ttl = c.ttl
+	if address.Is4() {
+		record.answer = forgeIPv4Answer(domain, ip)
+		record.answer.Hdr.Ttl = c.ttl
+	} else {
+		record.answer6 = &dns.AAAA{Hdr: dns.RR_Header{Name: dns.Fqdn(domain), Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: c.ttl}, AAAA: ip}
+	}
 
 	c.records[domain] = record
 	c.ip2Domain[ip.String()] = domain

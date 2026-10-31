@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/xjdrew/kone/pkg/geoip"
 	"github.com/xjdrew/kone/pkg/kone"
 	web "github.com/xjdrew/kone/web"
 )
@@ -28,6 +29,14 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 func apiError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": randomID("request")}})
+}
+
+func writeOperation(w http.ResponseWriter, operation Operation) {
+	if operation.ID == "" {
+		apiError(w, 429, "operation_limit", operation.Error)
+		return
+	}
+	writeJSON(w, 202, operation)
 }
 func readJSON(w http.ResponseWriter, r *http.Request, value any) error {
 	defer r.Body.Close()
@@ -138,9 +147,27 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 	switch {
 	case path == "state" && r.Method == http.MethodGet:
 		state := c.State()
-		writeJSON(w, 200, map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role, "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf})
+		writeJSON(w, 200, map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role,"remote_session":session.Remote, "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf})
 	case path == "config" && r.Method == http.MethodGet:
 		writeJSON(w, 200, c.Document())
+	case path == "recovery" && r.Method == http.MethodGet:
+		report, err := c.InspectRecovery(r.Context())
+		if err != nil {
+			respondError(err)
+			return
+		}
+		writeJSON(w, 200, report)
+	case path == "geoip" && r.Method == http.MethodGet:
+		value, err := c.geoIPStatus()
+		if err != nil {
+			respondError(err)
+			return
+		}
+		writeJSON(w, 200, value)
+	case path == "geoip" && r.Method == http.MethodPut:
+		c.geoIPRoute(w, r, false)
+	case path == "geoip/rollback" && r.Method == http.MethodPost:
+		c.geoIPRoute(w, r, true)
 	case path == "config" && r.Method == http.MethodPut:
 		var request SaveRequest
 		if err := readJSON(w, r, &request); err != nil {
@@ -201,7 +228,7 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		writeJSON(w, 200, value)
 	case path == "config/apply" && r.Method == http.MethodPost:
 		op := c.beginOperation("apply", key, 20*time.Second, func(ctx context.Context) (any, error) { return nil, c.Apply(ctx) })
-		writeJSON(w, 202, op)
+		writeOperation(w, op)
 	case strings.HasPrefix(path, "lifecycle/") && r.Method == http.MethodPost:
 		action := strings.TrimPrefix(path, "lifecycle/")
 		if action == "preflight" {
@@ -229,7 +256,7 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 			apiError(w, 404, "not_found", "Unknown lifecycle action")
 			return
 		}
-		writeJSON(w, 202, c.beginOperation(action, key, 40*time.Second, func(ctx context.Context) (any, error) { return nil, actionFn(ctx) }))
+		writeOperation(w, c.beginOperation(action, key, 40*time.Second, func(ctx context.Context) (any, error) { return nil, actionFn(ctx) }))
 	case path == "traffic" && r.Method == http.MethodGet:
 		query := trafficQuery(r)
 		window := time.Second
@@ -242,29 +269,65 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		}
 		c.mu.Lock()
 		observer := c.observer
+		source := c.dataSource
 		c.mu.Unlock()
-		writeJSON(w, 200, map[string]any{"traffic": observer.Snapshot(query), "sankey": observer.Sankey(query, kone.SankeyOptions{Window: window, Metric: metric, Limit: 24})})
+		options := kone.SankeyOptions{Window: window, Metric: metric, Limit: 24}
+		if source != nil {
+			traffic, sankey, err := source.TrafficData(query, options)
+			if err != nil {
+				apiError(w, 503, "data_unavailable", "Capture statistics are unavailable; refresh state or pause capture")
+				return
+			}
+			writeJSON(w, 200, map[string]any{"traffic": traffic, "sankey": sankey})
+		} else {
+			writeJSON(w, 200, map[string]any{"traffic": observer.Snapshot(query), "sankey": observer.Sankey(query, options)})
+		}
 	case path == "flows" && r.Method == http.MethodGet:
 		c.mu.Lock()
 		observer := c.observer
+		source := c.dataSource
 		c.mu.Unlock()
+		if source != nil {
+			traffic, _, err := source.TrafficData(trafficQuery(r), kone.SankeyOptions{Window: time.Second, Metric: "total", Limit: 24})
+			if err != nil {
+				apiError(w, 503, "data_unavailable", "Capture statistics are unavailable")
+				return
+			}
+			writeJSON(w, 200, traffic)
+			return
+		}
 		writeJSON(w, 200, observer.Snapshot(trafficQuery(r)))
 	case strings.HasPrefix(path, "flows/") && r.Method == http.MethodGet:
 		c.mu.Lock()
 		observer := c.observer
+		source := c.dataSource
 		c.mu.Unlock()
 		id := strings.TrimPrefix(path, "flows/")
-		if record, ok := observer.Get(id); ok {
+		record, ok := observer.Get(id)
+		if source != nil {
+			var err error
+			record, ok, err = source.FlowRecord(id)
+			if err != nil {
+				apiError(w, 503, "data_unavailable", "Capture detail is unavailable")
+				return
+			}
+		}
+		if ok {
 			writeJSON(w, 200, record)
 			return
 		}
 		apiError(w, 410, "expired", "This flow detail has expired; it was not replaced with a newer sample")
 	case path == "dns" && r.Method == http.MethodGet:
 		c.mu.Lock()
-		engine := c.engine
+		source := c.dataSource
 		c.mu.Unlock()
-		if one, ok := engine.(*kone.One); ok {
-			writeJSON(w, 200, map[string]any{"status": one.DNSStatus(), "queries": one.DNSQueries()})
+		if source != nil {
+			status, queries, err := source.DNSData()
+			if err != nil {
+				apiError(w, 503, "data_unavailable", "DNS observations are unavailable")
+				return
+			}
+			writeJSON(w, 200, map[string]any{"status": status, "queries": queries})
 		} else {
 			writeJSON(w, 200, map[string]any{"status": map[string]any{"active": false}, "queries": []any{}})
 		}
@@ -285,7 +348,7 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 			respondError(err)
 			return
 		}
-		writeJSON(w, 202, op)
+		writeOperation(w, op)
 	case strings.HasPrefix(path, "diagnostics/") && strings.HasSuffix(path, "/cancel") && r.Method == http.MethodPost:
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "diagnostics/"), "/cancel")
 		if err := c.cancelOperation(id); err != nil {
@@ -352,12 +415,15 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 	case path == "privacy/clear" && r.Method == http.MethodPost:
 		c.mu.Lock()
 		observer := c.observer
-		engine := c.engine
+		source := c.dataSource
 		c.mu.Unlock()
-		observer.Clear()
-		if one, ok := engine.(*kone.One); ok {
-			one.ClearDNSQueries()
-			one.ClearDNSCache()
+		if source != nil {
+			if err := source.ClearObservation(); err != nil {
+				apiError(w, 503, "data_unavailable", "Could not clear capture observations")
+				return
+			}
+		} else {
+			observer.Clear()
 		}
 		writeJSON(w, 200, map[string]any{"cleared": true, "network_changed": false})
 	case path == "access/lan" && r.Method == http.MethodPost:
@@ -465,7 +531,12 @@ func (c *Controller) simulate(w http.ResponseWriter, r *http.Request) {
 	c.mu.Lock()
 	doc := cloneDocument(c.doc)
 	c.mu.Unlock()
-	decision, err := kone.ExplainRouting(doc.Config, request.Target, request.Protocol, request.Port)
+	repository, err := geoip.OpenRepository(filepath.Join(c.directory, "geoip"))
+	if err != nil {
+		apiError(w, 400, "geoip", "Saved GeoIP data needs repair before simulating rules")
+		return
+	}
+	decision, err := kone.ExplainRoutingWithGeoIP(doc.Config, repository.Current(), request.Target, request.Protocol, request.Port)
 	if err != nil && decision.Outbound == "" {
 		apiError(w, 400, "decision", safeMessage(err, doc.Config))
 		return

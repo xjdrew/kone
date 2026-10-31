@@ -226,6 +226,10 @@ func (d *Dns) Maintain(ctx context.Context) error {
 			if now.Sub(lastMappingSweep) >= time.Minute {
 				d.one.dnsTable.clearExpiredDomain(now)
 				d.one.dnsTable.clearExpiredNonProxyDomain(now)
+				if d.one.dnsTable6 != nil {
+					d.one.dnsTable6.clearExpiredDomain(now)
+					d.one.dnsTable6.clearExpiredNonProxyDomain(now)
+				}
 				lastMappingSweep = now
 			}
 		}
@@ -242,6 +246,7 @@ type DNSRuntimeStatus struct {
 	CacheEntries            int              `json:"cache_entries"`
 	CacheLimit              int              `json:"cache_limit"`
 	TCP                     bool             `json:"tcp"`
+	IPv6                    bool             `json:"ipv6"`
 }
 
 func (one *One) DNSQueries() []DNSQueryEvent {
@@ -266,6 +271,7 @@ func (one *One) DNSStatus() DNSRuntimeStatus {
 		return status
 	}
 	d := one.dns
+	status.IPv6 = one.dnsTable6 != nil
 	status.Servers = append(status.Servers, d.nameservers...)
 	for _, route := range d.routes {
 		copy := route

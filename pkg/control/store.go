@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -306,9 +305,6 @@ func safeMessage(err error, cfg *kone.KoneConfig) string {
 	return message
 }
 
-func configFingerprint(doc Document) string {
-	return strconv.FormatUint(doc.Version, 10) + ":" + doc.Inbound.ID
-}
 func brokenBackup(path string) error {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {

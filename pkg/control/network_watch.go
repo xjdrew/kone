@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,7 +50,7 @@ func sampleNetwork(ctx context.Context, ownedTunName string) (networkFingerprint
 		if err != nil {
 			return result, err
 		}
-		values = append(values, device.Name+":"+device.Flags.String())
+		values = append(values, device.Name+":"+strconv.Itoa(device.Index)+":"+device.Flags.String())
 		for _, address := range addresses {
 			values = append(values, device.Name+":"+address.String())
 		}
@@ -86,7 +87,27 @@ func sampleNetwork(ctx context.Context, ownedTunName string) (networkFingerprint
 	}
 	// Route order is not an ownership signal; normalize complete lines so a
 	// harmless ordering change does not pause a healthy engine.
-	result.routes = fingerprint(strings.Split(strings.ReplaceAll(string(routeData), "\r\n", "\n"), "\n"))
+	lines := strings.Split(strings.ReplaceAll(string(routeData), "\r\n", "\n"), "\n")
+	if runtime.GOOS == "linux" {
+		values = nil
+		for _, line := range lines {
+			fields := strings.Fields(line)
+			if len(fields) >= 8 && fields[0] != "Iface" {
+				values = append(values, strings.Join([]string{fields[0], fields[1], fields[2], fields[3], fields[6], fields[7]}, " "))
+			}
+		}
+		lines = values
+	} else if runtime.GOOS == "darwin" {
+		values = nil
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "gateway:") || strings.HasPrefix(line, "interface:") || strings.HasPrefix(line, "flags:") {
+				values = append(values, line)
+			}
+		}
+		lines = values
+	}
+	result.routes = fingerprint(lines)
 	return result, ctx.Err()
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 
 	"github.com/xjdrew/kone/pkg/proxy"
 )
@@ -81,7 +82,12 @@ func (p *Outbounds) DialUDPContext(ctx context.Context, name, addr string) (net.
 		return nil, err
 	}
 	if target == BuiltinDirect {
-		return p.dial(ctx, "udp4", addr)
+		network := "udp4"
+		host, _, _ := net.SplitHostPort(addr)
+		if address, err := netip.ParseAddr(host); err == nil && address.Is6() && !address.Is4In6() {
+			network = "udp6"
+		}
+		return p.dial(ctx, network, addr)
 	}
 	// A failed association is a real proxy failure, never permission to
 	// silently switch to direct or to execute an unrelated fallback policy.

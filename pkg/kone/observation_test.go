@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	processinfo "github.com/xjdrew/kone/pkg/process"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -201,4 +203,49 @@ func TestObservedConnectionCountsForwardedWritesAndHalfClose(t *testing.T) {
 	flow.Finish(context.Canceled, true)
 	record, _ = observer.Get(flow.ID())
 	require.Equal(t, "canceled", record.Status)
+}
+
+func TestObservationKeepsProcessEvidenceImmutableAndCountsEvictedFailures(t *testing.T) {
+	observer := NewTrafficObserver(ObservationOptions{Capacity: 1})
+	first := beginObserved(t, observer, "first:443", "tcp")
+	first.Process(processinfo.Result{Status: "matched", PID: 42, Name: "browser", Path: "/browser", Source: "validated-test", ObservedAt: time.Now(), StartedAt: time.Now().Add(-time.Hour)})
+	copy, ok := observer.Get(first.ID())
+	require.True(t, ok)
+	require.Equal(t, uint32(42), copy.ProcessPID)
+	*copy.ProcessObservedAt = time.Unix(0, 0)
+	*copy.ProcessStartedAt = time.Unix(0, 0)
+	stored, _ := observer.Get(first.ID())
+	require.NotEqual(t, *copy.ProcessObservedAt, *stored.ProcessObservedAt)
+	require.NotEqual(t, *copy.ProcessStartedAt, *stored.ProcessStartedAt)
+	second := beginObserved(t, observer, "second:443", "tcp")
+	first.TransferError(errors.New("broken pipe"))
+	first.Finish(nil, false)
+	second.Finish(nil, false)
+	require.Equal(t, uint64(1), observer.Snapshot(TrafficQuery{}).Totals.Failed, "detail eviction cannot erase independent failure counts")
+	third := observer.Begin(FlowRecord{Target: "timeout:443", Protocol: "tcp"})
+	third.Stage("dial")
+	third.Finish(&net.DNSError{Err: "timeout", IsTimeout: true}, false)
+	record, _ := observer.Get(third.ID())
+	require.Equal(t, "failed", record.Status, "zero-byte connection timeout is a failure, not an idle session")
+}
+
+func TestSankeyHonorsAnchorAndSelectedFlowIDs(t *testing.T) {
+	clock := newObservationClock()
+	observer := NewTrafficObserver(ObservationOptions{Now: clock.now})
+	first := beginObserved(t, observer, "same:443", "tcp")
+	first.AddUpload(10, 0)
+	anchor := observer.Snapshot(TrafficQuery{}).Anchor
+	second := beginObserved(t, observer, "same:443", "tcp")
+	second.AddUpload(20, 0)
+	clock.advance(time.Second)
+	graph := observer.Sankey(TrafficQuery{FlowIDs: []string{first.ID()}}, SankeyOptions{})
+	require.Equal(t, float64(10), graph.Total)
+	require.Equal(t, []string{first.ID()}, graph.Paths[0].Filter.FlowIDs)
+	graph = observer.Sankey(TrafficQuery{Anchor: anchor}, SankeyOptions{Metric: "cumulative"})
+	require.Equal(t, float64(10), graph.Total)
+	graph = observer.Sankey(TrafficQuery{Anchor: "unrelated-session-0001"}, SankeyOptions{})
+	require.True(t, graph.AnchorExpired)
+	require.Empty(t, graph.Paths)
+	first.Finish(nil, false)
+	second.Finish(nil, false)
 }

@@ -5,13 +5,24 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ''
+      version:
+        type: string
+        default: ''
+      artifact-prefix:
+        type: string
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || format('{0}-{1}', github.run_id, inputs.ref || github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   web:
@@ -23,6 +34,8 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: '26.13.0'
@@ -30,6 +43,8 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - run: npm test
+      - name: Test release identity, batched commits and safety guards
+        run: node --test ../test/release/*.test.mjs
       - run: npm run build
       - name: Verify embedded assets match frontend sources
         run: git diff --exit-code -- dist
@@ -38,7 +53,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
-          name: management-ui-browser-results
+          name: ${{ inputs.artifact-prefix }}management-ui-browser-results
           path: web/test-results/
 
   test:
@@ -53,6 +68,8 @@ jobs:
       CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
@@ -71,7 +88,7 @@ jobs:
         run: go test -tags with_gvisor -race -count=1 ./...
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: coverage-${{ matrix.os }}
+          name: ${{ inputs.artifact-prefix }}coverage-${{ matrix.os }}
           path: coverage.out
 
   coverage:
@@ -84,6 +101,8 @@ jobs:
       CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
@@ -122,6 +141,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
@@ -133,28 +154,58 @@ jobs:
       - name: Cross compile
         env:
           CGO_ENABLED: '0'
+          KONE_VERSION: ${{ inputs.version || format('0.4.0-dev.{0}', github.sha) }}
         run: |
           mkdir -p dist
           for os in linux darwin windows; do
             for arch in amd64 arm64; do
               suffix=""
               if [ "$os" = windows ]; then suffix=".exe"; fi
-              GOOS="$os" GOARCH="$arch" go build -tags with_gvisor -trimpath -o "dist/kone-$os-$arch$suffix" ./cmd/kone
+              GOOS="$os" GOARCH="$arch" go build -tags with_gvisor -trimpath -ldflags="-X main.VERSION=$KONE_VERSION" -o "dist/kone-$os-$arch$suffix" ./cmd/kone
             done
           done
-          GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -o dist/kone-linux-armv7 ./cmd/kone
+          GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -ldflags="-X main.VERSION=$KONE_VERSION" -o dist/kone-linux-armv7 ./cmd/kone
           cp LICENSE LICENSE-MIT dist/
           cp -R licenses dist/
+          node scripts/release/build-info.mjs
       - name: Bundle corresponding source and dependency notices
         run: |
           mkdir -p "$RUNNER_TEMP/kone-source"
           git archive HEAD | tar -xf - -C "$RUNNER_TEMP/kone-source"
           go mod vendor -o "$RUNNER_TEMP/kone-source/vendor"
+          cp dist/build-info.json "$RUNNER_TEMP/kone-source/BUILD-INFO.json"
           tar -czf dist/kone-source.tar.gz -C "$RUNNER_TEMP/kone-source" .
       - uses: actions/upload-artifact@v7.0.2
         with:
-          name: binaries
+          name: ${{ inputs.artifact-prefix }}binaries
           path: dist/
+
+  packages:
+    name: Installable packages (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}binaries
+          path: release-input
+      - name: Package and validate installation in a temporary prefix
+        env:
+          RELEASE_SHA: ${{ inputs.ref || github.sha }}
+          RELEASE_VERSION: ${{ inputs.version || format('0.4.0-dev.{0}', github.sha) }}
+        run: node scripts/release/package.mjs
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}install-packages-${{ matrix.os }}
+          path: release-assets/
 
   robustness:
     name: Fuzz and vulnerability checks
@@ -162,6 +213,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
@@ -174,6 +227,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - run: docker build -f deploy/docker/Dockerfile -t kone:ci .
       - run: docker run --rm kone:ci -check -config /etc/kone/config.toml
 
@@ -183,6 +238,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
@@ -199,7 +256,7 @@ jobs:
             export KONE_SYSTEM_TEST=1
             export KONE_SYSTEM_CLI="$1"
             export KONE_TEST_STACK="$3"
-            "$2" -test.run "^TestSystem(Lifecycle|Gateway)" -test.v -test.timeout 180s
+            "$2" -test.run "^TestSystem(Lifecycle|Gateway|DNS|IPv6)" -test.v -test.timeout 180s
           ' -- "$RUNNER_TEMP/kone-system-cli" "$RUNNER_TEMP/kone-system.test" "$stack"
           done
 
@@ -212,6 +269,8 @@ jobs:
       KONE_WINDOWS_SYSTEM_TEST: '1'
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
@@ -220,3 +279,22 @@ jobs:
         run: go test -race -count=1 github.com/sagernet/sing-tun/internal/wintun github.com/sagernet/sing-tun/internal/wintun/memmod
       - name: Test embedded Wintun without TAP installation
         run: go test -tags with_gvisor -race -failfast -count=1 -timeout 12m -run '^TestSystemWindowsWintun$' -v ./test/integration
+
+  verified:
+    name: Required gates verified (${{ inputs.ref || github.sha }})
+    if: ${{ !cancelled() && inputs.ref != '' && needs.web.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success' && needs.packages.result == 'success' && needs.robustness.result == 'success' && needs.docker.result == 'success' && needs.system.result == 'success' && needs.windows-system.result == 'success' && (needs.coverage.result == 'success' || needs.coverage.result == 'skipped') }}
+    needs: [web, test, coverage, build, packages, robustness, docker, system, windows-system]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Record exact successful SHA and gates
+        env:
+          RELEASE_SHA: ${{ inputs.ref }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: node scripts/release/marker.mjs
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ${{ inputs.artifact-prefix }}verification
+          path: verification/verification.json

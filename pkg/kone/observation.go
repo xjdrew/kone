@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	processinfo "github.com/xjdrew/kone/pkg/process"
 )
 
 const TrafficScope = "observed_kone_business_payload"
@@ -40,6 +42,14 @@ type FlowRecord struct {
 	RealDestination   string     `json:"real_destination,omitempty"`
 	ProcessStatus     string     `json:"process_status"`
 	ProcessReason     string     `json:"process_reason,omitempty"`
+	ProcessPID        uint32     `json:"process_pid,omitempty"`
+	ProcessName       string     `json:"process_name,omitempty"`
+	ProcessPath       string     `json:"process_path,omitempty"`
+	ProcessSource     string     `json:"process_source,omitempty"`
+	ProcessObservedAt *time.Time `json:"process_observed_at,omitempty"`
+	ProcessStartedAt  *time.Time `json:"process_started_at,omitempty"`
+	GeoIPVersion      string     `json:"geoip_version,omitempty"`
+	GeoIPSHA256       string     `json:"geoip_sha256,omitempty"`
 	RuleID            string     `json:"rule_id"`
 	RuleName          string     `json:"rule_name"`
 	RuleSource        string     `json:"rule_source"`
@@ -98,6 +108,7 @@ type TrafficQuery struct {
 }
 
 type TrafficSnapshot struct {
+	Frozen           bool          `json:"frozen"`
 	SessionID        string        `json:"session_id"`
 	StartedAt        time.Time     `json:"started_at"`
 	Timestamp        time.Time     `json:"timestamp"`
@@ -149,10 +160,12 @@ type TrafficObserver struct {
 }
 
 type ObservedFlow struct {
-	observer *TrafficObserver
-	id       string
-	done     atomic.Bool
-	pathID   string
+	observer       *TrafficObserver
+	id             string
+	done           atomic.Bool
+	pathID         string
+	stage          string
+	transferFailed bool
 }
 
 func randomSessionID() string {
@@ -264,7 +277,7 @@ func (o *TrafficObserver) Begin(record FlowRecord) *ObservedFlow {
 		o.records[id] = &record
 		o.order = append(o.order, id)
 	}
-	return &ObservedFlow{observer: o, id: id}
+	return &ObservedFlow{observer: o, id: id, stage: "routing"}
 }
 
 func (f *ObservedFlow) ID() string { return f.id }
@@ -273,6 +286,7 @@ func (f *ObservedFlow) Stage(stage string) {
 	o := f.observer
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	f.stage = stage
 	if record := o.records[f.id]; record != nil && record.EndedAt == nil {
 		record.Stage, record.UpdatedAt = stage, o.now()
 	}
@@ -284,6 +298,7 @@ func (f *ObservedFlow) Decision(decision RoutingDecision, effective, realDestina
 	defer o.mu.Unlock()
 	if record := o.records[f.id]; record != nil && record.EndedAt == nil {
 		record.RuleID, record.RuleName, record.RuleSource, record.RuleOrder = decision.RuleID, decision.RuleName, decision.RuleSource, decision.RuleOrder
+		record.GeoIPVersion, record.GeoIPSHA256 = decision.GeoIPVersion, decision.GeoIPSHA256
 		record.ExpectedOutbound, record.AttemptedOutbound = decision.Outbound, effective
 		record.Protected = decision.Protected
 		record.Fallback = effective != "" && effective != decision.Outbound
@@ -291,6 +306,22 @@ func (f *ObservedFlow) Decision(decision RoutingDecision, effective, realDestina
 			record.EffectiveOutbound, record.Status = effective, "active"
 		}
 		record.RealDestination, record.UpdatedAt = realDestination, o.now()
+	}
+}
+
+func (f *ObservedFlow) Process(result processinfo.Result) {
+	o := f.observer
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if record := o.records[f.id]; record != nil {
+		record.ProcessStatus, record.ProcessReason, record.ProcessSource = result.Status, result.Reason, result.Source
+		record.ProcessPID, record.ProcessName, record.ProcessPath = result.PID, result.Name, result.Path
+		observed := result.ObservedAt
+		record.ProcessObservedAt = &observed
+		if !result.StartedAt.IsZero() {
+			started := result.StartedAt
+			record.ProcessStartedAt = &started
+		}
 	}
 }
 
@@ -347,6 +378,7 @@ func (f *ObservedFlow) TransferError(err error) {
 	o := f.observer
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	f.transferFailed = true
 	if record := o.records[f.id]; record != nil && record.Error == "" {
 		record.Error, record.ErrorKind = safeTrafficError(err), "transfer"
 	}
@@ -370,11 +402,14 @@ func (f *ObservedFlow) Finish(err error, stopping bool) {
 	} else if errors.Is(err, ErrUDPUnsupported) {
 		status, kind = "rejected", "unsupported"
 	} else if err != nil && !errors.Is(err, net.ErrClosed) {
-		if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+		if timeout, ok := err.(net.Error); ok && timeout.Timeout() && f.stage == "transfer" {
 			kind = "idle_timeout"
 		} else {
 			status, kind = "failed", "connection"
 		}
+	}
+	if err == nil && f.transferFailed && !stopping {
+		status, kind = "failed", "transfer"
 	}
 	pathID := f.pathID
 	if record := o.records[f.id]; record != nil {

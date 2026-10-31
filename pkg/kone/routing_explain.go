@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+
+	"github.com/xjdrew/kone/pkg/geoip"
 )
 
 func explainTarget(target, protocol string, port uint16) (any, string, uint16, error) {
@@ -32,9 +34,6 @@ func explainTarget(target, protocol string, port uint16) (any, string, uint16, e
 		return nil, "", 0, errors.New("a destination port is required for flow simulation")
 	}
 	if address, err := netip.ParseAddr(target); err == nil {
-		if !address.Unmap().Is4() {
-			return nil, "", 0, errors.New("IPv6 interception is not supported")
-		}
 		return address.Unmap(), protocol, port, nil
 	}
 	if strings.Contains(target, ":") || len(target) > 253 {
@@ -43,10 +42,13 @@ func explainTarget(target, protocol string, port uint16) (any, string, uint16, e
 	return normalizeDomain(target), protocol, port, nil
 }
 
-func explainWithRule(rule *Rule, outbounds *Outbounds, target, protocol string, port uint16) (RoutingDecision, error) {
+func explainWithRule(rule *Rule, outbounds *Outbounds, target, protocol string, port uint16, ipv6Enabled ...bool) (RoutingDecision, error) {
 	value, protocol, port, err := explainTarget(target, protocol, port)
 	if err != nil {
 		return RoutingDecision{}, err
+	}
+	if address, ok := value.(netip.Addr); ok && address.Is6() && (len(ipv6Enabled) == 0 || !ipv6Enabled[0]) {
+		return RoutingDecision{}, errors.New("IPv6 interception is not configured")
 	}
 	decision := rule.Decide(value, protocol, port)
 	decision.EffectiveOutbound = decision.Outbound
@@ -70,6 +72,10 @@ func explainWithRule(rule *Rule, outbounds *Outbounds, target, protocol string, 
 // It shares rule matching, endpoint protection and UDP capability decisions
 // with the actual flow handler; it never probes or resolves the target.
 func ExplainRouting(config *KoneConfig, target, protocol string, port uint16) (RoutingDecision, error) {
+	return ExplainRoutingWithGeoIP(config, geoip.Builtin(), target, protocol, port)
+}
+
+func ExplainRoutingWithGeoIP(config *KoneConfig, database *geoip.Database, target, protocol string, port uint16) (RoutingDecision, error) {
 	if config == nil {
 		return RoutingDecision{}, errors.New("config is nil")
 	}
@@ -80,9 +86,9 @@ func ExplainRouting(config *KoneConfig, target, protocol string, port uint16) (R
 	if err != nil {
 		return RoutingDecision{}, err
 	}
-	rule := NewRule(config.Rule, config.Outbounds)
+	rule := NewRuleWithGeoIP(config.Rule, config.Outbounds, database)
 	outbounds.bypassEndpoints(rule)
-	return explainWithRule(rule, outbounds, target, protocol, port)
+	return explainWithRule(rule, outbounds, target, protocol, port, config.Core.IPv6Network != "")
 }
 
 func (one *One) ExplainDecision(target, protocol string, port uint16) (RoutingDecision, error) {
@@ -90,7 +96,7 @@ func (one *One) ExplainDecision(target, protocol string, port uint16) (RoutingDe
 	if snapshot == nil {
 		return RoutingDecision{}, fmt.Errorf("engine policy is not initialized")
 	}
-	decision, err := explainWithRule(snapshot.rule, snapshot.outbounds, target, protocol, port)
-	decision.ConfigVersion = snapshot.version
+	decision, err := explainWithRule(snapshot.rule, snapshot.outbounds, target, protocol, port, snapshot.cfg.Core.IPv6Network != "")
+	decision.ConfigVersion = snapshot.configurationVersion()
 	return decision, err
 }

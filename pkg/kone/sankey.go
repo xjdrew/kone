@@ -51,6 +51,7 @@ type SankeyPath struct {
 }
 
 type SankeySnapshot struct {
+	Frozen        bool         `json:"frozen"`
 	SessionID     string       `json:"session_id"`
 	Timestamp     time.Time    `json:"timestamp"`
 	Scope         string       `json:"scope"`

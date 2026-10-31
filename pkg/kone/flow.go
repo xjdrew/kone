@@ -18,17 +18,19 @@ import (
 	"github.com/sagernet/sing/common/buf"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	processinfo "github.com/xjdrew/kone/pkg/process"
 )
 
 // flowHandler adapts transparent connections to KONE policy. Addresses belong
 // to the original LAN client, not to a desktop-only loopback listener.
 type flowHandler struct {
-	one      *One
-	mu       sync.Mutex
-	closed   bool
-	active   map[io.Closer]struct{}
-	workers  sync.WaitGroup
-	observer atomic.Pointer[TrafficObserver]
+	one       *One
+	mu        sync.Mutex
+	closed    bool
+	active    map[io.Closer]struct{}
+	workers   sync.WaitGroup
+	observer  atomic.Pointer[TrafficObserver]
+	processes *processinfo.Resolver
 }
 
 func (h *flowHandler) add(conn io.Closer, worker bool) bool {
@@ -65,7 +67,30 @@ func (h *flowHandler) close() {
 	for conn := range h.active {
 		closeFlow(conn)
 	}
+	processes := h.processes
 	h.mu.Unlock()
+	if processes != nil {
+		processes.Close()
+	}
+}
+
+func (h *flowHandler) attributeProcess(ctx context.Context, flow *ObservedFlow, protocol string, source, destination M.Socksaddr) {
+	if ctx.Err() != nil {
+		return
+	}
+	h.mu.Lock()
+	if h.closed {
+		h.mu.Unlock()
+		return
+	}
+	if h.processes == nil {
+		h.processes = processinfo.New(processinfo.Options{})
+	}
+	resolver := h.processes
+	h.mu.Unlock()
+	if !resolver.LookupAsync(ctx, processinfo.Query{Protocol: protocol, Source: source.AddrPort(), Destination: destination.AddrPort(), ObservedAt: time.Now()}, flow.Process) {
+		flow.Process(processinfo.Result{Status: "unknown", Reason: "process attribution queue is full or capture is stopping", Source: "bounded_process_queue", ObservedAt: time.Now()})
+	}
 }
 
 func (*flowHandler) JudgeFlow(uint8, netip.AddrPort, netip.AddrPort, []byte) singtun.FlowVerdict {
@@ -91,7 +116,7 @@ func (h *flowHandler) destination(ctx context.Context, s *runtimeSnapshot, desti
 func (h *flowHandler) resolveDestination(ctx context.Context, s *runtimeSnapshot, destination M.Socksaddr, udp bool, observation *ObservedFlow) (flowTarget, error) {
 	target := flowTarget{}
 	destination = destination.Unwrap()
-	if !destination.Addr.Is4() {
+	if !destination.Addr.Is4() && (!destination.Addr.Is6() || h.one.dnsTable6 == nil) {
 		return target, errors.New("IPv6 interception is not configured")
 	}
 	protocol := "tcp"
@@ -102,13 +127,14 @@ func (h *flowHandler) resolveDestination(ctx context.Context, s *runtimeSnapshot
 	target.decision = s.rule.Decide(ip, protocol, destination.Port)
 	host := destination.Addr.String()
 	var record *DomainRecord
-	if h.one.dnsTable.IsLocalIP(ip) {
-		record = h.one.dnsTable.GetByIP(ip)
+	table := h.one.tableForAddress(destination.Addr)
+	if table.IsLocalIP(ip) {
+		record = table.GetByIP(ip)
 		if record == nil {
 			return target, errors.New("unknown virtual address")
 		}
 		host = record.Hostname
-		target.release = h.one.dnsTable.Pin(host)
+		target.release = table.Pin(host)
 		target.decision = s.rule.DecideDNS(host, record.resolved, protocol, destination.Port)
 		if observation != nil {
 			observation.UpdateTarget(host, destination.Addr.String(), net.JoinHostPort(host, strconv.Itoa(int(destination.Port))))
@@ -143,12 +169,16 @@ func (h *flowHandler) resolveDestination(ctx context.Context, s *runtimeSnapshot
 			if observation != nil {
 				observation.Stage("dns")
 			}
-			msg, err := h.one.dns.ResolveContext(ctx, host)
+			kind := uint16(dns.TypeA)
+			if destination.Addr.Is6() {
+				kind = dns.TypeAAAA
+			}
+			msg, err := h.one.dns.ResolveTypeContext(ctx, host, kind)
 			if err != nil {
 				return target, err
 			}
 			record.SetRealIP(msg)
-			h.one.dnsTable.SetRealIP(host, msg)
+			table.SetRealIP(host, msg)
 			// A fresh resolution can reveal a CNAME/IP rule that was unknown
 			// when the Fake-IP was allocated. Apply the same snapshot again.
 			target.decision = s.rule.DecideDNS(record.Hostname, msg, protocol, destination.Port)
@@ -162,13 +192,13 @@ func (h *flowHandler) resolveDestination(ctx context.Context, s *runtimeSnapshot
 		}
 		if s.rule.OutboundType(target.outbound) == OutboundDirect {
 			if record.RealIP == nil {
-				return target, errors.New("domain has no IPv4 address")
+				return target, errors.New("domain has no address matching the captured IP family")
 			}
 			host = record.RealIP.String()
 		}
 	}
 	target.address = net.JoinHostPort(host, strconv.Itoa(int(destination.Port)))
-	if address, err := netip.ParseAddr(host); err == nil && address.Is4() {
+	if address, err := netip.ParseAddr(host); err == nil && address.IsValid() {
 		target.realDestination = target.address
 	}
 	return target, nil
@@ -184,7 +214,7 @@ func (h *flowHandler) stopping(ctx context.Context) bool {
 }
 
 func (h *flowHandler) startObservation(s *runtimeSnapshot, protocol string, source, destination M.Socksaddr) *ObservedFlow {
-	return h.one.TrafficObserver().Begin(FlowRecord{ConfigVersion: s.version, Inbound: "tun", Protocol: protocol, Source: source.String(), Destination: destination.String(), Target: destination.String(), DomainSource: "unknown", ProcessStatus: "unknown", ProcessReason: "process ownership not established"})
+	return h.one.TrafficObserver().Begin(FlowRecord{ConfigVersion: s.configurationVersion(), Inbound: "tun", Protocol: protocol, Source: source.String(), Destination: destination.String(), Target: destination.String(), DomainSource: "unknown", ProcessStatus: "unknown", ProcessReason: "process ownership not established"})
 }
 
 func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -205,6 +235,7 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 		return
 	}
 	defer h.workers.Done()
+	h.attributeProcess(ctx, observation, "tcp", source, destination)
 	defer func() { observation.Finish(result, h.stopping(ctx)) }()
 	defer h.remove(conn)
 	target, err := h.resolveDestination(ctx, s, destination, false, observation)
@@ -256,6 +287,7 @@ func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 		return
 	}
 	defer h.workers.Done()
+	h.attributeProcess(ctx, observation, "udp", source, destination)
 	defer func() { observation.Finish(result, h.stopping(ctx)) }()
 	defer h.remove(conn)
 	target, err := h.resolveDestination(ctx, s, destination, true, observation)
@@ -320,7 +352,10 @@ func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 		}
 	}
 	closeFlow(remote)
-	<-responses
+	responseErr := <-responses
+	if (result == nil || errors.Is(result, net.ErrClosed) || errors.Is(result, io.EOF)) && responseErr != nil && !errors.Is(responseErr, net.ErrClosed) {
+		result = responseErr
+	}
 }
 
 func (h *flowHandler) NewDNSPacket(payload []byte, source, _ M.Socksaddr, writer N.PacketWriter) {

@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/xjdrew/kone/pkg/geoip"
 	"github.com/xjdrew/kone/pkg/kone"
+	"github.com/xjdrew/kone/pkg/process"
 )
 
 type Engine interface {
@@ -22,6 +24,15 @@ type Engine interface {
 	SetTrafficObserver(*kone.TrafficObserver) error
 }
 type Factory func(*kone.KoneConfig) (Engine, error)
+
+// CaptureData is implemented by local and privilege-separated engines. A
+// transport error means unavailable data, never a successful empty snapshot.
+type CaptureData interface {
+	TrafficData(kone.TrafficQuery, kone.SankeyOptions) (kone.TrafficSnapshot, kone.SankeySnapshot, error)
+	FlowRecord(string) (kone.FlowRecord, bool, error)
+	DNSData() (kone.DNSRuntimeStatus, []kone.DNSQueryEvent, error)
+	ClearObservation() error
+}
 type Options struct {
 	Directory string
 	Version   string
@@ -35,8 +46,10 @@ type Controller struct {
 	actions                       sync.Mutex
 	directory, version            string
 	doc, confirmed                Document
+	previousConfirmed             Document
 	runningVersion                uint64
 	engine                        Engine
+	dataSource                    CaptureData
 	engineCancel                  context.CancelFunc
 	engineDone                    chan struct{}
 	state, lastError, configError string
@@ -101,7 +114,13 @@ func New(options Options) (*Controller, error) {
 		options.Now = time.Now
 	}
 	if options.Factory == nil {
-		options.Factory = func(cfg *kone.KoneConfig) (Engine, error) { return kone.FromConfig(cfg) }
+		options.Factory = func(cfg *kone.KoneConfig) (Engine, error) {
+			repository, err := geoip.OpenRepository(filepath.Join(options.Directory, "geoip"))
+			if err != nil {
+				return nil, errors.New("saved GeoIP data needs repair before capture can start")
+			}
+			return kone.FromConfig(cfg, kone.WithGeoIPDatabase(repository.Current()))
+		}
 	}
 	if options.Preflight == nil {
 		options.Preflight = kone.Preflight
@@ -132,6 +151,9 @@ func New(options Options) (*Controller, error) {
 	if confirmed, e := readDocument(c.confirmedPath()); e == nil {
 		c.confirmed = confirmed
 	}
+	if previous, e := readDocument(c.confirmedPath() + ".previous"); e == nil {
+		c.previousConfirmed = previous
+	}
 	if _, e := os.Stat(c.journalPath()); e == nil {
 		c.state = "recovery_required"
 		c.lastError = "The previous capture did not finish cleanly; inspect recovery before starting"
@@ -154,7 +176,7 @@ func (c *Controller) State() State {
 	if c.closed {
 		control = "stopped"
 	}
-	return State{control, c.state, c.state, c.version, c.doc.Version, c.runningVersion, c.confirmed.Version, c.lastError, c.configError, host, "Only traffic entering KONE; DNS, diagnostics and business traffic are separate", map[string]any{"inbounds": []string{"tun"}, "stacks": kone.SupportedStacks(), "tcp": true, "udp_direct": true, "udp_proxy": true, "proxy_udp_schemes": []string{"socks5", "ss"}, "ipv6": false, "process_attribution": false, "tls_lan": true, "persistent_config": true, "statistics": "business payload bytes", "temporary_rules": false}, c.now()}
+	return State{control, c.state, c.state, c.version, c.doc.Version, c.runningVersion, c.confirmed.Version, c.lastError, c.configError, host, "Only traffic entering KONE; DNS, diagnostics and business traffic are separate", map[string]any{"inbounds": []string{"tun"}, "stacks": kone.SupportedStacks(), "tcp": true, "udp_direct": true, "udp_proxy": true, "proxy_udp_schemes": []string{"socks5", "ss"}, "ipv6": kone.SupportsIPv6Capture(), "ipv6_enabled": c.doc.Config.Core.IPv6Network != "", "process_attribution": process.Supported(), "process_scope": "best effort for locally owned sockets; remote or unverified owners remain unknown", "tls_lan": true, "persistent_config": true, "statistics": "business payload bytes", "temporary_rules": false}, c.now()}
 }
 
 func (c *Controller) Document() map[string]any {
@@ -289,8 +311,16 @@ func (c *Controller) Start(ctx context.Context) error {
 		return c.startFailure(err, doc.Config)
 	}
 	runID := randomToken()
-	if one, ok := engine.(*kone.One); ok {
-		if err = one.SetCaptureRecorder(func(name string, index int) error { return c.recordRecoveryDevice(runID, name, index) }); err != nil {
+	if versioned, ok := engine.(interface{ SetConfigVersion(uint64) error }); ok {
+		if err = versioned.SetConfigVersion(doc.Version); err != nil {
+			engine.Close()
+			return c.startFailure(err, doc.Config)
+		}
+	}
+	if recorder, ok := engine.(interface {
+		SetCaptureRecorder(func(string, int) error) error
+	}); ok {
+		if err = recorder.SetCaptureRecorder(func(name string, index int) error { return c.recordRecoveryDevice(runID, name, index) }); err != nil {
 			engine.Close()
 			return c.startFailure(err, doc.Config)
 		}
@@ -304,6 +334,7 @@ func (c *Controller) Start(ctx context.Context) error {
 	result := make(chan error, 1)
 	c.mu.Lock()
 	c.engine = engine
+	c.dataSource, _ = engine.(CaptureData)
 	c.engineCancel = cancel
 	c.engineDone = done
 	c.observer = observer
@@ -334,7 +365,7 @@ func (c *Controller) Start(ctx context.Context) error {
 	}()
 	select {
 	case <-engine.Ready():
-		if err = writeDocument(c.confirmedPath(), doc); err != nil {
+		if err = c.confirm(doc); err != nil {
 			cancel()
 			engine.Close()
 			<-done
@@ -347,8 +378,12 @@ func (c *Controller) Start(ctx context.Context) error {
 		}
 		c.state = "running"
 		c.runningVersion = doc.Version
-		c.confirmed = doc
 		c.mu.Unlock()
+		if device, ok := engine.(interface{ CaptureDeviceIdentity() (string, int, bool) }); ok {
+			if name, _, known := device.CaptureDeviceIdentity(); known {
+				go c.watchCaptureNetwork(engineCtx, engine, name)
+			}
+		}
 		return nil
 	case err = <-result:
 		if err == nil {
@@ -365,6 +400,26 @@ func (c *Controller) Start(ctx context.Context) error {
 		engine.Close()
 		<-done
 		return c.startFailure(errors.New("capture startup timed out"), doc.Config)
+	}
+}
+
+func (c *Controller) watchCaptureNetwork(ctx context.Context, engine Engine, name string) {
+	for change := range WatchNetworkChanges(ctx, name, 5*time.Second) {
+		c.actions.Lock()
+		c.mu.Lock()
+		current := c.engine == engine
+		c.mu.Unlock()
+		if current {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			err := c.pauseLocked(stopCtx)
+			cancel()
+			if err == nil {
+				c.mu.Lock()
+				c.lastError = "Network context changed; capture was paused. Run preflight before enabling it again (" + change.Kind + ")"
+				c.mu.Unlock()
+			}
+		}
+		c.actions.Unlock()
 	}
 }
 func (c *Controller) startFailure(err error, cfg *kone.KoneConfig) error {
@@ -421,16 +476,42 @@ func (c *Controller) Apply(ctx context.Context) error {
 	if !doc.Inbound.Enabled {
 		return c.pauseLocked(ctx)
 	}
-	if err := engine.Reload(engineConfig(doc)); err != nil {
+	var err error
+	if versioned, ok := engine.(interface {
+		ReloadVersion(*kone.KoneConfig, uint64) error
+	}); ok {
+		err = versioned.ReloadVersion(engineConfig(doc), doc.Version)
+	} else {
+		err = engine.Reload(engineConfig(doc))
+	}
+	if err != nil {
 		return err
 	}
 	c.mu.Lock()
 	c.runningVersion = doc.Version
 	c.mu.Unlock()
-	if err := writeDocument(c.confirmedPath(), doc); err != nil {
+	if err := c.confirm(doc); err != nil {
 		return errors.New("runtime updated, but confirmation could not be saved")
 	}
+	return nil
+}
+
+func (c *Controller) confirm(doc Document) error {
 	c.mu.Lock()
+	previous := cloneDocument(c.confirmed)
+	c.mu.Unlock()
+	if previous.Config != nil && previous.Version != doc.Version {
+		if err := writeDocument(c.confirmedPath()+".previous", previous); err != nil {
+			return err
+		}
+	}
+	if err := writeDocument(c.confirmedPath(), doc); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	if previous.Config != nil && previous.Version != doc.Version {
+		c.previousConfirmed = previous
+	}
 	c.confirmed = doc
 	c.mu.Unlock()
 	return nil
@@ -439,6 +520,9 @@ func (c *Controller) Apply(ctx context.Context) error {
 func (c *Controller) Undo(base uint64) (map[string]any, error) {
 	c.mu.Lock()
 	confirmed := cloneDocument(c.confirmed)
+	if c.doc.Version == c.confirmed.Version && c.previousConfirmed.Config != nil {
+		confirmed = cloneDocument(c.previousConfirmed)
+	}
 	c.mu.Unlock()
 	if confirmed.Config == nil {
 		return nil, errors.New("no previously applied configuration is available")

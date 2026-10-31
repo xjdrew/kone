@@ -10,11 +10,16 @@
 - Enable authenticated HTTPS LAN access with expiring pairing codes and revocable sessions.
 - Support SOCKS5 UDP and Shadowsocks AEAD TCP/UDP outbounds.
 - Support DNS over TCP, truncated-response retry, private suffix resolvers and bounded query history.
+- Import verified GeoIP datasets and restore the previous version.
+- Show verified local process ownership where the operating system allows it.
+- Support optional IPv6 capture on Linux.
+- Request a separate Windows network helper when capture needs administrator permission.
 
 ## Bugfixes
 
 - Keep management available while capture is paused or fails to start.
 - Preserve active Fake-IP mappings and prevent private DNS fallback to public resolvers.
+- Pause capture when the physical network context changes.
 
 # 2026/10/31
 

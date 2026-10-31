@@ -101,8 +101,9 @@ func NewDomainKeywordPattern(proxy string, key string) Pattern {
 
 // GEOIP
 type GEOIPPattern struct {
-	proxy   string
-	country string
+	proxy    string
+	country  string
+	database *geoip.Database
 }
 
 func (p GEOIPPattern) Proxy() string {
@@ -111,22 +112,30 @@ func (p GEOIPPattern) Proxy() string {
 
 func (p GEOIPPattern) Match(val interface{}) bool {
 	var country string
+	database := p.database
+	if database == nil {
+		database = geoip.Builtin()
+	}
 	switch ip := val.(type) {
 	case netip.Addr:
-		if ip.Unmap().Is4() {
-			country = geoip.QueryCountryByIP(net.IP(ip.AsSlice()))
-		}
+		country = database.Country(ip)
 	case net.IP:
-		country = geoip.QueryCountryByIP(ip)
+		address, _ := netip.AddrFromSlice(ip)
+		country = database.Country(address)
 	}
 
 	return p.country == country
 }
 
 func NewGEOIPPattern(proxy string, country string) Pattern {
+	return NewGEOIPPatternWithDatabase(proxy, country, geoip.Builtin())
+}
+
+func NewGEOIPPatternWithDatabase(proxy string, country string, database *geoip.Database) Pattern {
 	return GEOIPPattern{
-		proxy:   proxy,
-		country: country,
+		proxy:    proxy,
+		country:  country,
+		database: database,
 	}
 }
 
@@ -191,6 +200,11 @@ func CreatePattern(rc RuleConfig) Pattern {
 	case "IP-CIDR":
 		prefix, err := netip.ParsePrefix(pattern)
 		if err == nil && prefix.Addr().Is4() {
+			return NewIPCIDRPattern(proxy, prefix)
+		}
+	case "IP-CIDR6":
+		prefix, err := netip.ParsePrefix(pattern)
+		if err == nil && prefix.Addr().Is6() && !prefix.Addr().Is4In6() {
 			return NewIPCIDRPattern(proxy, prefix)
 		}
 	case "GEOIP":

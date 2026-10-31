@@ -14,6 +14,8 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+
+	"github.com/xjdrew/kone/pkg/geoip"
 )
 
 // CaptureOutbound is a DNS-only policy: reserve a Fake-IP so the subsequent
@@ -22,6 +24,8 @@ const CaptureOutbound = "@capture"
 
 type RoutingDecision struct {
 	ConfigVersion     uint64 `json:"config_version"`
+	GeoIPVersion      string `json:"geoip_version"`
+	GeoIPSHA256       string `json:"geoip_sha256"`
 	RuleID            string `json:"rule_id"`
 	RuleName          string `json:"rule_name"`
 	RuleSource        string `json:"rule_source"`
@@ -55,6 +59,7 @@ type Rule struct {
 	patterns      []Pattern
 	outbounds     map[string]OutboundType
 	decisions     []decisionRule
+	geoIP         *geoip.Database
 }
 
 // Built-in and configured targets share the same immutable routing registry.
@@ -77,7 +82,13 @@ func (rule *Rule) Proxy(val interface{}) string {
 
 // Decide is shared by simulation and the data plane. Empty protocol denotes
 // a DNS envelope, not a TCP/UDP business connection.
-func (rule *Rule) Decide(val any, protocol string, port uint16) RoutingDecision {
+func (rule *Rule) Decide(val any, protocol string, port uint16) (decision RoutingDecision) {
+	defer func() {
+		if rule.geoIP != nil {
+			metadata := rule.geoIP.Metadata()
+			decision.GeoIPVersion, decision.GeoIPSHA256 = metadata.Version, metadata.SHA256
+		}
+	}()
 	protocol = strings.ToLower(protocol)
 	var endpoint string
 	switch value := val.(type) {
@@ -151,6 +162,8 @@ func (rule *Rule) DecideDNS(domain string, msg *dns.Msg, protocol string, port u
 		switch value := answer.(type) {
 		case *dns.A:
 			decision = rule.Decide(value.A, protocol, port)
+		case *dns.AAAA:
+			decision = rule.Decide(value.AAAA, protocol, port)
 		case *dns.CNAME:
 			decision = rule.Decide(normalizeDomain(value.Target), protocol, port)
 		default:
@@ -164,9 +177,17 @@ func (rule *Rule) DecideDNS(domain string, msg *dns.Msg, protocol string, port u
 }
 
 func NewRule(rcs []RuleConfig, outbounds []OutboundConfig) *Rule {
+	return NewRuleWithGeoIP(rcs, outbounds, geoip.Builtin())
+}
+
+func NewRuleWithGeoIP(rcs []RuleConfig, outbounds []OutboundConfig, database *geoip.Database) *Rule {
+	if database == nil {
+		database = geoip.Builtin()
+	}
 	rule := &Rule{
 		directDomains: map[string]bool{},
 		outbounds:     map[string]OutboundType{},
+		geoIP:         database,
 	}
 	for _, o := range outbounds {
 		rule.outbounds[o.Name] = OutboundProxy
@@ -177,7 +198,11 @@ func NewRule(rcs []RuleConfig, outbounds []OutboundConfig) *Rule {
 
 	duplicates := map[string]int{}
 	for index, rc := range rcs {
-		if pattern := CreatePattern(rc); pattern != nil {
+		pattern := CreatePattern(rc)
+		if strings.EqualFold(rc.Schema, "GEOIP") {
+			pattern = NewGEOIPPatternWithDatabase(rc.Outbound, rc.Pattern, database)
+		}
+		if pattern != nil {
 			rule.patterns = append(rule.patterns, pattern)
 			id := rc.ID
 			if id == "" {

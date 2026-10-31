@@ -39,6 +39,8 @@ type CoreConfig struct {
 	AutoRoute         bool   `toml:"auto-route"`
 	OutboundInterface string `toml:"outbound-interface"`
 	Network           string `toml:"network"`
+	IPv6Network       string `toml:"ipv6-network"`
+	AutoRoute6        bool   `toml:"auto-route6"`
 }
 
 type DNSConfig struct {
@@ -310,6 +312,16 @@ func (cfg *KoneConfig) Validate() error {
 	if !prefix.Contains(prefix.Addr().Next()) || prefix.Addr().Next() == broadcastAddress(prefix) {
 		return errors.New("core.network must leave one additional host address for the TUN stack")
 	}
+	prefix6 := netip.Prefix{}
+	if cfg.Core.IPv6Network != "" {
+		prefix6, err = netip.ParsePrefix(cfg.Core.IPv6Network)
+		if err != nil || !prefix6.Addr().Is6() || prefix6.Addr().Is4In6() || !prefix6.Addr().IsPrivate() || prefix6.Bits() < 64 || prefix6.Bits() > 120 || prefix6.Addr() == prefix6.Masked().Addr() || !prefix6.Contains(prefix6.Addr().Next()) {
+			return errors.New("core.ipv6-network requires a ULA IPv6 host/prefix of length 64..120 with room for the next stack address")
+		}
+	}
+	if cfg.Core.AutoRoute6 && (!prefix6.IsValid() || cfg.Core.OutboundInterface == "") {
+		return errors.New("core.auto-route6 requires core.ipv6-network and core.outbound-interface")
+	}
 	if strings.ContainsAny(cfg.Core.Tun, "\x00\r\n\t\"' ") {
 		return errors.New("core.tun contains unsupported characters")
 	}
@@ -368,7 +380,7 @@ func (cfg *KoneConfig) Validate() error {
 		}
 		host, _, _ := net.SplitHostPort(normalized)
 		ip, _ := netip.ParseAddr(host)
-		if ip.IsUnspecified() || ip.IsMulticast() || prefix.Contains(ip) {
+		if ip.IsUnspecified() || ip.IsMulticast() || prefix.Contains(ip) || prefix6.IsValid() && prefix6.Contains(ip) {
 			return fmt.Errorf("dns.servers[%d] is invalid or routed into the virtual network", i+1)
 		}
 	}
@@ -386,7 +398,7 @@ func (cfg *KoneConfig) Validate() error {
 			}
 			host, _, _ := net.SplitHostPort(normalized)
 			ip, _ := netip.ParseAddr(host)
-			if ip.IsUnspecified() || ip.IsMulticast() || prefix.Contains(ip) {
+			if ip.IsUnspecified() || ip.IsMulticast() || prefix.Contains(ip) || prefix6.IsValid() && prefix6.Contains(ip) {
 				return fmt.Errorf("dns.rules[%d].servers[%d] is invalid or routed into the virtual network", i+1, j+1)
 			}
 		}
@@ -435,7 +447,16 @@ func (cfg *KoneConfig) Validate() error {
 				return fail("a default capture route requires core.outbound-interface; prefer core.auto-route")
 			}
 		case "IP-CIDR6":
-			return fail("IPv6 interception is not supported yet")
+			p, err := netip.ParsePrefix(r.Pattern)
+			if err != nil || !p.Addr().Is6() || p.Addr().Is4In6() {
+				return fail("IP-CIDR6 requires an IPv6 prefix")
+			}
+			if !prefix6.IsValid() {
+				return fail("IPv6 interception is not supported without core.ipv6-network")
+			}
+			if p.Bits() == 0 && types[r.Outbound] != OutboundDirect && cfg.Core.OutboundInterface == "" {
+				return fail("an IPv6 default capture route requires core.outbound-interface")
+			}
 		case "GEOIP":
 			if len(r.Pattern) != 2 || r.Pattern[0] < 'A' || r.Pattern[0] > 'Z' || r.Pattern[1] < 'A' || r.Pattern[1] > 'Z' {
 				return fail("GEOIP requires a two-letter uppercase country code")

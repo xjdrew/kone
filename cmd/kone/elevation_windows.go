@@ -21,6 +21,7 @@ type elevationRequest struct {
 	executable string
 	directory  string
 	args       []string
+	hidden     bool
 }
 
 func elevateForWindows(ctx context.Context, config string, debug bool, output io.Writer) (bool, error) {
@@ -143,6 +144,9 @@ func executeElevation(request elevationRequest, execute func(*shellExecuteInfo) 
 	// request a process handle: the visible elevated window owns its lifecycle.
 	info.mask = seeMaskNoAsync
 	info.show = windows.SW_SHOWNORMAL
+	if request.hidden {
+		info.show = windows.SW_HIDE
+	}
 	if info.verb, err = windows.UTF16PtrFromString("runas"); err != nil {
 		return err
 	}

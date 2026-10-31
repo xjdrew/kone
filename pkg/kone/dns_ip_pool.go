@@ -17,12 +17,21 @@ type DnsIPPool struct {
 
 func (pool *DnsIPPool) index(ip netip.Addr) (uint32, bool) {
 	ip = ip.Unmap()
-	if !ip.Is4() || !pool.base.IsValid() || ip.Compare(pool.base) < 0 {
+	if !ip.IsValid() || !pool.base.IsValid() || ip.Is4() != pool.base.Is4() || ip.Compare(pool.base) < 0 {
 		return 0, false
 	}
-	raw, base := ip.As4(), pool.base.As4()
-	index := binary.BigEndian.Uint32(raw[:]) - binary.BigEndian.Uint32(base[:])
-	return index, uint64(index) < uint64(len(pool.flags))
+	var index uint64
+	if ip.Is4() {
+		raw, base := ip.As4(), pool.base.As4()
+		index = uint64(binary.BigEndian.Uint32(raw[:]) - binary.BigEndian.Uint32(base[:]))
+	} else {
+		raw, base := ip.As16(), pool.base.As16()
+		if binary.BigEndian.Uint64(raw[:8]) != binary.BigEndian.Uint64(base[:8]) {
+			return 0, false
+		}
+		index = binary.BigEndian.Uint64(raw[8:]) - binary.BigEndian.Uint64(base[8:])
+	}
+	return uint32(index), index < uint64(len(pool.flags))
 }
 
 func (pool *DnsIPPool) reserve(ip netip.Addr) {
@@ -59,18 +68,28 @@ func (pool *DnsIPPool) Alloc(hint string) netip.Addr {
 		}
 	}
 	pool.flags[index] = true
-	raw := pool.base.As4()
-	binary.BigEndian.PutUint32(raw[:], binary.BigEndian.Uint32(raw[:])+uint32(index))
-	return netip.AddrFrom4(raw)
+	if pool.base.Is4() {
+		raw := pool.base.As4()
+		binary.BigEndian.PutUint32(raw[:], binary.BigEndian.Uint32(raw[:])+uint32(index))
+		return netip.AddrFrom4(raw)
+	}
+	raw := pool.base.As16()
+	binary.BigEndian.PutUint64(raw[8:], binary.BigEndian.Uint64(raw[8:])+uint64(index))
+	return netip.AddrFrom16(raw)
 }
 
 func NewDnsIPPool(prefix netip.Prefix) *DnsIPPool {
 	pool := new(DnsIPPool)
-	if !prefix.IsValid() || !prefix.Addr().Is4() || prefix.Bits() > 30 {
+	if !prefix.IsValid() || prefix.Addr().Is4() && prefix.Bits() > 30 || prefix.Addr().Is6() && (!prefix.Addr().IsPrivate() || prefix.Bits() < 64 || prefix.Bits() > 120) {
 		return pool
 	}
 	pool.base = prefix.Masked().Addr().Next()
-	space := (uint64(1) << (32 - prefix.Bits())) - 2
+	space := uint64(DnsIPPoolMaxSpace)
+	if prefix.Addr().Is4() {
+		space = (uint64(1) << (32 - prefix.Bits())) - 2
+	} else if 128-prefix.Bits() < 18 {
+		space = (uint64(1) << (128 - prefix.Bits())) - 1
+	}
 	if space > DnsIPPoolMaxSpace {
 		space = DnsIPPoolMaxSpace
 	}

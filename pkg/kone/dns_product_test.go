@@ -147,14 +147,19 @@ func TestDNSExclusiveSuffixRoutesAndPositiveAnswers(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, dns.RcodeSuccess, response.Rcode)
 	// A failed exclusive resolver never falls back to the default set.
+	var fallbackQueries atomic.Int32
+	fallbackHandler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		fallbackQueries.Add(1)
+		replyA(w, r, "192.0.2.1")
+	})
+	one.dns.nameservers = []string{startDNSListeners(t, fallbackHandler, fallbackHandler)}
 	one.dns.routes[0].Servers = []string{"127.0.0.1:1"}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	request.SetQuestion("missing.corp.", dns.TypeA)
-	before := publicQueries.Load()
 	_, err = one.dns.resolve(ctx, request)
 	require.Error(t, err)
-	require.Equal(t, before, publicQueries.Load())
+	require.Zero(t, fallbackQueries.Load())
 }
 
 func TestDNSResponseCacheAndQueryHistory(t *testing.T) {

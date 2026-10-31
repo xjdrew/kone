@@ -38,21 +38,26 @@ type Dns struct {
 	history     *dnsHistory
 	cache       *dnsResponseCache
 	pending     chan struct{}
+	ipv6        *ipv6DNSServers
 }
 
 func (d *Dns) Resolve(domain string) (*dns.Msg, error) {
 	return d.ResolveContext(context.Background(), domain)
 }
 func (d *Dns) ResolveContext(ctx context.Context, domain string) (*dns.Msg, error) {
+	return d.ResolveTypeContext(ctx, domain, dns.TypeA)
+}
+
+func (d *Dns) ResolveTypeContext(ctx context.Context, domain string, kind uint16) (*dns.Msg, error) {
 	r := new(dns.Msg)
-	r.SetQuestion(dns.Fqdn(domain), dns.TypeA)
+	r.SetQuestion(dns.Fqdn(domain), kind)
 	meta := &dnsQueryMeta{}
 	start := time.Now()
 	msg, err := d.resolve(context.WithValue(ctx, dnsMetaKey{}, meta), r)
 	version := uint64(0)
 	if d.one != nil {
 		if s := d.one.policy.Load(); s != nil {
-			version = s.version
+			version = s.configurationVersion()
 		}
 	}
 	d.recordQuery(r, msg, err, "control", "", version, start, meta)
@@ -193,10 +198,17 @@ func (d *Dns) doIPv4Query(r *dns.Msg) (*dns.Msg, error) {
 }
 func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.Msg, error) {
 	domain := normalizeDomain(r.Question[0].Name)
-	if d.one.dnsTable.IsNonProxyDomain(domain, s.version) {
+	table := d.one.dnsTable
+	if r.Question[0].Qtype == dns.TypeAAAA {
+		table = d.one.dnsTable6
+	}
+	if table == nil {
 		return d.resolve(ctx, r)
 	}
-	record := d.one.dnsTable.Get(domain)
+	if table.IsNonProxyDomain(domain, s.version) {
+		return d.resolve(ctx, r)
+	}
+	record := table.Get(domain)
 	policy := s.rule.Proxy(domain)
 	if record != nil {
 		policy = s.rule.ProxyDNS(domain, record.resolved)
@@ -208,7 +220,7 @@ func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.M
 	}
 	if s.rule.OutboundType(policy) != OutboundDirect {
 		if record == nil {
-			record = d.one.dnsTable.Set(domain, policy)
+			record = table.Set(domain, policy)
 		}
 		if record == nil {
 			return nil, errors.New("virtual IP pool exhausted")
@@ -233,18 +245,18 @@ func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.M
 		return reply, nil
 	}
 	if s.rule.OutboundType(policy) != OutboundDirect {
-		record = d.one.dnsTable.Set(domain, policy)
+		record = table.Set(domain, policy)
 		if record == nil {
 			return nil, errors.New("virtual IP pool exhausted")
 		}
-		d.one.dnsTable.SetRealIP(domain, msg)
+		table.SetRealIP(domain, msg)
 		if meta, _ := ctx.Value(dnsMetaKey{}).(*dnsQueryMeta); meta != nil {
 			meta.Virtual = []string{record.IP.String()}
 			meta.Real = dnsAddresses(msg)
 		}
 		return record.Answer(r), nil
 	}
-	d.one.dnsTable.SetNonProxyDomain(domain, msg.Answer[0].Header().Ttl, s.version)
+	table.SetNonProxyDomain(domain, msg.Answer[0].Header().Ttl, s.version)
 	return msg, nil
 }
 
@@ -260,12 +272,12 @@ func (d *Dns) HandleQuery(ctx context.Context, r *dns.Msg, transport, source str
 	ctx = context.WithValue(ctx, dnsMetaKey{}, meta)
 	var msg *dns.Msg
 	var err error
-	if r.Question[0].Qclass == dns.ClassINET && r.Question[0].Qtype == dns.TypeA {
+	if r.Question[0].Qclass == dns.ClassINET && (r.Question[0].Qtype == dns.TypeA || r.Question[0].Qtype == dns.TypeAAAA && d.one.dnsTable6 != nil) {
 		msg, err = d.query(ctx, s, r)
 	} else {
 		msg, err = d.resolve(ctx, r)
 	}
-	d.recordQuery(r, msg, err, transport, source, s.version, start, meta)
+	d.recordQuery(r, msg, err, transport, source, s.configurationVersion(), start, meta)
 	return msg, err
 }
 
@@ -308,6 +320,7 @@ func NewDns(one *One, cfg DNSConfig) (*Dns, error) {
 		return &dns.Server{Net: network, Addr: addr, Handler: d, UDPSize: int(cfg.PacketSize), ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
 	}
 	d.server, d.tcpServer = makeServer("udp"), makeServer("tcp")
+	d.ipv6 = d.ipv6Servers(cfg)
 	client := dns.Client{UDPSize: cfg.PacketSize, Timeout: time.Duration(cfg.ReadTimeout+cfg.WriteTimeout) * time.Second, ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
 	udpClient, tcpClient := client, client
 	udpClient.Net, tcpClient.Net = "udp", "tcp"

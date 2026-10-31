@@ -35,8 +35,11 @@ func TestQuery(t *testing.T) {
 }
 
 func BenchmarkQuery(b *testing.B) {
-	var i uint32 = 1
-	for ; i < 1000000; i++ {
-		QueryCountry(i)
+	b.ReportAllocs()
+	addresses := []uint32{0x01000000, 0x08080808, 0x72727272, 0xffffffff}
+	for i := 0; i < b.N; i++ {
+		benchmarkCountry = QueryCountry(addresses[i%len(addresses)])
 	}
 }
+
+var benchmarkCountry string

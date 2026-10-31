@@ -13,14 +13,27 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/xjdrew/kone/pkg/geoip"
 )
 
 type runtimeSnapshot struct {
-	version   uint64
-	cfg       *KoneConfig
-	rule      *Rule
-	outbounds *Outbounds
+	version       uint64
+	configVersion uint64
+	cfg           *KoneConfig
+	rule          *Rule
+	outbounds     *Outbounds
+	geoIP         *geoip.Database
+	previousGeoIP *geoip.Database
 }
+
+func (s *runtimeSnapshot) configurationVersion() uint64 {
+	if s.configVersion != 0 {
+		return s.configVersion
+	}
+	return s.version
+}
+
 type ConfigSnapshot struct {
 	Version uint64
 	Config  *KoneConfig
@@ -43,10 +56,12 @@ type One struct {
 	stackFactory    stackFactory
 	flows           *flowHandler
 	dnsTable        *DnsTable
+	dnsTable6       *DnsTable
 	dns             *Dns
 	manager         *Manager
 	captureRecorder func(string, int) error
 	captureIdentity captureDeviceIdentity
+	initialGeoIP    *geoip.Database
 }
 
 type Option func(*One) error
@@ -105,7 +120,7 @@ func (one *One) Ready() <-chan struct{} { return one.ready }
 
 func (one *One) DNSSnapshot() (uint64, map[string]*DomainRecord) {
 	s := one.policy.Load()
-	records := one.dnsTable.Snapshot()
+	records := one.domainRecords()
 	for _, record := range records {
 		record.Proxy = s.rule.ProxyDNS(record.Hostname, record.resolved)
 	}
@@ -116,6 +131,9 @@ func (one *One) DNSSnapshot() (uint64, map[string]*DomainRecord) {
 // Run owns every resource acquired during startup and always releases it.
 func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	if err := validateIPv6Platform(cfg.Core); err != nil {
 		return nil, err
 	}
 	cfg = cloneConfig(cfg)
@@ -145,14 +163,19 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	}
 	p.dial = dialer.DialContext
 	one.flows = &flowHandler{one: one}
-	rule := NewRule(cfg.Rule, cfg.Outbounds)
+	database := one.initialGeoIP
+	if database == nil {
+		database = geoip.Builtin()
+	}
+	rule := NewRuleWithGeoIP(cfg.Rule, cfg.Outbounds, database)
 	p.bypassEndpoints(rule)
-	one.policy.Store(&runtimeSnapshot{version: 1, cfg: cfg, rule: rule, outbounds: p})
+	one.policy.Store(&runtimeSnapshot{version: 1, cfg: cfg, rule: rule, outbounds: p, geoIP: database})
 	one.dnsTable = NewDnsTable(ip, subnet)
 	// The system TCP forwarder uses the address after the TUN address.
 	next := netip.MustParseAddr(ip.String()).Next()
 	one.dnsTable.ipPool.reserve(next)
 	one.dnsTable.ttl = uint32(cfg.DNS.TTL)
+	one.initIPv6(cfg.Core)
 	if one.dns, err = NewDns(one, dnsCfg); err != nil {
 		return nil, err
 	}
@@ -164,6 +187,12 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 // Reload publishes a complete, immutable rule/proxy/config generation. Each
 // request/flow retains its loaded generation even if another reload succeeds.
 func (one *One) Reload(cfg *KoneConfig) error {
+	return one.ReloadVersion(cfg, 0)
+}
+
+// ReloadVersion atomically associates a managed configuration revision with
+// its new policy. The internal generation still changes for cache invalidation.
+func (one *One) ReloadVersion(cfg *KoneConfig, revision uint64) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -185,7 +214,7 @@ func (one *One) Reload(cfg *KoneConfig) error {
 		var result []routeRule
 		types, _ := validateOutbounds(config.Outbounds)
 		for _, r := range config.Rule {
-			if strings.EqualFold(r.Schema, "IP-CIDR") {
+			if strings.EqualFold(r.Schema, "IP-CIDR") || strings.EqualFold(r.Schema, "IP-CIDR6") {
 				result = append(result, routeRule{r, types[r.Outbound]})
 			}
 		}
@@ -199,10 +228,10 @@ func (one *One) Reload(cfg *KoneConfig) error {
 		return err
 	}
 	p.dial = old.outbounds.dial
-	rule := NewRule(cfg.Rule, cfg.Outbounds)
+	rule := NewRuleWithGeoIP(cfg.Rule, cfg.Outbounds, old.geoIP)
 	p.bypassEndpoints(rule)
-	one.policy.Store(&runtimeSnapshot{version: old.version + 1, cfg: cfg, rule: rule, outbounds: p})
-	one.dnsTable.ClearNonProxyDomain()
+	one.policy.Store(&runtimeSnapshot{version: old.version + 1, configVersion: revision, cfg: cfg, rule: rule, outbounds: p, geoIP: old.geoIP, previousGeoIP: old.previousGeoIP})
+	one.clearDirectDNSCaches()
 	return nil
 }
 
@@ -210,14 +239,21 @@ func (one *One) Reload(cfg *KoneConfig) error {
 // also used for startup interruption; cleanup has an independent timeout.
 func (one *One) Close() error {
 	one.mu.Lock()
+	closeUnstarted := false
 	if !one.started && !one.closed {
 		one.closed = true
-		close(one.done)
+		closeUnstarted = true
 	}
 	if one.cancel != nil {
 		one.cancel()
 	}
 	one.mu.Unlock()
+	if closeUnstarted {
+		if one.flows != nil {
+			one.flows.close()
+		}
+		close(one.done)
+	}
 	<-one.done
 	one.mu.Lock()
 	defer one.mu.Unlock()
@@ -244,7 +280,7 @@ func (one *One) Run(parent context.Context) (result error) {
 	var manager net.Listener
 	var stack packetStack
 	var wg sync.WaitGroup
-	errorsCh := make(chan error, 6)
+	errorsCh := make(chan error, 12)
 	defer func() {
 		if ctx.Err() != nil && (errors.Is(result, context.Canceled) || errors.Is(result, context.DeadlineExceeded)) {
 			result = nil
@@ -269,6 +305,7 @@ func (one *One) Run(parent context.Context) (result error) {
 		if dnsTCP != nil {
 			cleanup = append(cleanup, dnsTCP.Close())
 		}
+		cleanup = append(cleanup, one.dns.stopIPv6DNS(cleanupCtx))
 		if !isNilInterface(stack) {
 			cleanup = append(cleanup, stack.Close())
 		}
@@ -347,6 +384,9 @@ func (one *One) Run(parent context.Context) (result error) {
 		return fmt.Errorf("DNS TCP listener: %w", err)
 	}
 	dnsTCP = &ownedListener{Listener: dnsTCP}
+	if err := one.dns.openIPv6Listeners(ctx, lc); err != nil {
+		return err
+	}
 	if one.manager != nil {
 		if manager, err = lc.Listen(ctx, "tcp", one.manager.listen); err != nil {
 			return fmt.Errorf("manager listener: %w", err)
@@ -367,7 +407,7 @@ func (one *One) Run(parent context.Context) (result error) {
 		}
 	}
 	for _, pattern := range one.policy.Load().rule.patterns {
-		if p, ok := pattern.(IPCIDRPattern); ok && one.policy.Load().rule.OutboundType(p.Proxy()) != OutboundDirect && !seen[p.prefix.String()] {
+		if p, ok := pattern.(IPCIDRPattern); ok && p.prefix.Addr().Is4() && one.policy.Load().rule.OutboundType(p.Proxy()) != OutboundDirect && !seen[p.prefix.String()] {
 			_, subnet, _ := net.ParseCIDR(p.prefix.String())
 			routes := []*net.IPNet{subnet}
 			if p.prefix.Bits() == 0 {
@@ -390,6 +430,9 @@ func (one *One) Run(parent context.Context) (result error) {
 			}
 			seen[p.prefix.String()] = true
 		}
+	}
+	if err := one.addIPv6Routes(ctx, device, cfg.Core, &undo); err != nil {
+		return err
 	}
 	if ctx.Err() != nil {
 		return nil
@@ -429,6 +472,9 @@ func (one *One) Run(parent context.Context) (result error) {
 		return err
 	case <-ctx.Done():
 		return nil
+	}
+	if err := one.dns.startIPv6DNS(ctx, start, errorsCh); err != nil {
+		return err
 	}
 	start("DNS cache", func() error { return one.dns.Maintain(ctx) })
 	if one.manager != nil {

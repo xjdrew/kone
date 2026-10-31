@@ -97,6 +97,10 @@ func probeTarget(ctx context.Context, cfg *kone.KoneConfig, outbound, target str
 
 func (c *Controller) beginOperation(kind, key string, timeout time.Duration, fn func(context.Context) (any, error)) Operation {
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return Operation{Kind: kind, Status: "failed", Error: "Application is stopping"}
+	}
 	if key != "" {
 		if id, ok := c.requestKeys[kind+":"+key]; ok {
 			if existing := c.operations[id]; existing != nil {

@@ -73,6 +73,10 @@ func Preflight(ctx context.Context, cfg *KoneConfig) PreflightReport {
 		add("configuration", err.Error())
 		return r
 	}
+	if err := validateIPv6Platform(cfg.Core); err != nil {
+		add("ipv6_platform", err.Error())
+		return r
+	}
 	if err := checkNetworkPrivileges(); err != nil {
 		add("privileges", err.Error())
 	}
@@ -87,6 +91,7 @@ func Preflight(ctx context.Context, cfg *KoneConfig) PreflightReport {
 		}
 	}
 	prefix, _ := netip.ParsePrefix(cfg.Core.Network)
+	prefix6, _ := netip.ParsePrefix(cfg.Core.IPv6Network)
 	addresses, err := net.InterfaceAddrs()
 	if err != nil {
 		add("interfaces", "Cannot inspect local interface addresses")
@@ -97,12 +102,24 @@ func Preflight(ctx context.Context, cfg *KoneConfig) PreflightReport {
 				add("network_overlap", "The TUN network overlaps an existing interface")
 				break
 			}
+			if e == nil && prefix6.IsValid() && p.Addr().Is6() && (p.Contains(prefix6.Addr()) || prefix6.Contains(p.Addr())) {
+				add("ipv6_network_overlap", "The IPv6 TUN network overlaps an existing interface")
+				break
+			}
 		}
 	}
 	r.Changes = append(r.Changes, "Create an owned TUN device and DNS listeners for "+cfg.Core.Network)
 	if cfg.Core.AutoRoute {
 		r.Changes = append(r.Changes, "Capture IPv4 through two /1 routes; retain existing more-specific and default routes")
 	}
-	r.Issues = append(r.Issues, PreflightIssue{"dns_scope", "info", "DNS covers clients configured to use KONE; encrypted DNS and IPv6 traffic can bypass capture"})
+	if cfg.Core.IPv6Network != "" {
+		r.Changes = append(r.Changes, "Create owned IPv6 addresses and UDP/TCP DNS listeners for "+cfg.Core.IPv6Network)
+		if cfg.Core.AutoRoute6 {
+			r.Changes = append(r.Changes, "Capture IPv6 through two /1 routes while retaining more-specific and default routes")
+		}
+		r.Issues = append(r.Issues, PreflightIssue{"dns_scope", "info", "DNS covers clients configured to use KONE; encrypted DNS can bypass domain interception"})
+	} else {
+		r.Issues = append(r.Issues, PreflightIssue{"dns_scope", "info", "DNS covers clients configured to use KONE; encrypted DNS and IPv6 traffic can bypass capture"})
+	}
 	return r
 }

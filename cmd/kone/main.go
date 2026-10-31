@@ -9,10 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 
 	"github.com/xjdrew/kone/pkg/control"
+	"github.com/xjdrew/kone/pkg/desktop"
+	"github.com/xjdrew/kone/pkg/geoip"
 	"github.com/xjdrew/kone/pkg/kone"
 )
 
@@ -40,6 +43,8 @@ func runContextWithElevation(ctx context.Context, args []string, stdout, stderr 
 	directory := flags.String("data-dir", "", "Management profile directory (defaults to the user configuration directory)")
 	listen := flags.String("listen", "127.0.0.1:9200", "Management loopback IP and port")
 	noBrowser := flags.Bool("no-browser", false, "Print the management URL without opening a browser")
+	helperPipe := flags.String("network-helper", "", "Internal authenticated network helper pipe")
+	helperParent := flags.Uint64("parent-pid", 0, "Internal network helper parent identity")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -49,6 +54,21 @@ func runContextWithElevation(ctx context.Context, args []string, stdout, stderr 
 	if *version {
 		fmt.Fprintf(stdout, "Version: %s\n", VERSION)
 		return 0
+	}
+	if *helperPipe != "" {
+		if *helperParent == 0 || *helperParent > uint64(^uint32(0)) {
+			fmt.Fprintln(stderr, "Invalid network helper parent identity")
+			return 2
+		}
+		if err := desktop.RunNetworkHelper(ctx, *helperPipe, uint32(*helperParent)); err != nil {
+			fmt.Fprintln(stderr, "Network helper failed:", err)
+			return 3
+		}
+		return 0
+	}
+	if *helperParent != 0 {
+		fmt.Fprintln(stderr, "Network helper identity requires a helper pipe")
+		return 2
 	}
 	if flags.NArg() > 1 {
 		fmt.Fprintln(stderr, "expected at most one configuration filename")
@@ -76,7 +96,40 @@ func runContextWithElevation(ctx context.Context, args []string, stdout, stderr 
 		if ctx.Err() != nil {
 			return 0
 		}
-		manager, err := control.New(control.Options{Directory: *directory, Version: VERSION})
+		options := control.Options{Directory: *directory, Version: VERSION}
+		if desktop.PrivilegeSeparationAvailable() {
+			if options.Directory == "" {
+				var err error
+				options.Directory, err = control.DefaultDirectory()
+				if err != nil {
+					fmt.Fprintln(stderr, "Cannot locate the management profile")
+					return 3
+				}
+			}
+			options.Preflight = desktop.Preflight
+			options.Factory = func(cfg *kone.KoneConfig) (control.Engine, error) {
+				repository, err := geoip.OpenRepository(filepath.Join(options.Directory, "geoip"))
+				if err != nil {
+					return nil, fmt.Errorf("saved GeoIP data needs repair: %w", err)
+				}
+				if desktop.NeedsHelper() {
+					engine, err := desktop.NewEngine(cfg, launchManagedHelper)
+					if err != nil {
+						return nil, err
+					}
+					if setter, ok := any(engine).(interface{ SetGeoIPDatabase(*geoip.Database) error }); ok {
+						if err = setter.SetGeoIPDatabase(repository.Current()); err != nil {
+							return nil, err
+						}
+					} else if !repository.Current().Metadata().Builtin {
+						return nil, fmt.Errorf("network helper cannot load this GeoIP dataset")
+					}
+					return engine, nil
+				}
+				return kone.FromConfig(cfg, kone.WithGeoIPDatabase(repository.Current()))
+			}
+		}
+		manager, err := control.New(options)
 		if err != nil {
 			fmt.Fprintf(stderr, "Management initialization failed: %s\n", err)
 			return 3
