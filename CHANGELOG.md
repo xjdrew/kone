@@ -1,7 +1,7 @@
 # 2026/10/31 — management listener shutdown
 - Make the management listener's Close idempotent across engine cleanup and HTTP shutdown, preventing intermittent net.ErrClosed failures during concurrent exit while preserving real close errors.
 - Add deterministic close-order/concurrent-close regressions and real TUN management shutdown acceptance; retain race checks and the coverage gate.
-- Cover failed HTTP handshake deadline setup deterministically, verifying transport cleanup and removing timing-dependent coverage from cancellation tests.
+- Cover every HTTP handshake failure stage and the empty management page deterministically, verifying transport cleanup and removing timing-dependent coverage from cancellation/traffic tests.
 
 # 2026/10/31 — forked TUN fixes and explicit configuration model
 - Remove the legacy packet dispatcher, NAT and TCP/UDP relays plus their port/range configuration; migrate remaining Fake-IP and CIDR address operations to net/netip and remove pkg/tcpip.
