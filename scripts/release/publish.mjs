@@ -5,6 +5,7 @@ import {
   expectedPackages,
   hashFile,
   releaseTag,
+  latestVerificationAttempt,
   validSHA,
   verifyMarker,
 } from "./model.mjs";
@@ -26,7 +27,6 @@ const output = resolve("release-assets");
 const marker = JSON.parse(
   await readFile("verification/verification.json", "utf8"),
 );
-verifyMarker(marker, { sha, version, runID: process.env.GITHUB_RUN_ID });
 execFileSync("git", ["fetch", "origin", "master", "--tags"], {
   stdio: "inherit",
 });
@@ -37,6 +37,24 @@ const gh = (...args) =>
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 const repo = process.env.GITHUB_REPOSITORY;
+const gatePages = JSON.parse(
+  gh(
+    "api",
+    `repos/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}/jobs?filter=all&per_page=100`,
+    "--paginate",
+    "--slurp",
+  ),
+);
+const runAttempt = latestVerificationAttempt(
+  gatePages.flatMap((page) => page.jobs),
+  sha,
+);
+verifyMarker(marker, {
+  sha,
+  version,
+  runID: process.env.GITHUB_RUN_ID,
+  runAttempt,
+});
 const view = () =>
   JSON.parse(
     gh(
@@ -165,6 +183,7 @@ const manifest = {
   tag,
   channel: stable ? "stable" : "development",
   ci_run_id: String(marker.run_id),
+  ci_run_attempt: String(marker.run_attempt),
   ci_url: marker.ci_url,
   verification: marker,
   assets: records,

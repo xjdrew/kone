@@ -11,6 +11,7 @@
 - Support SOCKS5 UDP and Shadowsocks AEAD TCP/UDP outbounds.
 - Support DNS over TCP, truncated-response retry, private suffix resolvers and bounded query history.
 - Import verified GeoIP datasets and restore the previous version.
+- Update built-in IPv4 country data to DB-IP Country Lite October 2026.
 - Show verified local process ownership where the operating system allows it.
 - Support optional IPv6 capture on Linux.
 - Request a separate Windows network helper when capture needs administrator permission.

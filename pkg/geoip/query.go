@@ -7,27 +7,11 @@ package geoip
 
 import (
 	"net"
-	"sort"
-)
-
-var (
-	geoIPLen = len(geoIP)
+	"net/netip"
 )
 
 func QueryCountry(ip uint32) string {
-	i := sort.Search(geoIPLen, func(i int) bool {
-		n := geoIP[i]
-		return n.End >= ip
-	})
-
-	var country string
-	if i < geoIPLen {
-		n := geoIP[i]
-		if n.Start <= ip {
-			country = n.Name
-		}
-	}
-	return country
+	return Builtin().Country(netip.AddrFrom4([4]byte{byte(ip >> 24), byte(ip >> 16), byte(ip >> 8), byte(ip)}))
 }
 
 func QueryCountryByIP(ip net.IP) string {

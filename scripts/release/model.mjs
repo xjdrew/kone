@@ -52,17 +52,38 @@ export async function hashFile(path) {
     .update(await readFile(path))
     .digest("hex");
 }
-export function verifyMarker(marker, { sha, version, runID }) {
+export function latestVerificationAttempt(jobs, sha) {
+  validSHA(sha);
+  const matches = jobs.filter((job) =>
+    job.name?.endsWith(`Required gates verified (${sha})`),
+  );
+  const latest = Math.max(...matches.map((job) => Number(job.run_attempt)));
+  const current = matches.filter((job) => Number(job.run_attempt) === latest);
+  if (
+    !Number.isSafeInteger(latest) ||
+    latest < 1 ||
+    current.length !== 1 ||
+    current[0].status !== "completed" ||
+    current[0].conclusion !== "success"
+  )
+    throw new Error(
+      "Latest required-gates attempt is not successful for this SHA",
+    );
+  return latest;
+}
+export function verifyMarker(marker, { sha, version, runID, runAttempt }) {
   validSHA(sha);
   if (
     marker.schema !== 1 ||
     marker.sha !== sha ||
     marker.version !== version ||
     String(marker.run_id) !== String(runID) ||
+    !/^[1-9]\d*$/.test(String(runAttempt)) ||
+    String(marker.run_attempt) !== String(runAttempt) ||
     marker.verified !== true
   )
     throw new Error(
-      "CI verification marker does not match this SHA, version and run",
+      "CI verification marker does not match this SHA, version, run and attempt",
     );
   if (
     !Array.isArray(marker.required_jobs) ||

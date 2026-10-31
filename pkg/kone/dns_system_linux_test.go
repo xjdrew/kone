@@ -147,13 +147,54 @@ func TestSystemDNSGuidanceRestoresOnlyOwnedLink(t *testing.T) {
 	require.Equal(t, "true", f.state["DefaultRoute"])
 	require.NoError(t, cleanup(context.Background()))
 	require.Equal(t, f.initial, f.state)
+	linkQueries := 0
 	for _, call := range f.calls {
 		require.NotContains(t, call, "resolv.conf")
+		if strings.Contains(call, " GetLink ") {
+			linkQueries++
+			require.Contains(t, call, " call :1.19 ")
+		}
+		if strings.Contains(call, " get-property ") {
+			require.Contains(t, call, " get-property :1.19 ")
+		}
 		if strings.Contains(call, " SetLink") {
 			require.Contains(t, call, "--allow-interactive-authorization=no")
 			require.Contains(t, call, " call :1.19 ")
 			require.Contains(t, call, " 17 ")
 		}
+	}
+	require.Equal(t, 1, linkQueries, "resolve and retain the daemon's actual link object path")
+}
+
+func TestSystemDNSRejectsInvalidLinkObjectPathsBeforeReadingOrWritingSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name, signature string
+		data            any
+		err             error
+	}{
+		{name: "missing link", err: errors.New("link not found")},
+		{name: "wrong signature", signature: "s", data: []string{resolvedManager + "/link/_31"}},
+		{name: "wrong data", signature: "o", data: []int{31}},
+		{name: "other object", signature: "o", data: []string{"/org/other/link/_31"}},
+		{name: "empty label", signature: "o", data: []string{resolvedManager + "/link/"}},
+		{name: "long label", signature: "o", data: []string{resolvedManager + "/link/" + strings.Repeat("a", 129)}},
+		{name: "nested path", signature: "o", data: []string{resolvedManager + "/link/a/b"}},
+		{name: "invalid label", signature: "o", data: []string{resolvedManager + "/link/a-b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			queries := 0
+			d := &resolvedDNS{owner: ":1.19", run: func(_ context.Context, tool string, args ...string) ([]byte, error) {
+				queries++
+				require.Equal(t, "busctl", tool)
+				require.Contains(t, args, "GetLink")
+				require.Contains(t, args, ":1.19")
+				return resolvedEnvelope(tc.signature, tc.data), tc.err
+			}}
+			_, err := d.profile(context.Background(), 31)
+			require.Error(t, err)
+			require.Equal(t, 1, queries)
+			require.Empty(t, d.paths)
+		})
 	}
 }
 

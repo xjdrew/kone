@@ -27,9 +27,17 @@ func privateResolvedCommand(t *testing.T, args ...string) string {
 			t.Fatal("refusing DNS test in runner host namespace")
 		}
 	}
-	out, err := exec.Command("resolvectl", append([]string{"--no-pager"}, args...)...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	// The harness deliberately enables resolver debug logs. Only stdout is the
+	// stable configuration evidence; stderr contains per-call D-Bus cookies.
+	out, err := exec.CommandContext(ctx, "resolvectl", append([]string{"--no-pager"}, args...)...).Output()
 	if err != nil {
-		t.Fatalf("private resolvectl %v: %v %s", args, err, out)
+		var detail string
+		if exit, ok := err.(*exec.ExitError); ok {
+			detail = string(exit.Stderr)
+		}
+		t.Fatalf("private resolvectl %v: %v %s %s", args, err, out, detail)
 	}
 	return string(out)
 }

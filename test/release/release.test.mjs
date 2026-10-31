@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   assertVersion,
   expectedPackages,
+  latestVerificationAttempt,
   requiredJobs,
   releaseTag,
   stableVersion,
@@ -34,29 +35,72 @@ test("release channel identities are unique, traceable and reject unsafe tags", 
     assert.throws(() => safeName(value));
 });
 
-test("qualification binds all required gates to the exact SHA/version/run", () => {
+test("qualification binds all required gates to the exact SHA/version/run/attempt", () => {
   const marker = {
     schema: 1,
     sha,
     version: "0.4.0",
     run_id: 123,
+    run_attempt: 2,
     verified: true,
     required_jobs: requiredJobs,
   };
-  verifyMarker(marker, { sha, version: "0.4.0", runID: "123" });
+  verifyMarker(marker, {
+    sha,
+    version: "0.4.0",
+    runID: "123",
+    runAttempt: "2",
+  });
   for (const replacement of [
     { sha: "a".repeat(40) },
     { version: "0.5.0" },
     { run_id: 456 },
+    { run_attempt: 1 },
     { verified: false },
     { required_jobs: ["test", "build"] },
   ])
     assert.throws(() =>
       verifyMarker(
         { ...marker, ...replacement },
-        { sha, version: "0.4.0", runID: 123 },
+        { sha, version: "0.4.0", runID: 123, runAttempt: 2 },
       ),
     );
+});
+
+test("publication retry accepts the latest successful gate and rejects stale evidence after a failed rerun", () => {
+  const gate = {
+    name: `Verify ${sha} / Required gates verified (${sha})`,
+    run_attempt: 1,
+    status: "completed",
+    conclusion: "success",
+  };
+  assert.equal(latestVerificationAttempt([gate], sha), 1);
+  assert.equal(
+    latestVerificationAttempt([gate, { ...gate, run_attempt: 2 }], sha),
+    2,
+  );
+  for (const status of ["failure", "skipped", "cancelled"]) {
+    assert.throws(() =>
+      latestVerificationAttempt(
+        [gate, { ...gate, run_attempt: 2, conclusion: status }],
+        sha,
+      ),
+    );
+  }
+  assert.throws(() => latestVerificationAttempt([], sha));
+  assert.throws(() =>
+    latestVerificationAttempt([{ ...gate, run_attempt: undefined }], sha),
+  );
+  assert.throws(() =>
+    latestVerificationAttempt([{ ...gate, status: "in_progress" }], sha),
+  );
+  assert.throws(() => latestVerificationAttempt([gate, gate], sha));
+  assert.throws(() =>
+    latestVerificationAttempt(
+      [{ ...gate, name: `Required gates verified (${"a".repeat(40)})` }],
+      sha,
+    ),
+  );
 });
 
 test("release packages cover three platforms and every declared architecture", () => {

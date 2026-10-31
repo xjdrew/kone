@@ -4,7 +4,7 @@
 
 ## Linux：只管理本次创建的 TUN link
 
-当前引导支持 systemd-resolved。系统应用必须已经使用 `127.0.0.53` 或 `127.0.0.54` stub，KONE 不改写 `/etc/resolv.conf`。`busctl`、`resolvectl` 与运行中的 resolver 必须可用；服务进程必须能验证为与 KONE 处于同一网络命名空间，避免容器或网络命名空间中的程序误改宿主 DNS。无法验证时预检失败，用户可以明确关闭此选项并采用手工 DNS 方案。
+当前引导支持 systemd-resolved。系统应用必须已经使用 `127.0.0.53` 或 `127.0.0.54` stub，KONE 不改写 `/etc/resolv.conf`。`busctl` 与运行中的 resolver 必须可用；服务进程必须能验证为与 KONE 处于同一网络命名空间，避免容器或网络命名空间中的程序误改宿主 DNS。无法验证时预检失败，用户可以明确关闭此选项并采用手工 DNS 方案。
 
 ```toml
 [dns]

@@ -45,6 +45,8 @@ jobs:
       - run: npm test
       - name: Test release identity, batched commits and safety guards
         run: node --test ../test/release/*.test.mjs
+      - name: Verify GeoIP conversion boundaries and provenance
+        run: node --test ../scripts/data/*.test.mjs
       - run: npm run build
       - name: Verify embedded assets match frontend sources
         run: git diff --exit-code -- dist
@@ -54,6 +56,7 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: ${{ inputs.artifact-prefix }}management-ui-browser-results
+          overwrite: true
           path: web/test-results/
 
   test:
@@ -89,6 +92,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}coverage-${{ matrix.os }}
+          overwrite: true
           path: coverage.out
 
   coverage:
@@ -179,6 +183,7 @@ jobs:
         with:
           name: ${{ inputs.artifact-prefix }}binaries
           path: dist/
+          overwrite: true
 
   packages:
     name: Installable packages (${{ matrix.os }})
@@ -205,6 +210,7 @@ jobs:
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}install-packages-${{ matrix.os }}
+          overwrite: true
           path: release-assets/
 
   robustness:
@@ -326,6 +332,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          go test -run '^TestBundledDatasetStartupMemoryAndPublicQueryConsistency$' -v ./pkg/geoip | tee baseline/geoip-startup.txt
           for stack in system mixed; do
             flags=()
             if [ "$stack" = mixed ]; then flags=(-tags with_gvisor); fi
@@ -339,6 +346,7 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: ${{ inputs.artifact-prefix }}performance-baseline
+          overwrite: true
           path: baseline/
 
   shadowsocks-interop:
@@ -359,6 +367,7 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: ${{ inputs.artifact-prefix }}shadowsocks-interoperability
+          overwrite: true
           path: |
             ${{ runner.temp }}/kone-shadowsocks-interop/results.json
             ${{ runner.temp }}/kone-shadowsocks-interop/server.log
@@ -383,3 +392,4 @@ jobs:
         with:
           name: ${{ inputs.artifact-prefix }}verification
           path: verification/verification.json
+          overwrite: true

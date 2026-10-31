@@ -1,6 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { appendFile, readFile } from "node:fs/promises";
-import { releaseTag, stableVersion, validSHA, versionFor } from "./model.mjs";
+import {
+  releaseTag,
+  stableVersion,
+  validSHA,
+  versionFor,
+  latestVerificationAttempt,
+} from "./model.mjs";
 const git = (...args) =>
   execFileSync("git", args, {
     encoding: "utf8",
@@ -108,13 +114,12 @@ for (const sha of shas) {
       ),
     );
     if (
-      !pages
-        .flatMap((page) => page.jobs)
-        .some(
-          (job) =>
-            job.name.endsWith(`Required gates verified (${sha})`) &&
-            job.conclusion === "success",
-        )
+      String(
+        latestVerificationAttempt(
+          pages.flatMap((page) => page.jobs),
+          sha,
+        ),
+      ) !== String(manifest.ci_run_attempt)
     )
       throw new Error(
         "The development release does not have a successful required-gates job for this exact SHA",

@@ -87,12 +87,15 @@ func TestDatabaseRejectsMalformedImports(t *testing.T) {
 	}
 }
 
-func TestBuiltinDatabasePreservesLegacyQueries(t *testing.T) {
+func TestBuiltinDatabaseUsesAttributedMonthlySnapshot(t *testing.T) {
 	database := Builtin()
 	require.Same(t, database, Builtin())
 	require.True(t, database.Metadata().Builtin)
-	require.Equal(t, "unknown", database.Metadata().License)
-	require.True(t, database.Metadata().PublishedAt.IsZero())
+	require.Equal(t, "CC-BY-4.0", database.Metadata().License)
+	require.Equal(t, "db-ip-country-lite-2026-10", database.Metadata().Version)
+	require.Equal(t, time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), database.Metadata().PublishedAt)
+	require.Equal(t, 362122, database.Metadata().Ranges)
+	require.Equal(t, "097426b8ddae89157d444a59ac1847e873f7943c32d52becc4371c8b0273af80", database.Metadata().SourceSHA256)
 	for address, country := range cases {
 		require.Equal(t, country, database.Country(netip.MustParseAddr(address)))
 	}
