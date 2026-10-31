@@ -7,9 +7,12 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"syscall"
 
+	"github.com/xjdrew/kone/pkg/control"
 	"github.com/xjdrew/kone/pkg/kone"
 )
 
@@ -33,6 +36,10 @@ func runContextWithElevation(ctx context.Context, args []string, stdout, stderr 
 	check := flags.Bool("check", false, "Validate configuration without changing system networking")
 	noElevate := flags.Bool("no-elevate", false, "Do not request Windows UAC elevation (for services and headless use)")
 	filename := flags.String("config", "config.toml", "TOML configuration file")
+	manage := flags.Bool("manage", false, "Open persistent management without enabling capture")
+	directory := flags.String("data-dir", "", "Management profile directory (defaults to the user configuration directory)")
+	listen := flags.String("listen", "127.0.0.1:9200", "Management loopback IP and port")
+	noBrowser := flags.Bool("no-browser", false, "Print the management URL without opening a browser")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -47,18 +54,47 @@ func runContextWithElevation(ctx context.Context, args []string, stdout, stderr 
 		fmt.Fprintln(stderr, "expected at most one configuration filename")
 		return 2
 	}
+	explicitConfig := false
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name == "config" {
+			explicitConfig = true
+		}
+	})
 	if flags.NArg() == 1 {
-		explicit := false
-		flags.Visit(func(f *flag.Flag) {
-			if f.Name == "config" {
-				explicit = true
-			}
-		})
-		if explicit {
+		if explicitConfig {
 			fmt.Fprintln(stderr, "use either -config or a positional filename")
 			return 2
 		}
 		*filename = flags.Arg(0)
+		explicitConfig = true
+	}
+	if *manage && explicitConfig {
+		fmt.Fprintln(stderr, "management loads its saved profile; use the management interface to edit settings")
+		return 2
+	}
+	if !*check && (*manage || !explicitConfig) {
+		if ctx.Err() != nil {
+			return 0
+		}
+		manager, err := control.New(control.Options{Directory: *directory, Version: VERSION})
+		if err != nil {
+			fmt.Fprintf(stderr, "Management initialization failed: %s\n", err)
+			return 3
+		}
+		defer manager.Close()
+		err = manager.Serve(ctx, *listen, func(url string) {
+			fmt.Fprintf(stdout, "KONE management (capture paused): %s\n", url)
+			if !*noBrowser {
+				if err := openBrowser(url); err != nil {
+					fmt.Fprintln(stderr, "Could not open a browser; open the printed local URL")
+				}
+			}
+		})
+		if err != nil {
+			fmt.Fprintf(stderr, "Management stopped: %s\n", err)
+			return 3
+		}
+		return 0
 	}
 	cfg, err := kone.ParseConfig(*filename)
 	if err != nil {
@@ -94,6 +130,23 @@ func runContextWithElevation(ctx context.Context, args []string, stdout, stderr 
 		return 3
 	}
 	return 0
+}
+
+func openBrowser(url string) error {
+	var command *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		command = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	case "darwin":
+		command = exec.Command("open", url)
+	default:
+		command = exec.Command("xdg-open", url)
+	}
+	if err := command.Start(); err != nil {
+		return err
+	}
+	go command.Wait()
+	return nil
 }
 
 func main() {

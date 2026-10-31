@@ -48,6 +48,10 @@ func (s *heldAcceptSockets) Listen(ctx context.Context, network, addr string) (n
 	if err != nil {
 		return nil, err
 	}
+	_, port, _ := net.SplitHostPort(addr)
+	if port != "9200" {
+		return listener, nil
+	}
 	s.listener.Listener = listener
 	return s.listener, nil
 }

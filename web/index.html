@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <meta name="referrer" content="no-referrer">
+  <title>KONE · 网络控制台</title>
+  <link rel="icon" type="image/svg+xml" href="/icon.svg">
+  <link rel="stylesheet" href="/src/styles.css">
+  <script type="module" src="/src/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <div id="shell">
+    <aside class="sidebar" id="sidebar" aria-label="主导航">
+      <a class="brand" href="#home" aria-label="KONE 首页"><img src="/icon.svg" alt="" width="38" height="38"><span>KONE<small>NETWORK CONSOLE</small></span></a>
+      <div class="nav-section">工作空间</div>
+      <nav id="navigation"></nav>
+      <div class="sidebar-foot"><span class="scope-mark">◌</span><p>只观察进入 KONE 的流量<small>你的网络，你的选择。</small></p></div>
+    </aside>
+    <button id="nav-backdrop" class="nav-backdrop" aria-label="关闭导航" hidden></button>
+    <div class="workspace">
+      <header class="topbar">
+        <div class="topbar-left"><button id="menu-toggle" class="icon-button mobile-menu" aria-label="打开导航" aria-controls="sidebar" aria-expanded="false">☰</button><span class="host-label" id="host-label">本机控制台</span><span id="session-role" class="quiet-badge">连接中</span></div>
+        <div class="topbar-right"><span id="runtime-status" class="status"><i></i>读取状态中</span><button id="lifecycle-toggle" class="button primary compact" disabled>启用接管</button></div>
+      </header>
+      <div id="connection-banner" class="banner" role="status" hidden></div>
+      <main id="main" tabindex="-1"><div class="loading-state"><span class="spinner"></span><h1>正在连接 KONE</h1><p>管理界面与流量接管独立运行。</p></div></main>
+      <footer class="workspace-footer"><span>IPv4 · 业务载荷统计 · 本地处理</span><span id="updated-at">等待数据</span></footer>
+    </div>
+  </div>
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <dialog id="detail-dialog" class="detail-dialog"><div id="detail-content"></div></dialog>
+</body>
+</html>

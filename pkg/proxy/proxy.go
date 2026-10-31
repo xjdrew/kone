@@ -96,6 +96,11 @@ func FromUrl(rawurl string) (*Proxy, error) {
 	if err != nil {
 		return nil, errors.New("proxy: invalid URL")
 	}
+	if u.Scheme == "ss" {
+		if err := normalizeShadowsocksURL(u); err != nil {
+			return nil, err
+		}
+	}
 	if u.Opaque != "" || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(u.Host, " \t\r\n") {
 		return nil, errors.New("proxy: expected scheme://host:port without path, query or fragment")
 	}

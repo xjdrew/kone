@@ -52,10 +52,27 @@ ttl = 600
 packet-size = 4096
 read-timeout = 5
 write-timeout = 5
+history-limit = 512
+history-retention = 3600
+cache-limit = 1024
+
+[[dns.rules]]
+suffix = "corp.example"
+servers = ["192.168.1.53"]
+
+[[dns.rules]]
+suffix = "168.192.in-addr.arpa"
+servers = ["192.168.1.53"]
 ```
 
-上面的参数均为可选项，含义及全部默认值见完整示例。`listen-port` 是 TUN 地址上的 KONE DNS 服务端口；`servers` 是实际解析使用的上游，两者不同。支持 IPv6 上游 DNS 地址，但尚不接管 IPv6 流量。
+上面的参数均为可选项，含义及全部默认值见完整示例。`listen-port` 是 TUN 地址上的 KONE DNS 服务端口，同时监听 UDP/TCP；`servers` 是实际解析使用的上游，两者不同。上游 UDP 响应截断时，使用同一上游和出口重试 TCP。支持 IPv6 上游 DNS 和 AAAA 查询，但尚不接管 IPv6 业务流量。
 自动上游仅在创建 engine 时发现一次，生效服务器保存在运行实例中，配置仍保留“自动”状态。规则热更新不会重新读取已经被 KONE 改写的 Windows 网卡 DNS；改变 DNS 设置或系统网络需要重启。
+
+`[[dns.rules]]` 使用最长域名后缀匹配，自身和子域名均匹配，`suffix = "."` 为显式兜底。匹配后只查询该条规则中的服务器；超时或 NXDOMAIN 不会触发默认/公共 DNS 回退。反向解析域名也使用相同机制。同组上游并发解析，等待其他上游结果后才接受否定响应，避免较快的 NXDOMAIN 掩盖另一台服务器的有效回答。每组最多 16 台上游，最多 64 条分流规则。
+
+系统自动发现当前解析器地址，并不等同于完整复制多网卡/VPN 的接口专属解析规则。内网或 VPN 环境应显式配置专用后缀与解析器，保留客户端原有搜索域；KONE 按客户端实际发送的完整查询名称匹配，不自行把短名称扩展到公共域名。全部 DNS 外层连接沿用 `core.outbound-interface`，目前不能为每条 DNS 规则另选接口。
+
+查询历史独立记录客户端 UDP/TCP 请求和内部控制解析，包含名称/类型、状态/错误、实际上游和传输、缓存、真实/虚拟地址、延迟与版本；DNS 查询不代表建立了业务连接。默认最多 512 条、保留一小时，`history-limit = 0` 关闭记录；上限 10000 条和 86400 秒。可在管理页清空历史。响应缓存默认最多 1024 条、总量最多 8 MiB，遵守正响应及 SOA 否定响应 TTL，最长一小时；`cache-limit = 0` 关闭。带 EDNS 扩展等特殊语义的请求绕过该缓存。清空响应缓存不会回收活动连接使用的 Fake-IP 映射。
 
 ## 校验规则
 
@@ -63,7 +80,7 @@ write-timeout = 5
 - `network` 必须是 IPv4 单播主机地址加 `/8` 至 `/30` 前缀，不能使用网段地址或广播地址。
 - DNS 监听端口非零；管理监听地址必须包含合法端口。协议栈内部端口与会话映射由 sing-tun 管理。
 - DNS 上游必须是 IP 地址，可带有效端口，不能指向虚拟网段。DNS TTL 必须在 1..4294967295 秒内，报文大小至少 512 字节，超时在 1..300 秒内。
-- 支持 `http://host:port`、`https://host:port`、`socks5://host:port`，端口必须显式提供；URL 不允许路径、查询或 fragment。IPv6 主机使用方括号。
+- 支持 `http://host:port`、`https://host:port`、`socks5://host:port`、`ss://method:password@host:port`，端口必须显式提供；前三种 URL 不允许路径、查询或 fragment。SS 允许 SIP002 的可选末尾 `/` 和标签，支持 Base64URL 编码的用户信息；不支持插件查询参数。IPv6 主机使用方括号。
 - 代理出站使用 `name`、`url` 和可选的 `udp-fallback`；旧的出站 `type` 字段应删除，否则会报未知配置键。名称必须非空、唯一，不含控制字符或首尾空白，URL 必须合法；内置出站不能通过配置声明或覆盖。
 - 规则引用已配置的代理名或内置小写 `direct` / `reject`，引用区分大小写。`direct`、`reject` 及其大小写变体均不能用作代理名称。没有规则匹配时使用内置 `direct`。
 - 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 当前会报不支持。
@@ -94,24 +111,38 @@ write-timeout = 5
 - `core.network` 的接口地址之后一个地址供协议栈使用，两者均不会分配为 Fake-IP。该地址必须保留至少一个后继主机地址。
 - 旧 `tcp-listen-port`、`udp-listen-port`、`tcp-nat-port-start/end`、`udp-nat-port-start/end` 已移除，旧配置必须删除这些键，严格校验会明确报错。内部监听和会话映射由 sing-tun 分配。
 
-IPv6 拦截和 SOCKS5 UDP 出站仍未启用。采用 `mixed` 不改变出站协议能力。LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
+IPv6 拦截仍未启用。采用 `mixed` 不改变出站协议能力。LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
 
 ## UDP 策略与显式回退
 
-`direct` 规则直连 UDP，`reject` 规则始终拒绝且不回退。当前 HTTP、HTTPS CONNECT、SOCKS5 出站只实现 TCP，因此选中代理时默认拒绝 UDP，并记录出站名和不支持 UDP 的原因；拒绝不会把 UDP 转换为 TCP。
+`direct` 规则直连 UDP，`reject` 规则始终拒绝且不回退。SOCKS5 使用原生 UDP ASSOCIATE；Shadowsocks 使用原生加密 UDP。两者保留域名供代理端解析，不先向本机解析器查询业务目标。代理外层 TCP/UDP 均通过指定真实出口；SOCKS5 的 TCP 控制连接关闭时，同时关闭 UDP 关联。不支持 SOCKS5 UDP 分片，收到非零 FRAG 时明确拒绝。
+
+HTTP/HTTPS CONNECT 只支持 TCP，选中它们时默认拒绝 UDP，并记录出站名和不支持 UDP 的原因；拒绝不会把 UDP 转换为 TCP。
 
 只有确实允许绕过代理发送 UDP 时，才为该代理显式设置：
 
 ```toml
 [[outbounds]]
 name = "office"
-url = "socks5://127.0.0.1:1080"
+url = "http://127.0.0.1:8080"
 udp-fallback = "direct"
 ```
 
-省略 `udp-fallback` 或设为空字符串表示默认拒绝；`"reject"` 表示明确拒绝。只允许内置 `direct`、`reject`，不接受未知名称、代理名称、自引用或回退链。回退只影响对应代理的 UDP，不改变 TCP 和其他规则。环境变量覆盖代理 URL 时保留文件声明的回退策略；纯环境变量代理没有隐式回退。
+对没有 UDP 实现的协议，省略 `udp-fallback` 或设为空字符串表示默认拒绝；`"reject"` 表示明确拒绝。只允许内置 `direct`、`reject`，不接受未知名称、代理名称、自引用或回退链。SOCKS5/SS 优先使用原生 UDP，其连接、认证或转发失败不会执行直连回退；回退不是代理故障时的自动切换。回退不改变 TCP 和其他规则。环境变量覆盖代理 URL 时保留文件声明的回退策略；纯环境变量代理没有隐式回退。
 
-检查能力先于目标真实 DNS 解析和 UDP 拨号。热更新影响新会话，已有会话保留原快照。管理流量统计仍只记录 TCP，不能把 DNS 记录数或 UDP 会话数当作同一流量指标。
+检查能力先于目标真实 DNS 解析和 UDP 拨号。热更新影响新会话，已有会话保留原快照。TCP/UDP 业务字节与 DNS 查询事件分开统计，不能把 DNS 记录数或 UDP 会话数当作字节流量。
+
+## Shadowsocks 出站
+
+使用 `ss://method:password@host:port` 或 SIP002 Base64URL 用户信息声明，密码中的 URL 特殊字符必须进行百分号编码。支持 AEAD2017 的 `aes-128-gcm`、`aes-256-gcm`、`chacha20-ietf-poly1305`，TCP 和原生 UDP 共用服务端端口；不启用未加密模式、旧流密码、AEAD-2022、插件、复用或 UDP-over-TCP。
+
+```toml
+[[outbounds]]
+name = "encrypted"
+url = "ss://aes-128-gcm:replace-with-your-password@proxy.example:8388"
+```
+
+实现使用与官方 sing-box 相同版本的 [sing-shadowsocks2](https://github.com/SagerNet/sing-shadowsocks2)，遵守其 GPL-3.0-or-later 许可；协议范围依据 [Shadowsocks AEAD 文档](https://shadowsocks.org/doc/aead.html) 与 [SIP002](https://shadowsocks.org/doc/sip002.html)。互操作测试使用独立的本地 SIP004/SIP007 测试对端验证三种方法的 TCP/UDP 加密链路及篡改拒绝；这不替代各实际服务端版本的部署验收。
 
 ## API 与目录迁移
 

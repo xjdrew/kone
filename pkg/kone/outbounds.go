@@ -45,11 +45,11 @@ func (p *Outbounds) DialContext(ctx context.Context, name, addr string) (net.Con
 	return nil, fmt.Errorf("invalid outbound type for %q", name)
 }
 
-// SupportsUDP describes the actual transport implementation, not the URL's
-// potential protocol features. SOCKS5 UDP ASSOCIATE is not implemented yet.
+// SupportsUDP describes the actual transport implementation. Native SOCKS5/SS
+// associations are distinct from explicit direct fallback on TCP-only proxies.
 func (p *Outbounds) SupportsUDP(name string) bool {
 	entry, ok := p.entries[name]
-	return ok && entry.kind == OutboundDirect
+	return ok && (entry.kind == OutboundDirect || entry.kind == OutboundProxy && entry.proxy.SupportsUDP())
 }
 
 // UDPOutbound resolves policy before DNS or dialing. Fallbacks are explicitly
@@ -80,12 +80,12 @@ func (p *Outbounds) DialUDPContext(ctx context.Context, name, addr string) (net.
 	if err != nil {
 		return nil, err
 	}
-	// Only direct currently supports UDP. Future UDP proxy implementations
-	// belong here, using the selected outbound's own protocol association.
 	if target == BuiltinDirect {
 		return p.dial(ctx, "udp4", addr)
 	}
-	return nil, ErrUDPUnsupported
+	// A failed association is a real proxy failure, never permission to
+	// silently switch to direct or to execute an unrelated fallback policy.
+	return p.entries[target].proxy.DialUDPContextVia(ctx, addr, p.dial)
 }
 
 func NewOutbounds(config []OutboundConfig) (*Outbounds, error) {

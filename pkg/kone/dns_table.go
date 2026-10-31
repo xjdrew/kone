@@ -87,6 +87,7 @@ type DnsTable struct {
 	records     map[string]*DomainRecord // domain -> record
 	ip2Domain   map[string]string        // ip -> domain: map hijacked ip address to domain
 	recordsLock sync.Mutex               // protect records and ip2Domain
+	pins        map[string]int           // active flows retain the domain/address association
 
 	nonProxyDomains map[string]directRecord
 	npdLock         sync.Mutex // protect non proxy domain
@@ -255,6 +256,9 @@ func (c *DnsTable) clearExpiredDomain(now time.Time) {
 	}
 
 	for domain, record := range c.records {
+		if c.pins[domain] > 0 {
+			continue
+		}
 		if !record.Expires.Before(now) {
 			continue
 		}
@@ -290,7 +294,34 @@ func NewDnsTable(ip net.IP, subnet *net.IPNet) *DnsTable {
 	c.ipNet = prefix.Masked()
 	c.ipPool = NewDnsIPPool(prefix)
 	c.records = make(map[string]*DomainRecord)
+	c.pins = make(map[string]int)
 	c.ip2Domain = make(map[string]string)
 	c.nonProxyDomains = make(map[string]directRecord)
 	return c
+}
+
+// Pin keeps an established flow's Fake-IP mapping from being recycled. The
+// returned release function is safe to call more than once or concurrently.
+func (c *DnsTable) Pin(domain string) func() {
+	c.recordsLock.Lock()
+	if c.records[domain] == nil {
+		c.recordsLock.Unlock()
+		return func() {}
+	}
+	if c.pins == nil {
+		c.pins = make(map[string]int)
+	}
+	c.pins[domain]++
+	c.recordsLock.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.recordsLock.Lock()
+			defer c.recordsLock.Unlock()
+			c.pins[domain]--
+			if c.pins[domain] == 0 {
+				delete(c.pins, domain)
+			}
+		})
+	}
 }

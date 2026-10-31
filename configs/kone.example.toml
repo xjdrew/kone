@@ -35,7 +35,7 @@ stack = "system"
 # 可指定 IPv4/IPv6 地址和端口，例如 ["1.1.1.1", "[2001:4860:4860::8888]:53"]。
 # 不得指向 KONE 虚拟网段；IPv6 上游地址不代表支持 IPv6 流量接管。
 # servers = []
-# KONE DNS 服务在 TUN 地址上的 UDP 监听端口；普通系统客户端使用 53。
+# KONE DNS 服务在 TUN 地址上的 UDP 和 TCP 监听端口；普通系统客户端使用 53。
 # listen-port = 53
 # Fake-IP DNS 响应 TTL，单位秒，范围 1..4294967295。
 # ttl = 600
@@ -44,19 +44,39 @@ stack = "system"
 # 上游查询和 DNS 服务读/写超时，单位秒，范围 1..300；总查询超时为两者之和。
 # read-timeout = 5
 # write-timeout = 5
+# DNS 查询历史条数，范围 0..10000；0 关闭记录。历史仅保存在本次运行的内存中。
+# history-limit = 512
+# 查询历史保留秒数，范围 1..86400；条数或时间达到上限后清理旧记录。
+# history-retention = 3600
+# 真实 DNS 响应缓存条数，范围 0..10000；0 关闭缓存，另有 8 MiB 总量上限。
+# 遵守正/负响应 TTL，不清除正在使用的 Fake-IP 映射。
+# cache-limit = 1024
+# 可选按域名后缀指定专用上游，最长后缀优先；匹配后只查询这里的上游。
+# 不因专用上游失败而向默认/公共 DNS 回退，适合内网、企业 VPN 和反向解析。
+# 最多 64 条，每条 1..16 个 IP 上游；suffix="." 匹配其他全部名称。
+# [[dns.rules]]
+# suffix = "corp.example"
+# servers = ["192.168.1.53"]
+# [[dns.rules]]
+# suffix = "168.192.in-addr.arpa"
+# servers = ["192.168.1.53"]
 
 # 出站数组只需声明代理，填写 name（规则引用的唯一名称）和 url 即可。
 # direct（直连）和 reject（拒绝）是内置出站，无需声明；名称及其大小写变体保留。
 # 只使用内置出站时可省略整个 outbounds 数组。
 [[outbounds]]
 name = "office"
-# 支持 http、https CONNECT 或 socks5，必须显式提供端口。
+# 支持 http、https CONNECT、socks5 或 ss，必须显式提供端口。
 # 也可填写 socks5://127.0.0.1:1080 或 https://username:password@example.com:443。
-# 当前代理出站仅支持 TCP；HTTP/HTTPS/SOCKS5 均未实现 UDP 代理。
+# HTTP/HTTPS 只支持 TCP；SOCKS5 支持 TCP 和原生 UDP ASSOCIATE。
+# Shadowsocks 支持 TCP/UDP，可填写 ss://aes-128-gcm:password@host:8388。
+# SS 方法：aes-128-gcm、aes-256-gcm、chacha20-ietf-poly1305；支持 SIP002 Base64URL 用户信息。
+# 不支持 SS 插件、旧流密码及 AEAD-2022；目标域名交由代理端解析。
 url = "http://127.0.0.1:8080"
 # 可选 UDP 回退出站；省略或空字符串时，代理不支持 UDP 就拒绝，禁止自动直连。
 # 仅允许 direct（明确允许直连 UDP）或 reject（明确拒绝）；不能引用其他代理。
-# 回退只影响该代理的 UDP，不改变 TCP 或 reject 规则；可随代理/规则热更新。
+# 仅协议没有 UDP 实现时执行回退；SOCKS5/SS 的连接或认证失败不会改为直连。
+# 回退不改变 TCP 或 reject 规则；可随代理/规则热更新。
 # udp-fallback = ""
 
 # 规则按顺序匹配，outbound 引用代理名称或内置 direct、reject（小写）。
@@ -65,6 +85,13 @@ url = "http://127.0.0.1:8080"
 # pattern：域名/后缀/关键词、IPv4 CIDR 或大写两字母国家代码；FINAL 不填。
 # FINAL 可省略，但写出时必须是最后一条；没有匹配规则时隐式直连。
 [[rules]]
+# 可选稳定规则标识与来源；管理界面自动分配，手写配置可省略。
+# id = "local-network"
+# source = "user"
+# 按业务协议/目标端口限定；省略或空值表示全部 TCP/UDP、全部端口。
+# 域名规则先保留 Fake-IP 接管入口，再按实际协议和端口作最终决定。
+# protocol = ""
+# ports = []
 type = "IP-CIDR"
 pattern = "192.168.0.0/16"
 outbound = "direct"

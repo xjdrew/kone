@@ -27,6 +27,20 @@ Use the Go toolchain declared in [go.mod](go.mod). Run these commands from the r
 
 ```sh
 go build -o dist/kone ./cmd/kone
+./dist/kone
+```
+
+Starting without a configuration file opens the local management console with capture **paused**. Configure the TUN inbound, named proxy outbounds, ordered rules and DNS in the console, save the settings, then run preflight and explicitly enable capture. The profile is stored in your user configuration directory and survives restarts; no shell proxy settings are imported. Creating a TUN device and changing routes still require the appropriate host privileges. A failed proxy or preflight does not close the management console.
+
+The eight pages provide a live traffic Sankey, connection and failure details, inbound/outbound/rule/DNS settings, independent diagnostics and network recovery. Only traffic entering KONE is observable; DNS, diagnostic and business traffic are counted separately. Saving and applying are separate actions, established connections retain their original policy, and configuration conflicts preserve the local draft.
+
+`-manage` explicitly selects the managed profile; `-data-dir` selects its directory. `-listen` controls the managed loopback listener and `-no-browser` prints its one-time local authorization URL. The bootstrap token is removed from the browser address after exchange for an HttpOnly session cookie. Keep that initial URL private.
+
+For a phone or tablet, enable HTTPS LAN access **on the KONE host**, choose one of its private interface addresses, download its local CA certificate and explicitly trust it on your device after checking the fingerprint. Open the displayed address and enter a short-lived pairing code. Read-only is the default; an owner can explicitly grant management access or revoke a session. KONE does not install certificates, change firewall rules or open router ports automatically. The phone displays the connected host's observations; opening the console does not route the phone's other traffic through KONE.
+
+For a Linux gateway or an explicitly configured headless run:
+
+```sh
 cp configs/kone.example.toml config.toml
 # Edit config.toml to configure your upstream proxy.
 ./dist/kone -check -config config.toml
@@ -41,7 +55,7 @@ On Windows, build `dist/kone.exe`. Normal startup validates the configuration an
 
 Configuration is **TOML**. Declare named proxies with `[[outbounds]]`, `name` and `url`; the URL selects the proxy protocol. Rules reference a proxy name or the built-in `direct` / `reject` targets using `outbound`; these built-ins need no configuration and their names are reserved. Select `system` or `mixed` using `core.stack`. The optional `[dns]` section uses system DNS upstreams by default. Start with [the complete annotated example](configs/kone.example.toml) and [the migration guide](docs/configuration.md). For LAN traffic, follow [Raspberry Pi / Linux gateway setup](docs/guides/how-to-use-with-raspberry-pi.md).
 
-The manager defaults to `http://127.0.0.1:9200/`. Set `general.manager-addr = ""` to disable it. Configuration pages redact proxy credentials. Rule reload uses:
+An explicit `-config` uses headless file mode. Its legacy manager defaults to `http://127.0.0.1:9200/`; set `general.manager-addr = ""` to disable it. This listener is independent of the authenticated managed console and must remain loopback or be protected by the operator. Headless rule reload uses:
 
 ```sh
 curl -X POST http://127.0.0.1:9200/reload/
@@ -57,11 +71,24 @@ Reload atomically publishes domain/GeoIP/default rules and outbound definitions,
 - Startup failures roll back owned network changes; normal signal/context shutdown closes active flows and restores adapter settings. Forced termination cannot run cleanup. See [runtime reliability](docs/runtime.md).
 - Full IPv4 capture requires `core.outbound-interface` so proxy transports and DNS leave through the physical interface. Changing that interface requires a restart; automatic network switching and crash recovery remain future work.
 - GeoIP rules currently use a bundled legacy database; database updates remain future work.
-- The manager has no authentication. Keep its default loopback binding or isolate it with an authenticated management layer.
+- The explicit file mode's legacy manager has no authentication. The managed console authenticates local and mobile sessions; legacy bindings still require loopback isolation or an authenticated management layer.
 
 ## Development
 
 Read [the architecture and core traffic paths](docs/architecture.md) for DNS/Fake-IP, TUN interception, gateway forwarding, sing-tun and gVisor's roles.
+
+Frontend sources live in `web/` and build to the embedded, offline `web/dist/` assets; an ordinary Go build needs no Node installation. After a frontend change, use Node 26.13.0 and npm to update the checked-in assets:
+
+```sh
+cd web
+npm ci
+npm test
+npm run build
+npx playwright install chromium
+npm run test:e2e
+```
+
+Browser journeys run against an isolated loopback mock API and never start KONE or change host networking. They cover all eight pages at 320px, real-path aggregation and fixed-window drilldown, configuration conflicts, credential preservation, read-only authorization and offline/error states. Phone browser layouts are covered by automated browser tests; iOS Safari and Android Chrome device/network trust still need real-device acceptance.
 
 ```sh
 go test ./...

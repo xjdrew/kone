@@ -22,14 +22,22 @@ const (
 )
 
 var ErrResolve = errors.New("DNS resolution failed")
+var ErrDNSBusy = errors.New("DNS resolver concurrency limit reached")
 
 type Dns struct {
 	one         *One
 	server      *dns.Server
+	tcpServer   *dns.Server
 	client      *dns.Client
+	tcpClient   *dns.Client
 	nameservers []string
+	routes      []DNSRouteConfig
 	ctx         context.Context
 	started     atomic.Bool
+	tcpStarted  atomic.Bool
+	history     *dnsHistory
+	cache       *dnsResponseCache
+	pending     chan struct{}
 }
 
 func (d *Dns) Resolve(domain string) (*dns.Msg, error) {
@@ -38,58 +46,144 @@ func (d *Dns) Resolve(domain string) (*dns.Msg, error) {
 func (d *Dns) ResolveContext(ctx context.Context, domain string) (*dns.Msg, error) {
 	r := new(dns.Msg)
 	r.SetQuestion(dns.Fqdn(domain), dns.TypeA)
-	return d.resolve(ctx, r)
+	meta := &dnsQueryMeta{}
+	start := time.Now()
+	msg, err := d.resolve(context.WithValue(ctx, dnsMetaKey{}, meta), r)
+	version := uint64(0)
+	if d.one != nil {
+		if s := d.one.policy.Load(); s != nil {
+			version = s.version
+		}
+	}
+	d.recordQuery(r, msg, err, "control", "", version, start, meta)
+	return msg, err
 }
 
-// Every upstream owns its message and connection. Cancellation closes pending
-// reads as well as dials; miekg/dns otherwise only honors context deadlines.
+func (d *Dns) setDialer(dialer *net.Dialer) { d.client.Dialer = dialer; d.tcpClient.Dialer = dialer }
+
+// Every exchange owns its connection and message. Close on cancellation as
+// miekg/dns honors deadlines but otherwise cannot interrupt an active read.
+func (d *Dns) exchange(ctx context.Context, client *dns.Client, server string, r *dns.Msg) (*dns.Msg, error) {
+	conn, err := client.DialContext(ctx, server)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	stopped := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() { conn.Close(); close(stopped) })
+	defer func() {
+		if !stop() {
+			<-stopped
+		}
+	}()
+	msg, _, err := client.ExchangeWithConnContext(ctx, r.Copy(), conn)
+	return msg, err
+}
+
+type dnsLookupResult struct {
+	msg               *dns.Msg
+	err               error
+	server, transport string
+}
+
+func (d *Dns) lookup(ctx context.Context, server string, r *dns.Msg) dnsLookupResult {
+	result := dnsLookupResult{server: server, transport: "udp"}
+	result.msg, result.err = d.exchange(ctx, d.client, server, r)
+	if result.err == nil && result.msg != nil && result.msg.Truncated {
+		result.transport = "tcp"
+		result.msg, result.err = d.exchange(ctx, d.tcpClient, server, r)
+	}
+	if result.err == nil && (result.msg == nil || result.msg.Truncated) {
+		result.err = errors.New("truncated DNS response after TCP retry")
+	}
+	if result.err == nil && result.msg.Rcode != dns.RcodeSuccess && result.msg.Rcode != dns.RcodeNameError {
+		result.err = fmt.Errorf("upstream returned rcode %d", result.msg.Rcode)
+	}
+	return result
+}
+
 func (d *Dns) resolve(parent context.Context, r *dns.Msg) (*dns.Msg, error) {
 	if r == nil || len(r.Question) != 1 {
 		return nil, errors.New("DNS query must contain exactly one question")
 	}
+	if err := parent.Err(); err != nil {
+		return nil, err
+	}
+	meta, _ := parent.Value(dnsMetaKey{}).(*dnsQueryMeta)
+	servers, route := d.selectResolvers(r.Question[0].Name)
+	if meta != nil {
+		meta.Route = route
+		meta.Cache = "miss"
+	}
+	key := dnsCacheKey(r, route)
+	if msg := d.cache.get(key, r.Id, time.Now()); msg != nil {
+		msg.Question = append([]dns.Question(nil), r.Question...)
+		if meta != nil {
+			meta.Cache = "hit"
+			meta.Upstream = "cache"
+		}
+		return msg, nil
+	}
+	if len(servers) == 0 {
+		return nil, ErrResolve
+	}
+	if d.pending != nil {
+		select {
+		case d.pending <- struct{}{}:
+			defer func() { <-d.pending }()
+		default:
+			return nil, ErrDNSBusy
+		}
+	}
+	if meta != nil {
+		meta.AttemptedResolvers = append([]string(nil), servers...)
+		if len(servers) == 1 {
+			meta.Upstream, meta.UpstreamTransport = servers[0], "udp"
+		}
+	}
 	ctx, cancel := context.WithCancel(parent)
 	var wg sync.WaitGroup
 	defer func() { cancel(); wg.Wait() }()
-	type answer struct {
-		msg *dns.Msg
-		err error
-	}
-	results := make(chan answer, len(d.nameservers))
-	for _, server := range d.nameservers {
+	results := make(chan dnsLookupResult, len(servers))
+	for _, server := range servers {
 		wg.Add(1)
-		go func(server string) {
-			defer wg.Done()
-			conn, err := d.client.DialContext(ctx, server)
-			if err != nil {
-				results <- answer{err: err}
-				return
-			}
-			defer conn.Close()
-			stopped := make(chan struct{})
-			stop := context.AfterFunc(ctx, func() { conn.Close(); close(stopped) })
-			defer func() {
-				if !stop() {
-					<-stopped
-				}
-			}()
-			msg, _, err := d.client.ExchangeWithConnContext(ctx, r.Copy(), conn)
-			if err == nil && msg.Rcode != dns.RcodeSuccess && msg.Rcode != dns.RcodeNameError {
-				err = fmt.Errorf("upstream returned rcode %d", msg.Rcode)
-			}
-			results <- answer{msg: msg, err: err}
-		}(server)
+		go func(server string) { defer wg.Done(); results <- d.lookup(ctx, server, r) }(server)
 	}
+	var negative *dnsLookupResult
 	var failures []error
-	for range d.nameservers {
+	complete := func(result dnsLookupResult) (*dns.Msg, error) {
+		if meta != nil {
+			meta.Upstream = result.server
+			meta.UpstreamTransport = result.transport
+		}
+		d.cache.put(key, result.msg, time.Now())
+		return result.msg, nil
+	}
+	// Wait for configured resolvers before accepting NXDOMAIN, so a fast
+	// negative response cannot defeat a positive answer from another resolver.
+	// Split routes are exclusive: failures never fall back to public servers.
+	for range servers {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case result := <-results:
 			if result.err == nil {
-				return result.msg, nil
+				if result.msg.Rcode != dns.RcodeNameError && len(result.msg.Answer) > 0 {
+					return complete(result)
+				}
+				copy := result
+				negative = &copy
+			} else {
+				if meta != nil {
+					meta.Upstream = result.server
+					meta.UpstreamTransport = result.transport
+				}
+				failures = append(failures, result.err)
 			}
-			failures = append(failures, result.err)
 		}
+	}
+	if negative != nil {
+		return complete(*negative)
 	}
 	return nil, errors.Join(append([]error{ErrResolve}, failures...)...)
 }
@@ -119,6 +213,13 @@ func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.M
 		if record == nil {
 			return nil, errors.New("virtual IP pool exhausted")
 		}
+		if meta, _ := ctx.Value(dnsMetaKey{}).(*dnsQueryMeta); meta != nil {
+			meta.Cache = "fake-ip"
+			meta.Virtual = []string{record.IP.String()}
+			if record.RealIP != nil {
+				meta.Real = []string{record.RealIP.String()}
+			}
+		}
 		return record.Answer(r), nil
 	}
 	msg, err := d.resolve(ctx, r)
@@ -137,10 +238,35 @@ func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.M
 			return nil, errors.New("virtual IP pool exhausted")
 		}
 		d.one.dnsTable.SetRealIP(domain, msg)
+		if meta, _ := ctx.Value(dnsMetaKey{}).(*dnsQueryMeta); meta != nil {
+			meta.Virtual = []string{record.IP.String()}
+			meta.Real = dnsAddresses(msg)
+		}
 		return record.Answer(r), nil
 	}
 	d.one.dnsTable.SetNonProxyDomain(domain, msg.Answer[0].Header().Ttl, s.version)
 	return msg, nil
+}
+
+// HandleQuery is shared by owned UDP/TCP listeners and sing-tun's DNS callback.
+// Every client request reads one policy generation and creates one DNS event.
+func (d *Dns) HandleQuery(ctx context.Context, r *dns.Msg, transport, source string) (*dns.Msg, error) {
+	if r == nil || len(r.Question) != 1 {
+		return nil, errors.New("DNS query must contain exactly one question")
+	}
+	s := d.one.policy.Load()
+	meta := &dnsQueryMeta{}
+	start := time.Now()
+	ctx = context.WithValue(ctx, dnsMetaKey{}, meta)
+	var msg *dns.Msg
+	var err error
+	if r.Question[0].Qclass == dns.ClassINET && r.Question[0].Qtype == dns.TypeA {
+		msg, err = d.query(ctx, s, r)
+	} else {
+		msg, err = d.resolve(ctx, r)
+	}
+	d.recordQuery(r, msg, err, transport, source, s.version, start, meta)
+	return msg, err
 }
 
 func (d *Dns) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
@@ -153,32 +279,56 @@ func (d *Dns) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		w.WriteMsg(reply)
 		return
 	}
-	s := d.one.policy.Load() // exactly one rule/proxy/config generation per request
-	var msg *dns.Msg
-	var err error
-	if r.Question[0].Qclass == dns.ClassINET && r.Question[0].Qtype == dns.TypeA {
-		msg, err = d.query(d.ctx, s, r)
-	} else {
-		msg, err = d.resolve(d.ctx, r)
+	transport := "udp"
+	if w.RemoteAddr().Network() == "tcp" || w.RemoteAddr().Network() == "tcp4" || w.RemoteAddr().Network() == "tcp6" {
+		transport = "tcp"
 	}
+	msg, err := d.HandleQuery(d.ctx, r, transport, w.RemoteAddr().String())
 	if err != nil {
-		dns.HandleFailed(w, r)
-	} else {
-		w.WriteMsg(msg)
+		msg = new(dns.Msg)
+		msg.SetRcode(r, dns.RcodeServerFailure)
 	}
+	if transport == "udp" {
+		size := uint16(512)
+		if opt := r.IsEdns0(); opt != nil {
+			size = opt.UDPSize()
+			if size < 512 {
+				size = 512
+			}
+		}
+		msg.Truncate(int(size))
+	}
+	w.WriteMsg(msg)
 }
 
 func NewDns(one *One, cfg DNSConfig) (*Dns, error) {
-	d := &Dns{one: one, ctx: context.Background()}
+	d := &Dns{one: one, ctx: context.Background(), history: newDNSHistory(int(cfg.HistoryLimit), time.Duration(cfg.HistoryRetention)*time.Second), cache: newDNSResponseCache(int(cfg.CacheLimit)), pending: make(chan struct{}, 64)}
 	addr := net.JoinHostPort(fixTunIP(one.ip).String(), strconv.Itoa(int(cfg.ListenPort)))
-	d.server = &dns.Server{Net: "udp", Addr: addr, Handler: d, UDPSize: int(cfg.PacketSize), ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
-	d.client = &dns.Client{Net: "udp", UDPSize: cfg.PacketSize, Timeout: time.Duration(cfg.ReadTimeout+cfg.WriteTimeout) * time.Second, ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
+	makeServer := func(network string) *dns.Server {
+		return &dns.Server{Net: network, Addr: addr, Handler: d, UDPSize: int(cfg.PacketSize), ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
+	}
+	d.server, d.tcpServer = makeServer("udp"), makeServer("tcp")
+	client := dns.Client{UDPSize: cfg.PacketSize, Timeout: time.Duration(cfg.ReadTimeout+cfg.WriteTimeout) * time.Second, ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
+	udpClient, tcpClient := client, client
+	udpClient.Net, tcpClient.Net = "udp", "tcp"
+	d.client, d.tcpClient = &udpClient, &tcpClient
 	for _, server := range cfg.Servers {
 		normalized, err := normalizeDNSServer(server)
 		if err != nil {
 			return nil, err
 		}
 		d.nameservers = append(d.nameservers, normalized)
+	}
+	for _, route := range cfg.Rules {
+		copy := DNSRouteConfig{Suffix: normalizeDNSSuffix(route.Suffix)}
+		for _, server := range route.Servers {
+			normalized, err := normalizeDNSServer(server)
+			if err != nil {
+				return nil, err
+			}
+			copy.Servers = append(copy.Servers, normalized)
+		}
+		d.routes = append(d.routes, copy)
 	}
 	return d, nil
 }

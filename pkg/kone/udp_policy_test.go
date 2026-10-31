@@ -16,7 +16,7 @@ import (
 )
 
 func TestUDPOutboundCapabilitiesAndNoImplicitDial(t *testing.T) {
-	for _, scheme := range []string{"http", "https", "socks5"} {
+	for _, scheme := range []string{"http", "https"} {
 		for _, fallback := range []string{"", BuiltinDirect, BuiltinReject} {
 			t.Run(scheme+"/"+fallback, func(t *testing.T) {
 				p, err := NewOutbounds([]OutboundConfig{{Name: "office", URL: scheme + "://127.0.0.1:8080", UDPFallback: fallback}})
@@ -50,6 +50,29 @@ func TestUDPOutboundCapabilitiesAndNoImplicitDial(t *testing.T) {
 				require.ErrorContains(t, err, "unknown outbound")
 			})
 		}
+	}
+}
+
+func TestSOCKS5UDPUsesNativeAssociationWithoutRuntimeFallback(t *testing.T) {
+	for _, fallback := range []string{"", BuiltinDirect, BuiltinReject} {
+		t.Run(fallback, func(t *testing.T) {
+			p, err := NewOutbounds([]OutboundConfig{{Name: "office", URL: "socks5://127.0.0.1:1080", UDPFallback: fallback}})
+			require.NoError(t, err)
+			require.True(t, p.SupportsUDP("office"))
+			target, err := p.UDPOutbound("office")
+			require.NoError(t, err)
+			require.Equal(t, "office", target)
+			dials := 0
+			p.dial = func(_ context.Context, network, address string) (net.Conn, error) {
+				dials++
+				require.Equal(t, "tcp", network)
+				require.Equal(t, "127.0.0.1:1080", address)
+				return nil, errors.New("SOCKS association unavailable")
+			}
+			_, err = p.DialUDPContext(context.Background(), "office", "private.invalid:443")
+			require.ErrorContains(t, err, "SOCKS association unavailable")
+			require.Equal(t, 1, dials, "a native association failure must never dial the destination directly")
+		})
 	}
 }
 

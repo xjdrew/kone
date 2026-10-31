@@ -1,3 +1,21 @@
+# 2026/11/01
+
+## Features
+
+- Open a local management interface without preparing a configuration file.
+- Manage capture, outbounds, rules and DNS through a responsive desktop and mobile interface.
+- Inspect live TCP/UDP traffic, failed connections and Sankey paths.
+- Compare connectivity, simulate routing and save precise rules without replaying application requests.
+- Save, import, export and restore settings with version conflict checks and credential redaction.
+- Enable authenticated HTTPS LAN access with expiring pairing codes and revocable sessions.
+- Support SOCKS5 UDP and Shadowsocks AEAD TCP/UDP outbounds.
+- Support DNS over TCP, truncated-response retry, private suffix resolvers and bounded query history.
+
+## Bugfixes
+
+- Keep management available while capture is paused or fails to start.
+- Preserve active Fake-IP mappings and prevent private DNS fallback to public resolvers.
+
 # 2026/10/31
 
 ## Features

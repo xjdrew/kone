@@ -45,6 +45,8 @@ type One struct {
 	dnsTable        *DnsTable
 	dns             *Dns
 	manager         *Manager
+	captureRecorder func(string, int) error
+	captureIdentity captureDeviceIdentity
 }
 
 type Option func(*One) error
@@ -81,7 +83,14 @@ func cloneConfig(cfg *KoneConfig) *KoneConfig {
 	copy := *cfg
 	copy.Outbounds = slices.Clone(cfg.Outbounds)
 	copy.Rule = slices.Clone(cfg.Rule)
+	for i := range copy.Rule {
+		copy.Rule[i].Ports = slices.Clone(cfg.Rule[i].Ports)
+	}
 	copy.DNS.Servers = slices.Clone(cfg.DNS.Servers)
+	copy.DNS.Rules = slices.Clone(cfg.DNS.Rules)
+	for i := range copy.DNS.Rules {
+		copy.DNS.Rules[i].Servers = slices.Clone(cfg.DNS.Rules[i].Servers)
+	}
 	if data, ok := cfg.source.([]byte); ok {
 		copy.source = slices.Clone(data)
 	}
@@ -147,7 +156,7 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	if one.dns, err = NewDns(one, dnsCfg); err != nil {
 		return nil, err
 	}
-	one.dns.client.Dialer = dialer
+	one.dns.setDialer(dialer)
 	one.manager = NewManager(one, cfg)
 	return one, nil
 }
@@ -182,7 +191,7 @@ func (one *One) Reload(cfg *KoneConfig) error {
 		}
 		return result
 	}
-	if !reflect.DeepEqual(cfg.Core, old.cfg.Core) || !reflect.DeepEqual(cfg.DNS, old.cfg.DNS) || cfg.General != old.cfg.General || !slices.Equal(cidrs(cfg), cidrs(old.cfg)) {
+	if !reflect.DeepEqual(cfg.Core, old.cfg.Core) || !reflect.DeepEqual(cfg.DNS, old.cfg.DNS) || cfg.General != old.cfg.General || !reflect.DeepEqual(cidrs(cfg), cidrs(old.cfg)) {
 		return errors.New("changes to general/core/dns or IP-CIDR routes require restart")
 	}
 	p, err := NewOutbounds(cfg.Outbounds)
@@ -231,6 +240,7 @@ func (one *One) Run(parent context.Context) (result error) {
 	var device Device
 	var undo undoStack
 	var dnsConn net.PacketConn
+	var dnsTCP net.Listener
 	var manager net.Listener
 	var stack packetStack
 	var wg sync.WaitGroup
@@ -256,11 +266,17 @@ func (one *One) Run(parent context.Context) (result error) {
 		if dnsConn != nil {
 			dnsConn.Close()
 		}
+		if dnsTCP != nil {
+			cleanup = append(cleanup, dnsTCP.Close())
+		}
 		if !isNilInterface(stack) {
 			cleanup = append(cleanup, stack.Close())
 		}
 		if one.dns.started.Load() {
 			cleanup = append(cleanup, one.dns.server.ShutdownContext(cleanupCtx))
+		}
+		if one.dns.tcpStarted.Load() {
+			cleanup = append(cleanup, one.dns.tcpServer.ShutdownContext(cleanupCtx))
 		}
 		if one.manager != nil && one.manager.server != nil {
 			cleanup = append(cleanup, one.manager.server.Shutdown(cleanupCtx))
@@ -296,6 +312,9 @@ func (one *One) Run(parent context.Context) (result error) {
 	if device == nil {
 		return errors.New("network returned a nil TUN device")
 	}
+	if err := one.recordCaptureDevice(device.Name()); err != nil {
+		return fmt.Errorf("record capture identity: %w", err)
+	}
 	cleanup, err := one.network.Configure(ctx, device, cfg.Core)
 	undo.add("interface configuration", cleanup)
 	if err != nil {
@@ -324,6 +343,10 @@ func (one *One) Run(parent context.Context) (result error) {
 	if dnsConn, err = lc.ListenPacket(ctx, "udp", one.dns.server.Addr); err != nil {
 		return fmt.Errorf("DNS listener: %w", err)
 	}
+	if dnsTCP, err = lc.Listen(ctx, "tcp", one.dns.server.Addr); err != nil {
+		return fmt.Errorf("DNS TCP listener: %w", err)
+	}
+	dnsTCP = &ownedListener{Listener: dnsTCP}
 	if one.manager != nil {
 		if manager, err = lc.Listen(ctx, "tcp", one.manager.listen); err != nil {
 			return fmt.Errorf("manager listener: %w", err)
@@ -396,7 +419,18 @@ func (one *One) Run(parent context.Context) (result error) {
 	case <-ctx.Done():
 		return nil
 	}
-	start("DNS cache", func() error { return one.dnsTable.Serve(ctx) })
+	one.dns.tcpServer.Listener = dnsTCP
+	dnsTCPReady := make(chan struct{})
+	one.dns.tcpServer.NotifyStartedFunc = func() { one.dns.tcpStarted.Store(true); close(dnsTCPReady) }
+	start("DNS TCP", one.dns.tcpServer.ActivateAndServe)
+	select {
+	case <-dnsTCPReady:
+	case err := <-errorsCh:
+		return err
+	case <-ctx.Done():
+		return nil
+	}
+	start("DNS cache", func() error { return one.dns.Maintain(ctx) })
 	if one.manager != nil {
 		start("manager", func() error { return one.manager.server.Serve(manager) })
 	}
