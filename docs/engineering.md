@@ -3,7 +3,7 @@
 ## 后续决策：sing-tun 迁移（2026-10-31）
 
 维护者已接受 GPL-3.0-or-later。当前采用 SagerNet/sing-tun `v0.9.7-0.20261023115432-040db71fcd33`，对应 sing-box v1.14.4 使用的固定版本；移除 water。下文第一轮保留 water、维持 MIT 的决定为历史记录，不再代表现状。
-真实 Windows race 验收复现上游 DLL 加载器的越界巨型数组转换，故在 `pkg/singtun` 保留该固定版本源码，通过本地模块替换加入精确边界切片和 session 创建失败立即关闭 adapter 两项补丁。原源码/测试/许可均保留，来源、补丁与升级移除条件见 [UPSTREAM.md](../pkg/singtun/UPSTREAM.md)。指针检查和真实 Wintun/race 验收继续启用。
+真实 Windows race 验收复现上游 DLL 加载器的越界巨型数组转换，故在 `pkg/singtun` 保留该固定版本源码，通过本地模块替换加入精确边界切片、session 失败立即关闭 adapter、可选的独占设备创建补丁。原源码/测试/许可均保留，来源、补丁与升级移除条件见 [UPSTREAM.md](../pkg/singtun/UPSTREAM.md)。指针检查和真实 Wintun/race 验收继续启用。
 设备、system/mixed 数据面由 sing-tun 提供；网络变更仍通过 KONE 的 Network 边界执行可回滚操作，使用 external configuration 模式避免双重配置。旧报文/NAT 类型暂留以兼容嵌入 API，生产 Run 不再使用它们。
 普通构建默认 system，`with_gvisor` 构建可显式选择 mixed；CI 测试两种构建。网关保留 LAN 转发能力，新增全局 IPv4 捕获与代理/DNS 真实出口绑定，同时补 ARMv7 构建和独立 LAN 客户端验收。IPv6、UDP 代理出站、网络切换和崩溃恢复继续独立迭代。
 
@@ -56,7 +56,8 @@ CLI 使用标准库 `signal.NotifyContext`，由 engine 统一负责关闭与恢
 基线会重新运行测试，不依赖历史 artifact；失败、缺失或无有效语句的覆盖率报告均使门禁失败。
 使用 Windows runner 和 PR 的 Go 工具链作为统一口径，避免跨平台语句集合不同，也兼容旧 `master` 的 Unix 构建问题。
 
-三平台测试均使用 `-coverpkg=./...`，包含未执行代码的包；按语句数加权并合并重复 block，使用精确分数比较，不以四舍五入后的百分比判定。
+三平台通过 `go list ./...` 枚举 KONE 模块的全部包，并将显式列表传给 `-coverpkg`，包含未执行代码的包；按语句数加权并合并重复 block，使用精确分数比较，不以四舍五入后的百分比判定。base 与 PR 使用同一枚举方式。
+固定的第三方 sing-tun 源码是独立模块，与它作为外部依赖时一样不进入 KONE 覆盖率分母；其本地补丁通过单独的 race 回归和真实驱动/网关验收验证。直接使用目录通配 `-coverpkg=./...` 会把本地替换模块也纳入统计，导致第三方代码意外改变指标口径。
 单元测试和 `test/integration` 中的 CLI 端到端测试一起执行；覆盖率统计使用 `go test` 生成的 profile，独立子进程的覆盖数据不会自动并入。
 本地比较：`go run ./cmd/covercheck -base base.out -head head.out`。工具包含单元测试和实际编译执行的端到端用例，验证下降、持平、提升、重复 block 和无效报告。
 

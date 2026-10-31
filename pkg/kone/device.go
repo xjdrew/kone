@@ -28,7 +28,7 @@ func deviceOptions(cfg CoreConfig) singtun.Options {
 	return singtun.Options{Name: cfg.Tun, MTU: MTU, Inet4Address: []netip.Prefix{netip.MustParsePrefix(cfg.Network)},
 		// KONE owns network changes and reverse-order rollback. Never let two
 		// independent managers configure addresses, DNS or capture routes.
-		EXP_ExternalConfiguration: true, EXP_DisableDNSHijack: true, Logger: stackLogger{}}
+		EXP_ExternalConfiguration: true, EXP_DisableDNSHijack: true, EXP_Exclusive: true, Logger: stackLogger{}}
 }
 
 func openSingDevice(ctx context.Context, cfg CoreConfig, create func(singtun.Options) (singtun.Tun, error)) (Device, error) {

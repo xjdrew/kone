@@ -116,7 +116,7 @@ sing-tun 的内部监听使用动态分配端口。KONE 从回调得到原始源
 | KONE | DNS/Fake-IP、路由策略、代理协议选择、快照、出站接口绑定、管理统计与资源所有权 |
 
 sing-tun 本身也提供地址、路由和 DNS 管理能力。本次接入使用 **external configuration** 模式：网络变更由 KONE 的 `Network` 边界统一执行和回滚，避免两个管理者改动同一项系统配置。
-当前固定版本源码保留于 `pkg/singtun`。真实 Windows race 验收发现了 PE 内存加载器的切片边界问题，因此包含两项局部 Windows 补丁，详见 [来源与补丁记录](../pkg/singtun/UPSTREAM.md)。后续升级应复核这些补丁是否已被上游吸收。
+当前固定版本源码保留于 `pkg/singtun`，包含 Windows PE 加载器边界/session 清理修复，以及独占设备创建扩展，详见 [来源与补丁记录](../pkg/singtun/UPSTREAM.md)。独占创建使网卡名称预检查之后的进程竞争也不会接管既有设备。后续升级应复核这些补丁是否已被上游吸收。
 
 Windows 的 Wintun DLL 通过依赖内嵌，运行时调用其 API 创建网卡并部署驱动，所以用户省去手动预装 TAP 的步骤；权限和驱动仍然存在。
 

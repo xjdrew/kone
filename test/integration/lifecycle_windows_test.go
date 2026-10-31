@@ -16,6 +16,19 @@ import (
 	"github.com/xjdrew/kone/pkg/kone"
 )
 
+type occupiedWindowsDNS struct{ net.ListenConfig }
+
+func (s *occupiedWindowsDNS) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
+	// Bind the exact newly created TUN address. Windows wildcard UDP sharing
+	// does not provide a reliable occupied-port fault on a different adapter.
+	occupied, err := s.ListenConfig.ListenPacket(ctx, network, address)
+	if err != nil {
+		return nil, fmt.Errorf("fault reservation: %w", err)
+	}
+	defer occupied.Close()
+	return s.ListenConfig.ListenPacket(ctx, network, address)
+}
+
 // Opt in only on a privileged, disposable Windows CI runner. Ordinary tests
 // never install drivers or change the developer's adapters/firewall.
 func TestSystemWindowsWintun(t *testing.T) {
@@ -53,11 +66,7 @@ func TestSystemWindowsWintun(t *testing.T) {
 					t.Fatal(err)
 				}
 				dnsPort := port.LocalAddr().(*net.UDPAddr).Port
-				if fail {
-					defer port.Close()
-				} else {
-					port.Close()
-				}
+				port.Close()
 				name := fmt.Sprintf("kone-ci-%d", os.Getpid())
 				cfg, err := kone.ParseConfig([]byte(fmt.Sprintf(`[general]
 manager-addr=""
@@ -76,7 +85,11 @@ proxy="Win"
 				if err != nil {
 					t.Fatal(err)
 				}
-				one, err := kone.FromConfig(cfg)
+				var options []kone.Option
+				if fail {
+					options = append(options, kone.WithSockets(&occupiedWindowsDNS{}))
+				}
+				one, err := kone.FromConfig(cfg, options...)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -91,9 +104,11 @@ proxy="Win"
 				if fail {
 					select {
 					case err := <-done:
-						if err == nil || !strings.Contains(err.Error(), "DNS listener") {
+						if err == nil || !strings.Contains(err.Error(), "DNS listener") || strings.Contains(err.Error(), "fault reservation") {
 							t.Fatalf("expected occupied DNS listener error, got %v", err)
 						}
+					case <-one.Ready():
+						t.Fatal("occupied DNS listener was accepted")
 					case <-ctx.Done():
 						t.Fatal("startup did not fail promptly")
 					}

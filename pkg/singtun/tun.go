@@ -116,6 +116,8 @@ type Options struct {
 	// For library usages.
 	EXP_DisableDNSHijack      bool
 	EXP_ExternalConfiguration bool
+	// KONE extension: never attach to or reopen another run's device.
+	EXP_Exclusive bool
 
 	// For gvisor stack, it should be enabled when MTU is less than 32768; otherwise it should be less than or equal to 8192.
 	// The above condition is just an estimate and not exact, calculated on M4 pro.

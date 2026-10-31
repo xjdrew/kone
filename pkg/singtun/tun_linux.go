@@ -52,7 +52,7 @@ type NativeTun struct {
 func New(options Options) (Tun, error) {
 	if options.FileDescriptor == 0 {
 		return execInNetworkNamespace(options.NetNs, func() (Tun, error) {
-			tunFd, err := open(options.Name, options.GSO)
+			tunFd, err := open(options.Name, options.GSO, options.EXP_Exclusive)
 			if err != nil {
 				return nil, E.Cause(err, "open tun")
 			}
@@ -100,7 +100,7 @@ func init() {
 	}
 }
 
-func open(name string, vnetHdr bool) (int, error) {
+func open(name string, vnetHdr bool, exclusive bool) (int, error) {
 	fd, err := unix.Open(controlPath, unix.O_RDWR, 0)
 	if err != nil {
 		return -1, E.Cause(err, "open ", controlPath)
@@ -111,6 +111,9 @@ func open(name string, vnetHdr bool) (int, error) {
 		return 0, E.Cause(err, "create ifreq")
 	}
 	flags := unix.IFF_TUN | unix.IFF_NO_PI
+	if exclusive {
+		flags |= unix.IFF_TUN_EXCL
+	}
 	if vnetHdr {
 		flags |= unix.IFF_VNET_HDR
 	}

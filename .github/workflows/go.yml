@@ -35,7 +35,11 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test with race detector
-        run: go test -race -count=1 '-coverpkg=./...' '-coverprofile=coverage.out' -covermode=atomic ./...
+        shell: pwsh
+        run: |
+          $packages = (go list ./...) -join ','
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -race -count=1 "-coverpkg=$packages" '-coverprofile=coverage.out' -covermode=atomic ./...
       - name: Test optional mixed stack
         run: go test -tags with_gvisor -race -count=1 ./...
       - uses: actions/upload-artifact@v7.0.2
@@ -70,7 +74,10 @@ jobs:
           persist-credentials: false
       - name: Measure base with the same toolchain and flags
         working-directory: .coverage-base
-        run: go test -race -count=1 '-coverpkg=./...' '-coverprofile=../coverage-base.out' -covermode=atomic ./...
+        run: |
+          $packages = (go list ./...) -join ','
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go test -race -count=1 "-coverpkg=$packages" '-coverprofile=../coverage-base.out' -covermode=atomic ./...
       - name: Reject coverage regression
         run: go run ./cmd/covercheck -base coverage-base.out -head .coverage-head/coverage.out
       - uses: actions/upload-artifact@v7.0.2

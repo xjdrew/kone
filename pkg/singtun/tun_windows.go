@@ -54,7 +54,7 @@ func New(options Options) (WinTun, error) {
 	}
 	adapter, err := wintun.CreateAdapter(options.Name, TunnelType, generateGUIDByDeviceName(options.Name))
 	if err != nil {
-		if !errors.Is(err, os.ErrExist) {
+		if options.EXP_Exclusive || !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
 		createErr := err

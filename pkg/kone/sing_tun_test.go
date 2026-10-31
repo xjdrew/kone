@@ -79,6 +79,7 @@ func TestSingDeviceOpenOwnershipAndErrors(t *testing.T) {
 			tun := &stubTun{memoryDevice: newMemoryDevice()}
 			device, err := openSingDevice(ctx, cfg, func(options singtun.Options) (singtun.Tun, error) {
 				require.True(t, options.EXP_ExternalConfiguration)
+				require.True(t, options.EXP_Exclusive)
 				require.True(t, options.EXP_DisableDNSHijack)
 				require.Equal(t, uint32(MTU), options.MTU)
 				require.NotEmpty(t, options.Name)

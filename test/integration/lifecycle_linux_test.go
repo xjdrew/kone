@@ -18,6 +18,7 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/pelletier/go-toml/v2"
+	singtun "github.com/sagernet/sing-tun"
 	"github.com/xjdrew/kone/pkg/kone"
 )
 
@@ -187,6 +188,30 @@ func TestSystemLifecycleRouteFailure(t *testing.T) {
 	if routes := systemCommand(t, "route", "show", "203.0.113.0/24"); !strings.Contains(routes, "dev lo") {
 		t.Fatalf("pre-existing route removed: %s", routes)
 	}
+}
+
+func TestSystemLifecycleExclusiveDevice(t *testing.T) {
+	cfg := systemConfig(t)
+	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Proxy: "REJECT"}}
+	_, cancel, done := systemStart(t, cfg)
+	// Bypass KONE's friendly name precheck and exercise kernel-level exclusive
+	// creation, protecting against two processes racing that precheck.
+	duplicate, err := singtun.New(singtun.Options{Name: cfg.Core.Tun, MTU: 1500, EXP_ExternalConfiguration: true, EXP_Exclusive: true})
+	if err == nil {
+		duplicate.Close()
+		t.Fatal("existing TUN was attached by another owner")
+	}
+	query := new(dns.Msg)
+	query.SetQuestion("ownership.example.", dns.TypeA)
+	answer, _, err := (&dns.Client{Timeout: time.Second}).Exchange(query, fmt.Sprintf("10.203.0.1:%d", cfg.Core.DnsListenPort))
+	if err != nil || answer.Rcode != dns.RcodeRefused {
+		t.Fatalf("original engine damaged: %v %v", err, answer)
+	}
+	cancel()
+	if err := systemWait(t, done); err != nil {
+		t.Fatal(err)
+	}
+	noSystemInterface(t, cfg)
 }
 
 func localConnectProxy(t *testing.T, body string) *httptest.Server {

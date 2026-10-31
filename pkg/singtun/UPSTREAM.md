@@ -9,6 +9,7 @@ Local changes:
 
 1. Use `unsafe.Add` and an exactly sized `unsafe.Slice` for the PE section table; cover heap-backed PE images under `-race`.
 2. Immediately close the acquired Windows adapter when `StartSession` fails, instead of relying on a later finalizer.
+3. Add an opt-in `EXP_Exclusive` device option: use Linux `IFF_TUN_EXCL` and disable Windows' existing-adapter fallback. KONE enables it so a process racing the preliminary name check cannot take over someone else's interface. Other library users retain the original default behavior.
 
 All upstream source, tests, embedded official DLLs and license notices are retained. The root go.mod replaces only this module with `./pkg/singtun`; upstream version and other dependencies remain pinned. Root coverage concerns KONE code; this nested upstream module has its own targeted regression command in CI. Build/source artifacts include this module.
 

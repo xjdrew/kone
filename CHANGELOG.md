@@ -8,6 +8,9 @@
 - Add a developer architecture guide explaining DNS/Fake-IP, transparent TCP/UDP, gateway capture, sing-tun/gVisor boundaries, lifecycle and future optimization points.
 - Retain the pinned sing-tun source with bounded PE section slices for Windows race/checkptr and immediate adapter cleanup on session failure; record patch provenance and add the upstream regression to CI.
 - Accept newly created Wintun adapters with no IPv4 address when taking the initial snapshot; preserve other snapshot errors and validate the exact occupied-listener failure in acceptance tests.
+- Enforce exclusive native device creation on Linux/Windows so a concurrent name-check race cannot attach an existing interface; verify the original engine remains usable after duplicate creation fails.
+- Enumerate all KONE module packages explicitly for head/base coverage so the in-tree third-party module keeps the same dependency treatment; verify local upstream patches separately with race tests.
+- Inject Windows DNS port conflicts on the exact new TUN address rather than relying on wildcard UDP binding behavior.
 
 # 2026/10/31 — runtime reliability
 - Add context-owned startup, cancellation, idempotent close and reverse-order network rollback; propagate component and cleanup failures.
