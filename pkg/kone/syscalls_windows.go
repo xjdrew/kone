@@ -129,14 +129,19 @@ func (n systemNetwork) AddRoute(ctx context.Context, d Device, subnet *net.IPNet
 
 func fixTunIP(ip net.IP) net.IP { return ip }
 
-// sing-tun's system/mixed stack creates a TCP application firewall rule when
-// absent. Preserve an existing rule and remove only a rule acquired by this run.
-func (n systemNetwork) PrepareStack(ctx context.Context) (Cleanup, error) {
+// Establish the required TCP exception explicitly: upstream's COM firewall
+// helper discards errors and can leave an otherwise ready tunnel unusable.
+// Scope the rule to this program and owned TUN IP, and remove only our rule.
+func (n systemNetwork) PrepareStack(ctx context.Context, cfg CoreConfig) (Cleanup, error) {
 	path, err := filepath.Abs(os.Args[0])
 	if err != nil {
 		return nil, err
 	}
-	p := map[string]any{"Rule": "sing-tun (" + path + ")"}
+	ip, _, err := net.ParseCIDR(cfg.Network)
+	if err != nil {
+		return nil, err
+	}
+	p := map[string]any{"Rule": "sing-tun (" + path + ")", "Program": path, "IP": ip.String()}
 	data, err := n.powershell(ctx, `@(Get-NetFirewallRule -ErrorAction Stop | Where-Object { $_.DisplayName -eq $p.Rule }).Count | ConvertTo-Json`, p)
 	if err != nil {
 		return nil, err
@@ -148,8 +153,10 @@ func (n systemNetwork) PrepareStack(ctx context.Context) (Cleanup, error) {
 	if count > 0 {
 		return nil, nil
 	}
-	return func(ctx context.Context) error {
+	cleanup := func(ctx context.Context) error {
 		_, err := n.powershell(ctx, `Get-NetFirewallRule -ErrorAction Stop | Where-Object { $_.DisplayName -eq $p.Rule } | Remove-NetFirewallRule`, p)
 		return err
-	}, nil
+	}
+	_, err = n.powershell(ctx, `New-NetFirewallRule -Name $p.Rule -DisplayName $p.Rule -Program $p.Program -LocalAddress $p.IP -Direction Inbound -Action Allow -Protocol TCP -Profile Any | Out-Null`, p)
+	return cleanup, err
 }

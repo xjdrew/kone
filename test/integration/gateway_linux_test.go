@@ -75,10 +75,10 @@ func TestSystemGatewayLANFullCapture(t *testing.T) {
 	t.Cleanup(func() { server.Process.Kill(); server.Wait() })
 	ready := make(chan string, 1)
 	go func() { line, _ := bufio.NewReader(output).ReadString('\n'); ready <- line }()
-	var proxyPort, dnsPort, udpPort int
+	var proxyPort, dnsPort, udpPort, directPort int
 	select {
 	case line := <-ready:
-		if _, err = fmt.Sscanf(line, "%d %d %d", &proxyPort, &dnsPort, &udpPort); err != nil {
+		if _, err = fmt.Sscanf(line, "%d %d %d %d", &proxyPort, &dnsPort, &udpPort, &directPort); err != nil {
 			t.Fatalf("upstream startup: %q: %v", line, err)
 		}
 	case <-ctx.Done():
@@ -88,10 +88,10 @@ func TestSystemGatewayLANFullCapture(t *testing.T) {
 	cfg.Core.OutboundInterface = "wan0"
 	cfg.Core.DnsServer = []string{fmt.Sprintf("203.0.113.53:%d", dnsPort)}
 	cfg.Proxy = map[string]string{"Gateway": fmt.Sprintf("http://203.0.113.2:%d", proxyPort)}
-	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Proxy: "REJECT"}, {Schema: "FINAL", Proxy: "Gateway"}}
+	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "203.0.113.9/32", Proxy: "DIRECT"}, {Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Proxy: "REJECT"}, {Schema: "FINAL", Proxy: "Gateway"}}
 	_, stop, done := systemStart(t, cfg)
 	client := exec.CommandContext(ctx, "ip", "netns", "exec", clientNS, executable, "-test.run=^TestGatewayNamespaceHelper$", "-test.timeout=20s")
-	client.Env = append(os.Environ(), "KONE_GATEWAY_ROLE=client", fmt.Sprintf("KONE_GATEWAY_DNS=10.203.0.1:%d", cfg.Core.DnsListenPort), fmt.Sprintf("KONE_GATEWAY_UDP_PORT=%d", udpPort))
+	client.Env = append(os.Environ(), "KONE_GATEWAY_ROLE=client", fmt.Sprintf("KONE_GATEWAY_DNS=10.203.0.1:%d", cfg.Core.DnsListenPort), fmt.Sprintf("KONE_GATEWAY_UDP_PORT=%d", udpPort), fmt.Sprintf("KONE_GATEWAY_DIRECT_PORT=%d", directPort))
 	if out, err := client.CombinedOutput(); err != nil {
 		t.Fatalf("LAN forwarding: %v\n%s", err, out)
 	}
@@ -134,7 +134,7 @@ func TestGatewayNamespaceHelper(t *testing.T) {
 }
 
 func gatewayUpstream(t *testing.T) {
-	web, err := net.Listen("tcp4", "127.0.0.1:0")
+	web, err := net.Listen("tcp4", "203.0.113.9:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func gatewayUpstream(t *testing.T) {
 			udp.WriteTo(data[:n], addr)
 		}
 	}()
-	fmt.Printf("%d %d %d\n", proxy.Addr().(*net.TCPAddr).Port, dnsConn.LocalAddr().(*net.UDPAddr).Port, udp.LocalAddr().(*net.UDPAddr).Port)
+	fmt.Printf("%d %d %d %d\n", proxy.Addr().(*net.TCPAddr).Port, dnsConn.LocalAddr().(*net.UDPAddr).Port, udp.LocalAddr().(*net.UDPAddr).Port, web.Addr().(*net.TCPAddr).Port)
 	select {}
 }
 
@@ -210,7 +210,7 @@ func gatewayClient(t *testing.T) {
 		t.Fatalf("not a Fake-IP: %s", fake)
 	}
 	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 3 * time.Second}
-	for _, target := range []string{fake, "203.0.113.99"} {
+	for _, target := range []string{fake, "203.0.113.99", "203.0.113.9:" + os.Getenv("KONE_GATEWAY_DIRECT_PORT")} {
 		response, err := client.Get("http://" + target + "/")
 		if err != nil {
 			t.Fatal(err)

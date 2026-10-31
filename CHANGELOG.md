@@ -13,6 +13,8 @@
 - Inject Windows DNS port conflicts on the exact new TUN address rather than relying on wildcard UDP binding behavior.
 - Configure owned Wintun L3 forwarding/DAD prerequisites and restore automatic metric mode without applying an invalid manual metric value; cover rollback only for stages actually attempted.
 - Add payload-free TUN header/checksum diagnostics and document the current TCP-only management traffic accounting boundary; retain owned-interface/firewall diagnostics on native acceptance failures.
+- Extend the full-capture LAN scenario with an explicit DIRECT TCP exception alongside proxy, UDP and REJECT traffic.
+- Create the required Windows inbound TCP exception explicitly, scoped to this executable and owned TUN address, instead of relying on upstream's silently failing COM helper; roll it back on startup failure and exit.
 
 # 2026/10/31 — runtime reliability
 - Add context-owned startup, cancellation, idempotent close and reverse-order network rollback; propagate component and cleanup failures.

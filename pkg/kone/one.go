@@ -300,9 +300,9 @@ func (one *One) Run(parent context.Context) (result error) {
 	}
 	lc := one.sockets
 	if preparer, ok := one.network.(interface {
-		PrepareStack(context.Context) (Cleanup, error)
+		PrepareStack(context.Context, CoreConfig) (Cleanup, error)
 	}); ok {
-		cleanup, err := preparer.PrepareStack(ctx)
+		cleanup, err := preparer.PrepareStack(ctx, cfg.Core)
 		undo.add("stack prerequisites", cleanup)
 		if err != nil {
 			return fmt.Errorf("prepare TUN stack: %w", err)

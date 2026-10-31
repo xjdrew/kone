@@ -33,17 +33,23 @@ func TestWindowsStackFirewallOwnership(t *testing.T) {
 		n := systemNetwork{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
 			calls++
 			script := decodePowerShell(t, args)
-			require.Contains(t, script, "$_.DisplayName -eq $p.Rule")
 			if calls == 1 {
+				require.Contains(t, script, "$_.DisplayName -eq $p.Rule")
 				if existing {
 					return []byte("1"), nil
 				}
 				return []byte("0"), nil
 			}
+			if calls == 2 {
+				require.Contains(t, script, "New-NetFirewallRule")
+				require.Contains(t, script, "-LocalAddress $p.IP")
+				require.Contains(t, script, "-Program $p.Program")
+				return nil, nil
+			}
 			require.Contains(t, script, "Remove-NetFirewallRule")
 			return nil, nil
 		}}
-		undo, err := n.PrepareStack(context.Background())
+		undo, err := n.PrepareStack(context.Background(), CoreConfig{Network: "10.192.0.1/16"})
 		require.NoError(t, err)
 		if existing {
 			require.Nil(t, undo)
@@ -58,10 +64,33 @@ func TestWindowsStackFirewallOwnership(t *testing.T) {
 			}
 			return []byte(reply), nil
 		}}
-		undo, err := n.PrepareStack(context.Background())
+		undo, err := n.PrepareStack(context.Background(), CoreConfig{Network: "10.192.0.1/16"})
 		require.Error(t, err)
 		require.Nil(t, undo)
 	}
+}
+
+func TestWindowsPartialFirewallFailureIsOwned(t *testing.T) {
+	calls := 0
+	failure := errors.New("injected firewall failure")
+	n := systemNetwork{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls++
+		switch calls {
+		case 1:
+			return []byte("0"), nil
+		case 2:
+			require.Contains(t, decodePowerShell(t, args), "New-NetFirewallRule")
+			return nil, failure
+		default:
+			require.Contains(t, decodePowerShell(t, args), "Remove-NetFirewallRule")
+			return nil, nil
+		}
+	}}
+	undo, err := n.PrepareStack(context.Background(), CoreConfig{Network: "10.192.0.1/16"})
+	require.ErrorIs(t, err, failure)
+	require.NotNil(t, undo)
+	require.NoError(t, undo(context.Background()))
+	require.Equal(t, 3, calls)
 }
 
 func TestWindowsConfigurationRollback(t *testing.T) {

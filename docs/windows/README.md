@@ -12,10 +12,12 @@ Copy-Item configs/kone.example.toml config.toml
 ./dist/kone.exe -check -config config.toml
 ```
 
-管理员 PowerShell 中配置防火墙并启动：
+KONE 自动维护限定于当前程序和自有 TUN 地址的 TCP 防火墙例外，退出时清理。本机使用无需先运行额外防火墙脚本。
+管理员 PowerShell 中启动；需要额外对 LAN 放行 DNS 等流量时，可按部署需要运行辅助脚本：
 
 ```powershell
-./scripts/windows/update-firewall-rules.ps1 -Program (Resolve-Path ./dist/kone.exe).Path
+# 可选：为受信任 LAN 额外配置规则
+# ./scripts/windows/update-firewall-rules.ps1 -Program (Resolve-Path ./dist/kone.exe).Path
 ./dist/kone.exe -config config.toml
 ```
 

@@ -3,6 +3,7 @@ package kone
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"io"
 	"log/slog"
@@ -253,10 +254,12 @@ func TestPacketTraceContainsHeadersOnly(t *testing.T) {
 	packet[23] = 80
 	packet[33] = 2
 	packet = append(packet, []byte("private-payload-password")...)
+	binary.BigEndian.PutUint16(packet[2:4], uint16(len(packet)))
 	framed := append(make([]byte, singtun.PacketOffset), packet...)
 	tracePacket(context.Background(), "read", framed)
 	require.Contains(t, output.String(), "192.0.2.2")
 	require.Contains(t, output.String(), "destination_port")
+	require.Contains(t, output.String(), "tcp_checksum_valid")
 	require.NotContains(t, output.String(), "private-payload-password")
 	tracePacket(context.Background(), "write", nil)
 	tracePacket(context.Background(), "write", []byte{0x60})
