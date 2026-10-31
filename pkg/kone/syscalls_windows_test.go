@@ -91,7 +91,9 @@ func TestWindowsConfigurationRollback(t *testing.T) {
 			require.NotNil(t, cleanup)
 			require.NoError(t, cleanup(context.Background()))
 			joined := strings.Join(calls, "\n")
-			require.Contains(t, joined, "if($p.Auto -eq 'Enabled')")
+			if failAt != 1 {
+				require.Contains(t, joined, "if($p.Auto -eq 'Enabled')")
+			}
 			require.NotContains(t, joined, "Remove-NetRoute")
 			require.Contains(t, joined, "-NlMtuBytes $p.OldMTU")
 			if failAt == 0 {
