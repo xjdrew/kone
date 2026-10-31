@@ -11,6 +11,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestManagerEmptyStatisticsPage(t *testing.T) {
+	cleanProxyEnv(t)
+	one := testEngine(t)
+	response := httptest.NewRecorder()
+	one.manager.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), "<title>kone</title>")
+	require.Contains(t, response.Body.String(), "<th>Total Traffic</th><td>0</td>")
+	require.Empty(t, one.manager.hosts)
+	require.Empty(t, one.manager.websites)
+	require.Empty(t, one.manager.proxies)
+}
+
 func TestManagerReloadAndRedaction(t *testing.T) {
 	cleanProxyEnv(t)
 	one := testEngine(t)

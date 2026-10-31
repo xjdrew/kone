@@ -10,6 +10,7 @@ import (
 	"net"
 	"os/exec"
 	"reflect"
+	"sync"
 	"time"
 )
 
@@ -78,6 +79,20 @@ type systemNetwork struct {
 type Sockets interface {
 	Listen(context.Context, string, string) (net.Listener, error)
 	ListenPacket(context.Context, string, string) (net.PacketConn, error)
+}
+
+// The engine and http.Server share listener ownership during shutdown. Keep
+// their Close calls idempotent even while Serve is still in Accept, and retain
+// the first real close error instead of hiding it as an expected shutdown.
+type ownedListener struct {
+	net.Listener
+	once sync.Once
+	err  error
+}
+
+func (l *ownedListener) Close() error {
+	l.once.Do(func() { l.err = l.Listener.Close() })
+	return l.err
 }
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
