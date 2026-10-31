@@ -41,6 +41,10 @@ jobs:
           node-version: '26.13.0'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
       - run: npm ci
       - run: npm test
       - name: Test release identity, batched commits and safety guards
@@ -50,8 +54,17 @@ jobs:
       - run: npm run build
       - name: Verify embedded assets match frontend sources
         run: git diff --exit-code -- dist
+      - name: Build genuine management browser fixture
+        working-directory: .
+        run: |
+          go build -o "$RUNNER_TEMP/kone-management-ui" ./cmd/kone
+          printf 'KONE_MANAGEMENT_TEST_BINARY=%s/kone-management-ui\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - run: npx playwright install --with-deps chromium webkit firefox
-      - run: npm run test:e2e
+      - name: Test browser journeys with real management and enforce execution
+        run: |
+          npx playwright test --project=chromium-1440x900 --grep '@real' --list
+          npm run test:e2e
+          node e2e/assert-real-results.mjs test-results/results.json
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -326,8 +339,8 @@ jobs:
           cache: true
       - name: Build native utun acceptance binary
         run: |
-          go test -tags with_gvisor,kone_macos_dns_acceptance -race -c -o "$RUNNER_TEMP/kone-darwin-system.test" ./test/integration
-          go test -tags with_gvisor,kone_macos_dns_acceptance -race -c -o "$RUNNER_TEMP/kone-darwin-dns-session.test" ./pkg/kone
+          go test -tags with_gvisor -race -c -o "$RUNNER_TEMP/kone-darwin-system.test" ./test/integration
+          go test -tags with_gvisor -race -c -o "$RUNNER_TEMP/kone-darwin-dns-session.test" ./pkg/kone
           "$RUNNER_TEMP/kone-darwin-system.test" -test.list '^TestSystemDarwinUTUN$' | grep -qx TestSystemDarwinUTUN
           "$RUNNER_TEMP/kone-darwin-system.test" -test.list '^TestSystemDarwinDNSGuidance$' | grep -qx TestSystemDarwinDNSGuidance
           "$RUNNER_TEMP/kone-darwin-dns-session.test" -test.list '^TestDarwinOwnedSystemDNSSessionDeath$' | grep -qx TestDarwinOwnedSystemDNSSessionDeath

@@ -17,7 +17,7 @@
 - Request a separate Windows/macOS network helper when capture needs administrator permission.
 - Control capture and open diagnostics from the Windows system tray or macOS menu bar.
 - Support expiring domain rules and disabled proxy outbounds.
-- Guide system DNS through KONE on supported Linux systems.
+- Guide system DNS through KONE on supported Linux and macOS systems.
 - Preserve discovered private DNS scopes and show resolver context.
 - Build installable packages and verified development releases for successful master commits.
 
@@ -32,6 +32,7 @@
 - Preserve existing macOS routes when capture startup fails.
 - Mark retained traffic as historical after capture stops.
 - Preserve the observed protocol and port when drafting a precise rule.
+- Preserve both proxy username and password when editing credentials.
 
 # 2026/10/31
 

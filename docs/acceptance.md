@@ -4,6 +4,8 @@
 
 开发验证只运行合成/回环服务及隔离浏览器 API，没有启动本机 KONE，也没有修改用户正在使用的代理、DNS、路由或防火墙。需要真实 TUN 的测试只在 CI 的 Linux 临时网络命名空间及 Windows/macOS 专用 runner 中执行。
 
+浏览器 CI 还直接连接真实管理服务，验证 Cookie/CSRF、出站凭据及规则保存、页面刷新和进程重启后的持久化；全程保持接管暂停，禁止生命周期/诊断写入，并核对网络环境未变化。缺少、跳过或不稳定通过该用例均无法通过门禁。
+
 | 需求 | 本轮落点 | 自动化证据/入口 | 验收边界 |
 | --- | --- | --- | --- |
 | SAFE-01 | 只读预检、平台/权限/端口/出口/地址冲突、失败启动回滚 | [预检](../pkg/kone/control_api_test.go)、[Linux 生命周期](../test/integration/lifecycle_linux_test.go)、[IPv6 故障](../test/integration/ipv6_linux_test.go) | 系统 DNS/VPN 组合仍需部署环境确认 |
@@ -12,14 +14,14 @@
 | SAFE-04 | 最小所有权日志、运行代次、遗留检测与保守恢复，外部网络变化暂停接管 | [恢复](../pkg/control/recovery_test.go)、[网络变化](../pkg/control/network_watch_test.go)、[运行说明](runtime.md) | 无法确认所有权时要求本机处理，不按网卡名称猜测后删除 |
 | RULE-01/02 | 稳定规则标识/来源/顺序、解释决策、协议/端口、精确域名/单地址规则草稿 | [规则](../pkg/kone/routing_explain.go)、[控制 API](../pkg/control/server_test.go)、[浏览器链路](../web/e2e/console.spec.js) | 规则模拟和 TCP 探测均不表示应用请求成功 |
 | RULE-03 | 保存/应用/重启分开，运行版本分歧可见，撤销与并发版本检查；域名规则可设绝对到期时间 | [配置存储](../pkg/control/tasks_test.go)、[控制层](../pkg/control/controller_test.go)、[浏览器冲突/临时规则](../web/e2e/console.spec.js) | 到期后仅影响新连接，旧连接/Fake-IP 映射保留；临时 CIDR/FINAL/GEOIP 明确拒绝 |
-| DNS-01 | IPv4/可选 IPv6 DNS UDP/TCP、截断回退、上游发现；Linux resolved 自有 link 引导与退出前恢复 | [DNS 协议](../test/integration/dns_linux_test.go)、[私有 resolver 验收](../test/integration/dns_system_linux_test.go)、[Windows TUN](../test/integration/lifecycle_windows_test.go)、[范围](system-dns.md) | macOS/Windows 的 system=true 明确拒绝；Windows 保留自有适配器 DNS，不推定任意 VPN/应用都经过 KONE |
+| DNS-01 | DNS UDP/TCP、截断回退、上游发现；Linux 自有 link 与 macOS 临时解析服务引导，退出前恢复 | [DNS 协议](../test/integration/dns_linux_test.go)、[Linux 系统解析](../test/integration/dns_system_linux_test.go)、[Mac 系统解析/回滚](../test/integration/dns_system_darwin_test.go)、[Mac 会话异常](../pkg/kone/dns_system_darwin_native_test.go)、[范围](system-dns.md) | Windows 的 system=true 明确拒绝，保留自有适配器 DNS；更具体的 VPN/内网范围仍可能优先，不推定所有应用均经过 KONE |
 | DNS-02 | 最长后缀排他解析器，内部名称失败不回退公网，系统上游按运行发现 | [DNS 端点](../pkg/kone/dns_endpoint_test.go)、[配置](../pkg/kone/config_model_test.go)、[DNS 说明](configuration.md) | 原生多接口搜索域/企业 VPN 的全部解析语义仍需各平台验证 |
 | DNS-03 | 查询事件/缓存/负响应/真实与虚拟地址分离、容量/过期、活动映射 pin | [缓存与映射](../pkg/kone/dns_cache_test.go)、[查询界面](../web/src/app.js) | DoH/DoT 绕开不可观察；不解密 TLS，不永久保留全部查询 |
 | OBS-01/02/03 | TCP/UDP 统一载荷计数、零字节失败、独立整体计数、有界明细和快照游标 | [观察回归](../pkg/kone/observation_test.go)、[真实数据链路](../test/integration/observability_linux_test.go) | 已淘汰明细不由新连接补位；速率与累计、业务与控制分开 |
 | OBS-04 | Windows IPHelper、Linux proc、macOS lsof/ps 尽力关联本地 IPv4 流，验证时间/标识，异步有界队列 | [进程采集](../pkg/process)、[本机真实连接](../pkg/process/native_test.go) | IPv6、远端 LAN、权限不足或无法排除复用的元组标未知/远端，不伪归属 |
 | DIAG-01/02/03 | 用户明确目标、独立 TCP/可选 TLS、直连/代理对比、限并发/超时/去重/取消 | [诊断任务](../pkg/control/tasks_test.go)、[浏览器诊断](../web/e2e/console.spec.js) | 不重放业务；独立 UDP 探测暂不支持，界面明确禁用；内部名称使用其解析范围 |
 | CFG-01/02/03/04 | 无参数先打开管理，用户目录持久化，单 TUN 元数据，命名出站及稳定 ID/启停，凭据保留/替换/清除，严格 TOML 导入/默认恢复 | [存储与导入](../pkg/control/tasks_test.go)、[CLI](../test/integration/cli_test.go)、[管理端到端](../test/integration/control_test.go) | 禁用代理后新连接明确拒绝，不执行直连/UDP 回退；损坏原件保留，现有连接保留其原快照 |
-| UI-01/02/03 | 八页面离线 Web、状态/错误/权限、显式副作用、Host/Origin/会话/CSRF 保护 | [API 安全](../pkg/control/server_test.go)、[前端单元](../web/test)、[浏览器](../web/e2e/console.spec.js) | 前端禁用按钮之外还有服务端权限检查；请求成功不代替运行结果 |
+| UI-01/02/03 | 八页面离线 Web、状态/错误/权限、显式副作用、Host/Origin/会话/CSRF 保护 | [API 安全](../pkg/control/server_test.go)、[前端单元](../web/test)、[浏览器交互](../web/e2e/console.spec.js)、[真实服务闭环](../web/e2e/real-console.spec.js) | 前端禁用按钮之外还有服务端权限检查；请求成功不代替运行结果 |
 | UI-04 | 原生采样路径桑基、守恒、其他合并、固定窗口/anchor/实际 flow IDs 分块钻取、等价路径列表 | [图形单测](../web/test/graph.test.mjs)、[观察](../pkg/kone/observation_test.go)、[高基数钻取](../web/e2e/console.spec.js) | 明细有展示/保留上限并提示；无流量不放生产演示数据；代理端点不当最终目的 |
 | UI-05 | 320px 八页面；360/390/430/768/1024px 首页；Chromium 全套及 WebKit/Firefox 关键页面、触控钻取、只读与弱网恢复项目 | [浏览器布局/截图](../web/e2e/console.spec.js)、[引擎与视口](../web/playwright.config.js)、[构建目标](../web/vite.config.js) | 按 engine/viewport 留存报告；自动化引擎不等于真实 iOS/Android，横竖屏/锁屏/软键盘仍需设备验收 |
 | UI-06 | 默认回环；主机显式私网 HTTPS、本地 CA、短期配对、只读/管理与撤销 | [LAN/TLS](../pkg/control/lan_test.go)、[会话](../pkg/control/server_test.go)、[访问说明](../README.md) | 不自动安装根证书、修改防火墙或开放路由器；手机证书信任/网络隔离需真机检查 |

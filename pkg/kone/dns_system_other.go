@@ -11,7 +11,7 @@ func SupportsSystemDNS() bool { return false }
 
 func CheckSystemDNS(_ context.Context, cfg DNSConfig) error {
 	if cfg.System {
-		return errors.New("dns.system is supported only with Linux systemd-resolved; Windows configures only its owned TUN adapter DNS, and macOS requires manual DNS selection")
+		return errors.New("dns.system is supported on Linux with systemd-resolved and on macOS; Windows configures only its owned TUN adapter DNS")
 	}
 	return nil
 }

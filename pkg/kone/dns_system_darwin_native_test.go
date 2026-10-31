@@ -31,7 +31,7 @@ func TestDarwinOwnedSystemDNSSessionDeath(t *testing.T) {
 		t.Skip("requires the disposable privileged macOS DNS acceptance runner")
 	}
 	require.Equal(t, 0, os.Geteuid())
-	require.True(t, SupportsSystemDNS(), "compile the native DNS acceptance build tag")
+	require.True(t, SupportsSystemDNS(), "macOS system DNS support must be enabled")
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	original, err := readDNSSystemContext()

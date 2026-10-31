@@ -193,7 +193,7 @@ func TestSystemDarwinDNSGuidance(t *testing.T) {
 		t.Skip("requires disposable macOS system DNS acceptance")
 	}
 	require.Equal(t, 0, os.Geteuid())
-	require.True(t, kone.SupportsSystemDNS(), "compile the DNS acceptance build tag")
+	require.True(t, kone.SupportsSystemDNS(), "macOS system DNS support must be enabled")
 	for _, stack := range []string{"system", "mixed"} {
 		for _, failure := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/late-failure=%t", stack, failure), func(t *testing.T) {

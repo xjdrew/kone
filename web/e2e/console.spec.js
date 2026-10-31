@@ -608,6 +608,24 @@ test("version conflict retains draft and offers a persistent actionable message"
   await expect(page.locator("#draft-status")).toContainText("未保存");
 });
 
+for (const first of ["username", "password"]) {
+  test(`credential editor preserves both fields when ${first} is entered first`, async ({ page }) => {
+    const data = await mount(page);
+    await page.locator(".nav-link[data-page=outbounds]").click();
+    await page.locator("#outbound-credentials-0").selectOption("replace");
+    const values = { username: "credential-fixture-user", password: "credential-fixture-password" };
+    const second = first === "username" ? "password" : "username";
+    await page.locator(`#outbound-${first}-0`).fill(values[first]);
+    await page.locator(`#outbound-${second}-0`).fill(values[second]);
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await expect(page.locator("#page-notice")).toContainText("已保存");
+    const credentials = data.writes.find((write) => write.path === "/config")?.body.credential_actions["Proxy A"];
+    expect(credentials?.action === "replace").toBe(true);
+    expect(credentials?.username === values.username).toBe(true);
+    expect(credentials?.password === values.password).toBe(true);
+  });
+}
+
 test("@compat readonly session sees every page but cannot save, diagnose, or start", async ({
   page,
 }) => {

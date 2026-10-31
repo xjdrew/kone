@@ -46,6 +46,7 @@ outbound = "direct"
 
 ```toml
 [dns]
+system = false
 servers = ["1.1.1.1", "8.8.8.8:53", "[2001:4860:4860::8888]:53"]
 listen-port = 53
 ttl = 600
@@ -66,6 +67,8 @@ servers = ["192.168.1.53"]
 ```
 
 上面的参数均为可选项，含义及全部默认值见完整示例。`listen-port` 是 KONE DNS 服务端口，同时监听 UDP/TCP；Linux/Windows 使用 TUN 地址，macOS 使用本机回环入口；`servers` 是实际解析使用的上游，两者不同。上游 UDP 响应截断时，使用同一上游和出口重试 TCP。支持 IPv6 上游 DNS 和 AAAA 查询；Linux/Windows 可另外显式启用 IPv6 接管，默认只接管 IPv4。
+
+`system` 默认 `false`，将运行 DNS 服务与引导本机系统 DNS 分开；管理模式在支持的 Linux/macOS 首次初始化时默认开启，仍需用户明确启用接管。Linux 只管理本次 TUN 的 resolved link，macOS 只创建会话拥有的临时解析服务，退出先恢复引导再关闭 DNS。Windows 保留自有适配器 DNS 行为并拒绝此选项。既有配置中的显式选择不会被升级重置；具体前提、恢复与 VPN 边界见 [系统 DNS 引导](system-dns.md)。
 自动上游仅在创建 engine 时发现一次，生效服务器保存在运行实例中，配置仍保留“自动”状态。规则热更新不会重新读取已经被 KONE 改写的 Windows 网卡 DNS；改变 DNS 设置或系统网络需要重启。
 
 `[[dns.rules]]` 使用最长域名后缀匹配，自身和子域名均匹配，`suffix = "."` 为显式兜底。匹配后只查询该条规则中的服务器；超时或 NXDOMAIN 不会触发默认/公共 DNS 回退。反向解析域名也使用相同机制。同组上游并发解析，等待其他上游结果后才接受否定响应，避免较快的 NXDOMAIN 掩盖另一台服务器的有效回答。每组最多 16 台上游，最多 64 条分流规则。

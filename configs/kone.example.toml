@@ -37,15 +37,16 @@ stack = "system"
 # [dns] 整段可省略；默认在启动前读取当前系统 DNS，用于真实域名解析。
 # 系统上游会固定到本次运行，规则热更新不会重读已指向 KONE 的网卡 DNS。
 # [dns]
-# Linux 可选：DNS 监听就绪后，使用 systemd-resolved 为本次新建 TUN 引导系统 DNS。
-# 需要系统已使用 resolved stub、可验证真实上游；只修改/恢复自有 link，不改 resolv.conf。
-# CLI 默认 false；管理模式 Linux 首次默认 true，可在界面明确关闭。Windows/macOS true 会阻断启用。
+# 可选系统 DNS 引导：Linux 使用 resolved 自有 link，macOS 使用自有临时解析服务。
+# Linux 需要已有 resolved stub；两平台均验证真实上游，只恢复自有状态，不覆盖物理/VPN DNS。
+# CLI 默认 false；管理模式 Linux/macOS 首次默认 true，可在界面关闭。Windows true 会阻断启用。
 # system = false
 # 上游 DNS 地址；省略或 [] 使用系统 DNS，不内置公共 DNS 作为回退。
 # 可指定 IPv4/IPv6 地址和端口，例如 ["1.1.1.1", "[2001:4860:4860::8888]:53"]。
 # 不得指向 KONE 虚拟网段；IPv6 上游地址不代表支持 IPv6 流量接管。
 # servers = []
-# KONE DNS 服务在 TUN 地址上的 UDP 和 TCP 监听端口；普通系统客户端使用 53。
+# KONE DNS 的 UDP/TCP 端口；Linux/Windows 使用 TUN 地址，macOS 使用回环入口。
+# 普通系统客户端使用 53；macOS 系统引导也支持显式配置其他空闲端口。
 # listen-port = 53
 # Fake-IP DNS 响应 TTL，单位秒，范围 1..4294967295。
 # ttl = 600

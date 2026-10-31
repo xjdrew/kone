@@ -13,7 +13,8 @@
 ## 平台恢复范围
 
 - Linux/macOS：只接管新建设备，拒绝修改已经存在的同名接口。只删除成功添加的路由，关闭自有设备。
-- Linux 可显式开启 `dns.system`：仅在已使用 systemd-resolved stub 的系统中管理本次 TUN link 的 DNS/域路由，退出先恢复引导，再关闭 DNS 监听；不改写 `resolv.conf` 或物理/VPN link。CLI 默认关闭，具体前提及边界见 [系统 DNS 引导](system-dns.md)。macOS 不支持该选项并在启用前拒绝。
+- Linux 可显式开启 `dns.system`：仅在已使用 systemd-resolved stub 的系统中管理本次 TUN link 的 DNS/域路由，退出先恢复引导，再关闭 DNS 监听；不改写 `resolv.conf` 或物理/VPN link。
+- macOS 可使用会话拥有的临时 DNS 服务；不覆盖物理/VPN 服务。正常退出先撤销并确认系统选择已恢复；解析会话异常退出自动撤销临时值，同时触发引擎停止。CLI 默认关闭，管理模式支持平台首次默认开启，具体前提及边界见 [系统 DNS 引导](system-dns.md)。
 - Windows：创建自有 Wintun 网卡，拒绝复用同名现有网卡。记录并恢复 IPv4 DNS 静态/自动模式、DHCP、MTU、metric 与自动 metric，仅移除本次添加的地址和路由，再关闭网卡。启动前明确创建限定于当前程序和自有 TUN 地址的 TCP 防火墙例外；失败进入回滚，退出移除本次规则，已有同名规则保留。
 - Linux/Windows 的 IPv6 接管均需显式配置 ULA 虚拟网段，默认关闭；IPv6 地址、监听和路由与 IPv4 分别校验并按所有权清理。macOS 当前明确拒绝启用 IPv6 接管。
 - 监听失败时已绑定的端口全部关闭；清理途中单个逆操作失败不阻止其余逆操作执行。

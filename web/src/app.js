@@ -1727,7 +1727,10 @@ function renderOutbounds() {
       original_name: original,
     };
     const credentials = (values) => {
-      model.credentialActions[outbound.name] = { ...actions, ...values };
+      model.credentialActions[outbound.name] = {
+        ...(model.credentialActions[outbound.name] || actions),
+        ...values,
+      };
       markDirty();
     };
     return h(
@@ -1856,7 +1859,7 @@ function renderOutbounds() {
               id: `outbound-password-${index}`,
               type: "password",
               autocomplete: "new-password",
-              hint: "仅发送到已授权 KONE 主机，不写入 URL、日志或导出。",
+              hint: "仅发送到已授权 KONE 主机，不写入浏览器地址、日志或脱敏导出。",
             },
           ),
       ),

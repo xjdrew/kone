@@ -21,7 +21,7 @@ These capabilities form the compatibility baseline for future refactoring. New f
 | F07 | Gateway outbound isolation | Bind proxy transports and upstream DNS to the physical interface to avoid recapture by full-tunnel routes |
 | F08 | Operation and diagnostics | Persistent authenticated management, strict TOML import/validation, live business-flow observation, DNS history and independent diagnostics |
 | F09 | Optional IPv6 on Linux and Windows | ULA virtual network, DNS AAAA and IPv6 capture/rules; disabled by default, with unsupported macOS activation rejected before changes |
-| F10 | Owned DNS guidance | Optional Linux systemd-resolved link integration after listeners are ready, with verified ownership and restoration before DNS shutdown |
+| F10 | Owned DNS guidance | Optional Linux systemd-resolved link or macOS temporary resolver integration after listeners are ready, restored before DNS shutdown |
 | F11 | Desktop lifecycle | Start with capture paused, preserve settings across restarts, and authorize a separate Windows/macOS network helper; manage capture from the native tray/menu |
 | F12 | Mobile management | Responsive offline console, explicit HTTPS LAN access, expiring pairing codes, read-only defaults and revocable sessions |
 | F13 | Country data updates | Bundled DB-IP Country Lite October 2026 IPv4 data, verified local imports and previous-version recovery |
@@ -96,11 +96,11 @@ npx playwright install chromium webkit firefox
 npm run test:e2e
 ```
 
-Browser journeys run against an isolated loopback mock API and never start KONE or change host networking. They cover all eight pages at 320px, real-path aggregation and fixed-window drilldown, configuration conflicts, credential preservation, read-only authorization and offline/error states. Phone browser layouts are covered by automated browser tests; iOS Safari and Android Chrome device/network trust still need real-device acceptance.
+Browser journeys use isolated loopback API fixtures. CI also runs a genuine management service with capture paused, checking real cookie authorization, credential and rule saves, reload, and persistence across process restarts. Browser tests never enable capture; real TUN acceptance runs separately in isolated/native CI. They cover all eight pages at 320px, path aggregation and fixed-window drilldown, configuration conflicts, credential preservation, read-only authorization and offline/error states. iOS Safari and Android Chrome device/network trust still need real-device acceptance.
 
 The frontend build targets Safari/iOS 16.4, Chrome/Android 110 and Firefox 115 or later. Browser automation exercises Chromium and key touch, permission and recovery journeys in WebKit/Firefox, with engine and viewport in the report; it does not replace real iOS/Android device testing. Assets, icons and fonts do not require a public CDN. [Verified releases](docs/releases.md) describes per-commit qualification, three-platform packages, checksums, stable promotion, withdrawal and rollback; packages are currently unsigned and macOS packages are not notarized.
 
-[System DNS guidance](docs/system-dns.md) describes the Linux opt-in and platform boundaries. [The acceptance index](docs/acceptance.md) links each feature to tests and remaining hardware checks; [performance baselines](docs/performance.md) keep synthetic recorder throughput separate from measured network performance.
+[System DNS guidance](docs/system-dns.md) describes the Linux/macOS integration and platform boundaries. [The acceptance index](docs/acceptance.md) links each feature to tests and remaining hardware checks; [performance baselines](docs/performance.md) distinguish synthetic counters, finite TUN samples and hardware measurements.
 
 ```sh
 go test ./...

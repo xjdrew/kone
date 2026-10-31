@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-func SupportsSystemDNS() bool { return darwinSystemDNSAcceptance }
+func SupportsSystemDNS() bool { return true }
 
 // The default error message never exposes resolver domains/addresses. Native
 // acceptance can explicitly request this bounded snapshot before rollback.
@@ -52,9 +52,6 @@ func darwinSCRead(ctx context.Context, script string) ([]byte, error) {
 func CheckSystemDNS(ctx context.Context, cfg DNSConfig) error {
 	if !cfg.System {
 		return nil
-	}
-	if !SupportsSystemDNS() {
-		return errors.New("dns.system macOS support awaits native acceptance")
 	}
 	servers := append([]string(nil), cfg.Servers...)
 	for _, rule := range cfg.Rules {
