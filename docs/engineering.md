@@ -9,16 +9,16 @@
 | `op/go-logging` | 删除，改用 `log/slog` | 标准库结构化日志，统一级别、text/JSON 和 stderr 输出 |
 | `ini.v1` | 删除，改用 `pelletier/go-toml/v2 v2.4.3` | TOML 支持、严格未知字段检查和错误位置；配置使用具名结构体 |
 | `miekg/dns v1.1.57` | 升级至 `v1.1.73` | 保留 DNS 报文和服务器 API；标准库 resolver 不能替代这部分功能 |
-| `xjdrew/dnsconfig` | 升级至 `84960edf9ed4` | 更新包含 Unix 字段访问修复，恢复 Linux/macOS 构建 |
+| `xjdrew/dnsconfig` | 以 `84960edf9ed4` 为源迁入 `pkg/dnsconfig` | 保留源码、测试、测试数据和许可，移除外部模块依赖 |
 | `songgao/water` | 保留 `2b4b6d7c09d8` | 查询仍为最新版本；本轮隔离为 `tunDevice` 接口，控制驱动迁移范围 |
-| `thecodeteam/goodbye` | 保留 `a83968bda2d3` | 查询仍为最新版本；与当前 Windows 路由退出清理绑定，下一轮与生命周期一起替换 |
+| `thecodeteam/goodbye` | 删除 | 改为标准库信号/context，由 engine 统一关闭资源并恢复网络 |
 | `stretchr/testify` | 升级至 `v1.12.1` | 保留已有测试风格并补回归测试；不需要另引测试框架 |
 | `x/net` | 升级至 `v0.62.0`，成为直接依赖 | 用其 SOCKS5 实现替代项目内手写握手；包装拨号/握手超时 |
 | `x/sys` | 升级至 `v0.49.0` | 平台系统调用依赖；更新旧版 Windows 告警相关代码 |
 | `x/mod`、`x/tools`、旧 YAML 等 | `go mod tidy` 清理 | 不保留不再需要的直接或传递依赖；新的 YAML 仅来自测试依赖 |
 
 [go-toml](https://github.com/pelletier/go-toml) 支持严格解码；[x/net/proxy](https://pkg.go.dev/golang.org/x/net/proxy) 提供 SOCKS5 客户端。
-`goodbye` 的后续替代建议是标准库 `os/signal.NotifyContext`，由 engine 统一负责关闭与恢复，避免在平台函数内注册进程级退出逻辑。
+CLI 使用标准库 `signal.NotifyContext`，由 engine 统一负责关闭与恢复，平台函数不再注册进程级退出逻辑。
 
 ## Clash / mihomo 的 TUN 方案
 
@@ -55,8 +55,8 @@
 
 ## 下一轮边界
 
-本轮没有把构建通过当作完整 TUN 运行验收。下一轮应加入特权集成测试与故障注入，验证设备创建、路由安装、DNS 恢复、启动失败回滚、信号退出和网络切换。
-现有 `Serve` 的统一取消、错误传播和资源关闭仍需改造，Windows `goodbye` 应在该阶段移除。
+生命周期、启动失败回滚、正常退出恢复、快照及故障注入已纳入第二轮，设计和验收方式见 [运行可靠性](runtime.md)。
+Linux 的真实 TUN 场景在隔离网络命名空间执行；Windows TAP、macOS 的特权驱动验收与网络切换、进程崩溃后的恢复仍需后续完善。
 
 数据面仍以 IPv4 TCP 为主；完整 UDP 代理、IPv6、DNS TCP/截断回退、上游 DNS 取消与出站路由绕过属于后续功能与可靠性迭代。
 内嵌 GeoIP 数据来自旧生成文件；后续应引入可更新的数据来源、版本/校验和及许可说明，避免仅替换查询库却继续使用旧数据。

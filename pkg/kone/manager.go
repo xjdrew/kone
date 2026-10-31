@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -233,14 +234,13 @@ type TrafficRecord struct {
 
 type Manager struct {
 	mu        sync.RWMutex
-	cfgMu     sync.Mutex
 	one       *One
-	cfg       *KoneConfig
 	startTime time.Time // process start time
 	listen    string
 	tmpl      *template.Template
 
-	dataCh   chan ConnData
+	server   *http.Server
+	dropped  atomic.Uint64
 	hosts    map[string]*TrafficRecord
 	websites map[string]*TrafficRecord
 	proxies  map[string]*TrafficRecord
@@ -355,7 +355,7 @@ func (m *Manager) proxyHandle(w io.Writer, r *http.Request) error {
 }
 
 func (m *Manager) dnsHandle(w io.Writer, r *http.Request) error {
-	records := m.one.dnsTable.Snapshot()
+	_, records := m.one.DNSSnapshot()
 
 	activeEntries, expiredEntires := 0, 0
 	now := time.Now()
@@ -378,10 +378,8 @@ func (m *Manager) dnsHandle(w io.Writer, r *http.Request) error {
 }
 
 func (m *Manager) reloadHandle(w io.Writer, r *http.Request) error {
-	m.cfgMu.Lock()
-	defer m.cfgMu.Unlock()
 	slog.Info("Reloading configuration")
-	newcfg, err := ParseConfig(m.cfg.source)
+	newcfg, err := ParseConfig(m.one.policy.Load().cfg.source)
 	if err != nil {
 		return err
 	}
@@ -391,28 +389,28 @@ func (m *Manager) reloadHandle(w io.Writer, r *http.Request) error {
 		return err
 	}
 
-	m.cfg = cloneConfig(newcfg)
 	w.Write([]byte("reload succeed"))
 	return nil
 }
 
 func (m *Manager) configHandle(w io.Writer, r *http.Request) error {
-	m.cfgMu.Lock()
-	defer m.cfgMu.Unlock()
-	b, err := m.cfg.RedactedTOML()
+	snapshot := m.one.Snapshot()
+	b, err := snapshot.Config.RedactedTOML()
 	if err != nil {
 		return err
 	}
 
 	return m.tmpl.ExecuteTemplate(w, "config", map[string]interface{}{
 		"Title":     "Config",
-		"RuleCount": len(m.cfg.Rule),
+		"RuleCount": len(snapshot.Config.Rule),
 		"Source":    string(b),
 	})
 }
 
 // statistical data api
-func (m *Manager) consumeData() {
+func (m *Manager) Record(data ConnData) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	accumulate := func(s map[string]*TrafficRecord, name string, endpoint string, upload int64, download int64, now time.Time) {
 		o, ok := s[name]
 		if ok {
@@ -420,6 +418,10 @@ func (m *Manager) consumeData() {
 			o.Download += download
 			o.Touch = now
 		} else {
+			if len(s) >= 1024 {
+				m.dropped.Add(1)
+				return
+			}
 			o = &TrafficRecord{
 				Name:     name,
 				Upload:   upload,
@@ -439,6 +441,10 @@ func (m *Manager) consumeData() {
 			d.Download += download
 			d.Touch = now
 		} else {
+			if len(o.Details) >= 64 {
+				m.dropped.Add(1)
+				return
+			}
 			o.Details[endpoint] = &TrafficRecordDetail{
 				EndPoint: endpoint,
 				Upload:   upload,
@@ -448,14 +454,10 @@ func (m *Manager) consumeData() {
 		}
 	}
 
-	for data := range m.dataCh {
-		m.mu.Lock()
-		now := time.Now()
-		accumulate(m.hosts, data.Src, data.Dst, data.Upload, data.Download, now)
-		accumulate(m.websites, data.Dst, data.Src, data.Upload, data.Download, now)
-		accumulate(m.proxies, data.Proxy, "", data.Upload, data.Download, now)
-		m.mu.Unlock()
-	}
+	now := time.Now()
+	accumulate(m.hosts, data.Src, data.Dst, data.Upload, data.Download, now)
+	accumulate(m.websites, data.Dst, data.Src, data.Upload, data.Download, now)
+	accumulate(m.proxies, data.Proxy, "", data.Upload, data.Download, now)
 }
 
 func (m *Manager) Handler() http.Handler {
@@ -468,14 +470,6 @@ func (m *Manager) Handler() http.Handler {
 	mux.HandleFunc("POST /reload/", handleWrapper(m.reloadHandle))
 	mux.HandleFunc("GET /config/", handleWrapper(m.configHandle))
 	return mux
-}
-
-func (m *Manager) Serve() error {
-	go m.consumeData()
-
-	slog.Info("Manager listener starting", "address", m.listen)
-	server := &http.Server{Addr: m.listen, Handler: m.Handler(), ReadHeaderTimeout: 5 * time.Second}
-	return server.ListenAndServe()
 }
 
 func NewManager(one *One, cfg *KoneConfig) *Manager {
@@ -519,10 +513,8 @@ func NewManager(one *One, cfg *KoneConfig) *Manager {
 
 	return &Manager{
 		one:       one,
-		cfg:       cloneConfig(cfg),
 		startTime: time.Now(),
 		listen:    cfg.General.ManagerAddr,
-		dataCh:    make(chan ConnData, 1024),
 		hosts:     make(map[string]*TrafficRecord),
 		websites:  make(map[string]*TrafficRecord),
 		proxies:   make(map[string]*TrafficRecord),

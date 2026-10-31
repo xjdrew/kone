@@ -1,53 +1,32 @@
-//
-//   date  : 2016-05-16
-//   author: xjdrew
-//
-
 package kone
 
 import (
+	"context"
+	"github.com/xjdrew/kone/pkg/tcpip"
 	"io"
 	"log/slog"
 	"net"
 	"sync"
 	"time"
-
-	"github.com/xjdrew/kone/pkg/tcpip"
 )
 
 type UDPTunnel struct {
-	session *NatSession
-	record  *DomainRecord
-
-	cliaddr *net.UDPAddr
-
-	localConn  *net.UDPConn
-	remoteConn *net.UDPConn
+	session               *NatSession
+	cliaddr               *net.UDPAddr
+	localConn, remoteConn *net.UDPConn
 }
 
-func (tunnel *UDPTunnel) SetDeadline(duration time.Duration) error {
-	return tunnel.remoteConn.SetDeadline(time.Now().Add(duration))
-}
-
-func (tunnel *UDPTunnel) Pump() error {
-	b := make([]byte, MTU)
+func (t *UDPTunnel) Pump() error {
+	b := make([]byte, 65535)
 	for {
-		n, err := tunnel.remoteConn.Read(b)
+		n, err := t.remoteConn.Read(b)
 		if err != nil {
-			if opErr, ok := err.(*net.OpError); ok && opErr.Timeout() {
-				return nil
-			}
 			return err
 		}
-		_, err = tunnel.localConn.WriteToUDP(b[:n], tunnel.cliaddr)
-		if err != nil {
+		if _, err = t.localConn.WriteToUDP(b[:n], t.cliaddr); err != nil {
 			return err
 		}
 	}
-}
-
-func (tunnel *UDPTunnel) Write(b []byte) (int, error) {
-	return tunnel.remoteConn.Write(b)
 }
 
 type UDPRelay struct {
@@ -55,108 +34,108 @@ type UDPRelay struct {
 	nat       *Nat
 	relayIP   net.IP
 	relayPort uint16
-
-	lock    sync.Mutex
-	tunnels map[string]*UDPTunnel
+	lock      sync.Mutex
+	tunnels   map[string]*UDPTunnel
+	closed    bool
+	workers   sync.WaitGroup
 }
 
-// bypass udp packet
-func (r *UDPRelay) grabTunnel(localConn *net.UDPConn, cliaddr *net.UDPAddr) *UDPTunnel {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	addr := cliaddr.String()
-	tunnel := r.tunnels[addr]
-	if tunnel == nil {
-		port := uint16(cliaddr.Port)
-		session := r.nat.getSession(port)
-		if session == nil {
-			return nil
-		}
-		record := r.one.dnsTable.GetByIP(session.dstIP)
-		if record == nil { // by IP-CIDR rule
-			return nil
-		}
-		if record.Proxy == "REJECT" {
-			return nil
-		}
-
-		if record.RealIP == nil {
-			// try resolve real ip
-			msg, err := r.one.dns.Resolve(record.Hostname)
-			if err == nil {
-				record.SetRealIP(msg)
-				r.one.dnsTable.SetRealIP(record.Hostname, msg)
-			}
-
-			if record.RealIP == nil {
-				// resolve real ip failed
-				return nil
-			}
-		}
-
-		srvaddr := &net.UDPAddr{IP: record.RealIP, Port: int(session.dstPort)}
-		remoteConn, err := net.DialUDP("udp", nil, srvaddr)
-		if err != nil {
-			slog.Error("UDP connection failed", "destination", srvaddr, "error", err)
-			return nil
-		}
-		tunnel = &UDPTunnel{
-			session:    session,
-			record:     record,
-			cliaddr:    cliaddr,
-			localConn:  localConn,
-			remoteConn: remoteConn,
-		}
-
-		slog.Debug("UDP tunnel opened", "src_ip", session.srcIP, "src_port", session.srcPort, "destination", srvaddr)
-
-		r.tunnels[addr] = tunnel
-		go func() {
-			err := tunnel.Pump()
-			if err != nil {
-				slog.Debug("UDP tunnel read failed", "destination", tunnel.remoteConn.RemoteAddr(), "error", err)
-			}
-			tunnel.remoteConn.Close()
-			slog.Debug("UDP tunnel closed", "src_ip", tunnel.session.srcIP, "src_port", tunnel.session.srcPort, "destination", srvaddr)
-
-			r.lock.Lock()
-			delete(r.tunnels, addr)
-			r.lock.Unlock()
-		}()
+func (r *UDPRelay) grabTunnel(ctx context.Context, s *runtimeSnapshot, local *net.UDPConn, client *net.UDPAddr) *UDPTunnel {
+	session := r.nat.getSession(uint16(client.Port))
+	if session == nil {
+		return nil
 	}
-	tunnel.SetDeadline(NatSessionLifeSeconds * time.Second)
+	key := client.String()
+	flow, _ := sessionKey(session.srcIP, session.dstIP, session.srcPort, session.dstPort)
+	r.lock.Lock()
+	if r.closed {
+		r.lock.Unlock()
+		return nil
+	}
+	if tunnel := r.tunnels[key]; tunnel != nil {
+		old, _ := sessionKey(tunnel.session.srcIP, tunnel.session.dstIP, tunnel.session.srcPort, tunnel.session.dstPort)
+		if old == flow {
+			r.lock.Unlock()
+			tunnel.remoteConn.SetDeadline(time.Now().Add(NatSessionLifeSeconds * time.Second))
+			return tunnel
+		}
+		delete(r.tunnels, key)
+		tunnel.remoteConn.Close()
+	}
+	r.lock.Unlock()
+	record := r.one.dnsTable.GetByIP(session.dstIP)
+	if record == nil {
+		return nil
+	}
+	if s.rule.ProxyDNS(record.Hostname, record.resolved) == "REJECT" {
+		return nil
+	}
+	if record.RealIP == nil {
+		msg, err := r.one.dns.ResolveContext(ctx, record.Hostname)
+		if err != nil {
+			return nil
+		}
+		record.SetRealIP(msg)
+		r.one.dnsTable.SetRealIP(record.Hostname, msg)
+	}
+	if record.RealIP == nil {
+		return nil
+	}
+	addr := (&net.UDPAddr{IP: record.RealIP, Port: int(session.dstPort)}).String()
+	conn, err := (&net.Dialer{}).DialContext(ctx, "udp", addr)
+	if err != nil {
+		return nil
+	}
+	tunnel := &UDPTunnel{session: session, cliaddr: client, localConn: local, remoteConn: conn.(*net.UDPConn)}
+	tunnel.remoteConn.SetDeadline(time.Now().Add(NatSessionLifeSeconds * time.Second))
+	r.lock.Lock()
+	if r.closed {
+		r.lock.Unlock()
+		conn.Close()
+		return nil
+	}
+	if existing := r.tunnels[key]; existing != nil {
+		r.lock.Unlock()
+		conn.Close()
+		return existing
+	}
+	r.tunnels[key] = tunnel
+	r.workers.Add(1)
+	r.lock.Unlock()
+	go func() {
+		defer r.workers.Done()
+		defer conn.Close()
+		tunnel.Pump()
+		r.lock.Lock()
+		if r.tunnels[key] == tunnel {
+			delete(r.tunnels, key)
+		}
+		r.lock.Unlock()
+	}()
 	return tunnel
 }
 
-func (r *UDPRelay) handlePacket(localConn *net.UDPConn, cliaddr *net.UDPAddr, packet []byte) {
-	tunnel := r.grabTunnel(localConn, cliaddr)
-	if tunnel == nil {
-		slog.Error("UDP session not found", "source", cliaddr, "local_address", localConn.LocalAddr())
-		return
-	}
-	_, err := tunnel.Write(packet)
-	if err != nil {
-		slog.Debug("UDP tunnel write failed", "error", err)
+func (r *UDPRelay) close() {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	r.closed = true
+	for key, tunnel := range r.tunnels {
+		tunnel.remoteConn.Close()
+		delete(r.tunnels, key)
 	}
 }
-
-func (r *UDPRelay) Serve() error {
-	addr := &net.UDPAddr{IP: r.relayIP, Port: int(r.relayPort)}
-	conn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		slog.Error("UDP listener failed", "error", err)
-		return err
-	}
-
+func (r *UDPRelay) serve(parent context.Context, conn *net.UDPConn) error {
+	ctx, cancel := context.WithCancel(parent)
+	defer func() { cancel(); conn.Close(); r.close(); r.workers.Wait() }()
+	packet := make([]byte, 65535)
 	for {
-		b := make([]byte, MTU)
-		n, cliaddr, err := conn.ReadFromUDP(b)
+		n, client, err := conn.ReadFromUDP(packet)
 		if err != nil {
-			slog.Error("UDP receive failed", "error", err)
-			time.Sleep(time.Second) //prevent log storms
-			continue
+			return err
 		}
-		go r.handlePacket(conn, cliaddr, b[:n])
+		if tunnel := r.grabTunnel(ctx, r.one.policy.Load(), conn, client); tunnel != nil {
+			tunnel.remoteConn.Write(packet[:n])
+		}
 	}
 }
 

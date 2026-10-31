@@ -1,67 +1,49 @@
-//
-//   date  : 2017-07-14
-//   author: xjdrew
-//
-
 package kone
 
 import (
+	"context"
 	"fmt"
-	"log/slog"
 	"net"
-	"os/exec"
-	"strings"
+	"strconv"
 
 	"github.com/songgao/water"
 )
 
-func execCommand(name, sargs string) error {
-	args := strings.Split(sargs, " ")
-	cmd := exec.Command(name, args...)
-	slog.Info("Executing network command", "command", name, "arguments", sargs)
-	return cmd.Run()
-}
-
-func initTun(tun string, ipNet *net.IPNet, mtu int) error {
-	sargs := fmt.Sprintf("addr add %s dev %s", ipNet, tun)
-	if err := execCommand("ip", sargs); err != nil {
-		return err
+func (n systemNetwork) Open(ctx context.Context, cfg CoreConfig) (Device, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
-	// brings the link up
-	sargs = fmt.Sprintf("link set dev %s up mtu %d qlen 1000", tun, mtu)
-	return execCommand("ip", sargs)
+	if cfg.Tun != "" {
+		if _, err := net.InterfaceByName(cfg.Tun); err == nil {
+			return nil, fmt.Errorf("refusing to modify existing interface %q", cfg.Tun)
+		}
+	}
+	return water.New(water.Config{DeviceType: water.TUN, PlatformSpecificParams: water.PlatformSpecificParams{Name: cfg.Tun}})
 }
 
-func addRoute(tun string, subnet *net.IPNet) error {
-	sargs := fmt.Sprintf("route add %s dev %s", subnet, tun)
-	return execCommand("ip", sargs)
-}
-
-func createTun(name string, ip net.IP, mask net.IPMask) (tunDevice, error) {
-	ifce, err := water.New(water.Config{
-		DeviceType:             water.TUN,
-		PlatformSpecificParams: water.PlatformSpecificParams{Name: name},
-	})
-
+func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) (Cleanup, error) {
+	var undo undoStack
+	_, err := n.run(ctx, "ip", "addr", "add", cfg.Network, "dev", d.Name())
 	if err != nil {
 		return nil, err
 	}
+	undo.add("address", func(ctx context.Context) error {
+		_, err := n.run(ctx, "ip", "addr", "del", cfg.Network, "dev", d.Name())
+		return err
+	})
+	_, err = n.run(ctx, "ip", "link", "set", "dev", d.Name(), "up", "mtu", strconv.Itoa(MTU), "qlen", "1000")
+	return undo.restore, err // Closing the exclusively owned device removes the link.
+}
 
-	slog.Info("TUN device created", "interface", ifce.Name())
-
-	ipNet := &net.IPNet{
-		IP:   ip,
-		Mask: mask,
-	}
-
-	if err := initTun(ifce.Name(), ipNet, MTU); err != nil {
-		ifce.Close()
+func (n systemNetwork) AddRoute(ctx context.Context, d Device, subnet *net.IPNet) (Cleanup, error) {
+	_, err := n.run(ctx, "ip", "route", "add", subnet.String(), "dev", d.Name())
+	if err != nil {
 		return nil, err
 	}
-	return ifce, nil
+	return func(ctx context.Context) error {
+		_, err := n.run(ctx, "ip", "route", "del", subnet.String(), "dev", d.Name())
+		return err
+	}, nil
 }
 
-func fixTunIP(ip net.IP) net.IP {
-	return ip
-}
+func fixTunIP(ip net.IP) net.IP { return ip }

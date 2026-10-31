@@ -6,6 +6,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/url"
@@ -43,7 +44,44 @@ type Proxy struct {
 }
 
 func (p *Proxy) Dial(network, addr string) (net.Conn, error) {
-	return p.dialer.Dial(network, addr)
+	return p.DialContext(context.Background(), network, addr)
+}
+
+type cancelForward struct {
+	ctx     context.Context
+	stop    func() bool
+	stopped chan struct{}
+}
+
+func (f *cancelForward) Dial(network, addr string) (net.Conn, error) {
+	conn, err := Direct.DialContext(f.ctx, network, addr)
+	if err != nil {
+		return nil, err
+	}
+	f.stopped = make(chan struct{})
+	f.stop = context.AfterFunc(f.ctx, func() { conn.Close(); close(f.stopped) })
+	return conn, nil
+}
+
+// DialContext cancels both dialing and the protocol handshake. The cancellation
+// hook is detached before returning, so it never closes an established tunnel.
+func (p *Proxy) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	forward := &cancelForward{ctx: ctx}
+	dialer, err := getDialerByURL(p.Url, forward)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := dialer.Dial(network, addr)
+	if forward.stop != nil && !forward.stop() {
+		<-forward.stopped
+	}
+	if ctx.Err() != nil {
+		if conn != nil {
+			conn.Close()
+		}
+		return nil, ctx.Err()
+	}
+	return conn, err
 }
 
 func FromUrl(rawurl string) (*Proxy, error) {

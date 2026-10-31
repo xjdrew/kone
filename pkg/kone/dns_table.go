@@ -6,6 +6,7 @@
 package kone
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"sync"
@@ -86,8 +87,13 @@ type DnsTable struct {
 	ip2Domain   map[string]string        // ip -> domain: map hijacked ip address to domain
 	recordsLock sync.Mutex               // protect records and ip2Domain
 
-	nonProxyDomains map[string]time.Time // non proxy domain
-	npdLock         sync.Mutex           // protect non proxy domain
+	nonProxyDomains map[string]directRecord
+	npdLock         sync.Mutex // protect non proxy domain
+}
+
+type directRecord struct {
+	expires    time.Time
+	generation uint64
 }
 
 func (c *DnsTable) IsLocalIP(ip net.IP) bool {
@@ -189,17 +195,24 @@ func (c *DnsTable) RefreshPolicies(rule *Rule) {
 	c.ClearNonProxyDomain()
 }
 
-func (c *DnsTable) IsNonProxyDomain(domain string) bool {
+func (c *DnsTable) IsNonProxyDomain(domain string, generation ...uint64) bool {
 	c.npdLock.Lock()
 	defer c.npdLock.Unlock()
-	expires, ok := c.nonProxyDomains[domain]
-	return ok && time.Now().Before(expires)
+	record, ok := c.nonProxyDomains[domain]
+	return ok && time.Now().Before(record.expires) && (len(generation) == 0 || record.generation == generation[0])
 }
 
-func (c *DnsTable) SetNonProxyDomain(domain string, ttl uint32) {
+func (c *DnsTable) SetNonProxyDomain(domain string, ttl uint32, generation ...uint64) {
 	c.npdLock.Lock()
 	defer c.npdLock.Unlock()
-	c.nonProxyDomains[domain] = time.Now().Add(time.Duration(ttl) * time.Second)
+	var version uint64
+	if len(generation) > 0 {
+		version = generation[0]
+	}
+	if len(c.nonProxyDomains) >= 4096 {
+		return
+	}
+	c.nonProxyDomains[domain] = directRecord{expires: time.Now().Add(time.Duration(ttl) * time.Second), generation: version}
 	slog.Debug("Direct DNS entry cached", "domain", domain, "ttl", ttl)
 }
 
@@ -207,7 +220,7 @@ func (c *DnsTable) clearExpiredNonProxyDomain(now time.Time) {
 	c.npdLock.Lock()
 	defer c.npdLock.Unlock()
 	for domain, expired := range c.nonProxyDomains {
-		if expired.Before(now) {
+		if expired.expires.Before(now) {
 			delete(c.nonProxyDomains, domain)
 			slog.Debug("Direct DNS entry expired", "domain", domain)
 		}
@@ -248,14 +261,19 @@ func (c *DnsTable) clearExpiredDomain(now time.Time) {
 	}
 }
 
-func (c *DnsTable) Serve() error {
+func (c *DnsTable) Serve(ctx context.Context) error {
 	tick := time.NewTicker(60 * time.Second)
-	for now := range tick.C {
-		c.clearExpiredDomain(now)
-		//TODO: is it necessary?
-		c.clearExpiredNonProxyDomain(now)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case now := <-tick.C:
+			c.clearExpiredDomain(now)
+			//TODO: is it necessary?
+			c.clearExpiredNonProxyDomain(now)
+		}
 	}
-	return nil
 }
 
 func NewDnsTable(ip net.IP, subnet *net.IPNet) *DnsTable {
@@ -265,6 +283,6 @@ func NewDnsTable(ip net.IP, subnet *net.IPNet) *DnsTable {
 	c.ipPool = NewDnsIPPool(ip, subnet)
 	c.records = make(map[string]*DomainRecord)
 	c.ip2Domain = make(map[string]string)
-	c.nonProxyDomains = make(map[string]time.Time)
+	c.nonProxyDomains = make(map[string]directRecord)
 	return c
 }

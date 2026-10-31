@@ -116,6 +116,8 @@ func (nat *Nat) count() int {
 	return len(nat.ports)
 }
 
+func (nat *Nat) clear() { nat.mu.Lock(); defer nat.mu.Unlock(); clear(nat.ports); clear(nat.sessions) }
+
 // NewNat allocates an exclusive port range [from,to). Invalid ranges are empty.
 func NewNat(from, to uint16) *Nat {
 	count := 0

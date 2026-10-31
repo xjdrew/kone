@@ -30,14 +30,15 @@ The manager defaults to `http://127.0.0.1:9200/`. Set `general.manager-addr = ""
 curl -X POST http://127.0.0.1:9200/reload/
 ```
 
-Reload supports domain/GeoIP/default policy changes, preserving virtual addresses while updating cached policy. Changes to core settings, proxy definitions, logging, manager address or CIDR routes require a restart and are rejected without modifying the active configuration.
+Reload atomically publishes domain/GeoIP/default rules and proxy definitions, preserving virtual addresses. Established flows retain their original proxy. Changes to core settings, logging, manager address or CIDR routes require a restart and are rejected without modifying the active configuration.
 
 ## Current boundaries
 
 - IPv4 DNS virtual-address routing and explicitly configured CIDR routes; automatic full-system DNS/route takeover is future work. Linux/macOS clients must be configured to query KONE's DNS address.
 - TCP uses the configured proxy. UDP currently connects directly to the resolved destination; SOCKS5 UDP ASSOCIATE is not implemented. IPv6 interception is not supported and `IP-CIDR6` rules are rejected.
 - IPv4 fragments are dropped because reassembly is not implemented.
-- System-network rollback and coordinated component shutdown remain the next engineering milestone. Upstream proxy IPs must not be captured by configured CIDR routes; complete outbound bypass is still pending.
+- Startup failures roll back owned network changes; normal signal/context shutdown closes active flows and restores adapter settings. Forced termination cannot run cleanup. See [runtime reliability](docs/runtime.md).
+- Upstream proxy IPs must not be captured by configured CIDR routes; complete outbound bypass is still pending.
 - The manager has no authentication. Keep its default loopback binding or isolate it with an authenticated management layer.
 
 ## Development
@@ -49,7 +50,7 @@ go test -race ./... # requires CGO and a platform C compiler
 go test ./pkg/tcpip -run '^$' -fuzz '^FuzzParseIPv4$' -fuzztime 15s
 ```
 
-CI runs native tests and the race detector on Linux, macOS and Windows, builds amd64/arm64 binaries, scans dependencies and smoke-tests the container. It does not replace privileged TUN/route tests on real machines.
+CI runs native race tests on Linux, macOS and Windows, builds amd64/arm64 binaries, scans dependencies and smoke-tests the container. A separate Linux job exercises real TUN traffic, startup rollback, route ownership, reload and SIGTERM in an isolated network namespace. Windows TAP and macOS driver behavior still require platform-specific privileged acceptance tests.
 
 ```text
 cmd/kone/          CLI
@@ -57,6 +58,7 @@ pkg/kone/          engine, configuration, DNS, NAT and management
 pkg/proxy/         upstream proxy adapters
 pkg/tcpip/         validated IPv4 packet views
 pkg/geoip/         GeoIP lookup and legacy generated database
+pkg/dnsconfig/     in-tree system DNS discovery
 configs/           example TOML
 test/integration/  CLI tests without network administration privileges
 docs/              configuration, dependency decisions and deployment guides

@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/xjdrew/dnsconfig"
+	"github.com/xjdrew/kone/pkg/dnsconfig"
 	"github.com/xjdrew/kone/pkg/proxy"
 )
 

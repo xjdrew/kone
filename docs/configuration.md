@@ -58,10 +58,13 @@ proxy = "DIRECT"
 
 热更新会重建代理端点的域名绕过，重新计算已有 DNS 映射的域名、CNAME、IP 策略，清除直连域名缓存，并保留虚拟 IP。
 新的 TCP 连接采用新策略；已建立连接和已有 UDP tunnel 按当前会话继续工作。
-端口、TUN、DNS、代理定义、日志、管理地址及 CIDR 路由变化要求重启，失败更新保留原配置。
+代理定义与规则作为同一版本快照原子更新；新的连接使用新定义，已建立连接保留原出站。
+端口、TUN、DNS、日志、管理地址及 CIDR 路由变化要求重启，失败更新保留原配置和版本。
 
 ## API 与目录迁移
 
 `github.com/xjdrew/kone` 改为 `github.com/xjdrew/kone/pkg/kone`；其他原子包也移动到 `pkg/`。
 `KoneConfig.Validate()` 可独立校验；`FromConfig` 在任何设备创建前再次校验。
-`NewProxies` 现在只接收代理定义，代理绕过由 engine 构建；`NewTunDriver` 接收接口名，路由操作返回真实错误。
+`FromConfig` 只构造对象，不修改系统网络。用 `Run(ctx)` 启动并管理资源，`Close()` 可并发、重复调用并等待清理结束。
+`Snapshot()` 返回版本与独立配置副本，`DNSSnapshot()` 返回同一规则版本下的域名状态。
+网络操作由 `Network` 接口管理，并保留每项变更的逆操作；参见 [运行可靠性](runtime.md)。

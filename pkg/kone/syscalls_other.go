@@ -1,30 +1,20 @@
-//
-//   date  : 2017-07-14
-//   author: xjdrew
-//
-
 //go:build !linux && !darwin && !windows
-// +build !linux,!darwin,!windows
 
 package kone
 
 import (
+	"context"
 	"errors"
 	"net"
 )
 
-var errOS = errors.New("unsupported os")
+var errOS = errors.New("unsupported OS")
 
-func createTun(name string, ip net.IP, mask net.IPMask) (tunDevice, error) { return nil, errOS }
-
-func initTun(tun string, ipNet *net.IPNet, mtu int) error {
-	return errOS
+func (n systemNetwork) Open(context.Context, CoreConfig) (Device, error) { return nil, errOS }
+func (n systemNetwork) Configure(context.Context, Device, CoreConfig) (Cleanup, error) {
+	return nil, errOS
 }
-
-func addRoute(tun string, subnet *net.IPNet) error {
-	return errOS
+func (n systemNetwork) AddRoute(context.Context, Device, *net.IPNet) (Cleanup, error) {
+	return nil, errOS
 }
-
-func fixTunIP(ip net.IP) net.IP {
-	return ip
-}
+func fixTunIP(ip net.IP) net.IP { return ip }

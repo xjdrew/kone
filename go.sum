@@ -6,10 +6,6 @@ github.com/songgao/water v0.0.0-20200317203138-2b4b6d7c09d8 h1:TG/diQgUe0pntT/2D
 github.com/songgao/water v0.0.0-20200317203138-2b4b6d7c09d8/go.mod h1:P5HUIBuIWKbyjl083/loAegFkfbFNx5i2qEP4CNbm7E=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
-github.com/thecodeteam/goodbye v0.0.0-20170927022442-a83968bda2d3 h1:COy7ekr2jBEd34npP2LvMTqk9UtiLkuvkjiJFHihlTo=
-github.com/thecodeteam/goodbye v0.0.0-20170927022442-a83968bda2d3/go.mod h1:ehwM4AFY4byYSorQbigh79cKUOUNL3pAOz5eCAQNlGI=
-github.com/xjdrew/dnsconfig v0.0.0-20240105033544-84960edf9ed4 h1:KwV+BOdqJQqbfq9U2O4XW9149J5yk2XMZ8MkRVm5+ic=
-github.com/xjdrew/dnsconfig v0.0.0-20240105033544-84960edf9ed4/go.mod h1:/6pBv59OGlUWZwToHJ7Aj5jBuWZJJArx0fRDpHoYJtI=
 go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
 go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
 golang.org/x/net v0.62.0 h1:18ELalfM5+XNRwzM2nYqXsZQ9ByS1uhj2O/U7+5jqRY=

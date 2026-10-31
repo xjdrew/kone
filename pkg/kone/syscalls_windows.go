@@ -1,144 +1,128 @@
-//
-//   date  : 2019-08-29
-//   author: SUCHMOKUO
-//
-
 package kone
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net"
-	"os"
-	"os/exec"
-	"strconv"
-	"strings"
+	"unicode/utf16"
 
 	"github.com/songgao/water"
-	"github.com/thecodeteam/goodbye"
 )
 
-var tunNet string
-
-func powershell(args ...string) error {
-	cmd := exec.Command("powershell", args...)
-	return cmd.Run()
-}
-
-func clearRoute(tun string) {
-	powershell(
-		"Remove-NetRoute",
-		"-InterfaceAlias", tun,
-		"-Confirm:$false")
-}
-
-func addRoute(tun string, subnet *net.IPNet) error {
-	tun = fmt.Sprintf(`"%s"`, tun)
-	subnetArg := fmt.Sprintf(`"%s"`, subnet.String())
-	return powershell(
-		"New-NetRoute",
-		"-DestinationPrefix", subnetArg,
-		"-InterfaceAlias", tun,
-		"-PolicyStore", "ActiveStore",
-		"-AddressFamily", "IPv4",
-		"-NextHop", tunNet)
-}
-
-func createTun(name string, ip net.IP, mask net.IPMask) (tunDevice, error) {
-	ipNet := &net.IPNet{
-		IP:   ip,
-		Mask: mask,
-	}
-
-	s := make([]byte, 4)
-	ip4 := ip.To4()
-	for i := range s {
-		s[i] = ip4[i] & mask[i]
-	}
-	tunNet = net.IPv4(s[0], s[1], s[2], s[3]).String()
-
-	ifce, err := water.New(water.Config{
-		DeviceType: water.TUN,
-		PlatformSpecificParams: water.PlatformSpecificParams{
-			ComponentID:   "tap0901",
-			InterfaceName: name,
-			Network:       ipNet.String(),
-		},
-	})
-
+// Encode both the script and its JSON parameters: adapter names and addresses
+// are data, never PowerShell source. No process-global network state is used.
+func (n systemNetwork) powershell(ctx context.Context, script string, params any) ([]byte, error) {
+	data, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
 	}
+	script = "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new(); $p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + base64.StdEncoding.EncodeToString(data) + "')) | ConvertFrom-Json; " + script
+	words := utf16.Encode([]rune(script))
+	encoded := make([]byte, len(words)*2)
+	for i, w := range words {
+		binary.LittleEndian.PutUint16(encoded[i*2:], w)
+	}
+	return n.run(ctx, "powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded))
+}
 
-	slog.Info("Initializing TUN device", "interface", ifce.Name())
+func (n systemNetwork) Open(ctx context.Context, cfg CoreConfig) (Device, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return water.New(water.Config{DeviceType: water.TUN, PlatformSpecificParams: water.PlatformSpecificParams{ComponentID: "tap0901", InterfaceName: cfg.Tun, Network: cfg.Network}})
+}
 
-	err = initTun(ifce.Name(), ipNet, MTU)
+type windowsSettings struct {
+	Index, MTU, Metric    int
+	AutomaticMetric, DHCP string
+	DNS                   []string
+	StaticDNS             bool
+	Addresses             []struct {
+		IPAddress    string
+		PrefixLength int
+	}
+}
+
+const readWindowsSettings = `
+$a=Get-NetAdapter -Name ([System.Management.Automation.WildcardPattern]::Escape($p.Name));
+$i=Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily IPv4;
+$dns=Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4;
+$key='HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\'+([guid]$a.InterfaceGuid).ToString('B');
+$static=(Get-ItemProperty -LiteralPath $key).NameServer;
+[pscustomobject]@{Index=[int]$a.ifIndex;MTU=[int]$i.NlMtu;Metric=[int]$i.InterfaceMetric;AutomaticMetric=$i.AutomaticMetric.ToString();DHCP=$i.Dhcp.ToString();DNS=@($dns.ServerAddresses);StaticDNS=![string]::IsNullOrWhiteSpace($static);Addresses=@(Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 | Select-Object IPAddress,PrefixLength)} | ConvertTo-Json -Depth 5 -Compress`
+
+func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) (Cleanup, error) {
+	data, err := n.powershell(ctx, readWindowsSettings, map[string]any{"Name": d.Name()})
 	if err != nil {
 		return nil, err
 	}
-
-	slog.Info("TUN device initialized", "interface", ifce.Name())
-	return ifce, nil
+	var old windowsSettings
+	if err := json.Unmarshal(data, &old); err != nil {
+		return nil, fmt.Errorf("read interface snapshot: %w", err)
+	}
+	if old.Index <= 0 || old.MTU <= 0 || (old.DHCP != "Enabled" && old.DHCP != "Disabled") || (old.AutomaticMetric != "Enabled" && old.AutomaticMetric != "Disabled") {
+		return nil, fmt.Errorf("invalid interface snapshot")
+	}
+	ip, subnet, _ := net.ParseCIDR(cfg.Network)
+	prefix, _ := subnet.Mask.Size()
+	for _, addr := range old.Addresses {
+		if addr.IPAddress == ip.String() {
+			return nil, fmt.Errorf("virtual address %s already exists on %s", ip, d.Name())
+		}
+	}
+	var undo undoStack
+	apply := func(name, script, restore string, params any) error {
+		// Property setters can complete before a timeout is observed. Restore
+		// the saved value even if an attempted command reports an error.
+		undo.add(name, func(ctx context.Context) error { _, err := n.powershell(ctx, restore, params); return err })
+		if _, err := n.powershell(ctx, script, params); err != nil {
+			return err
+		}
+		return nil
+	}
+	p := map[string]any{"Index": old.Index, "IP": ip.String(), "Prefix": prefix, "MTU": MTU, "OldMTU": old.MTU, "Metric": old.Metric, "Auto": old.AutomaticMetric, "DNS": old.DNS, "StaticDNS": old.StaticDNS}
+	if err := apply("MTU", `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -NlMtuBytes $p.MTU`, `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -NlMtuBytes $p.OldMTU`, p); err != nil {
+		return undo.restore, err
+	}
+	if err := apply("metric", `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1`, `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -InterfaceMetric $p.Metric -AutomaticMetric $p.Auto`, p); err != nil {
+		return undo.restore, err
+	}
+	if old.DHCP == "Enabled" {
+		if err := apply("DHCP", `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -Dhcp Disabled`, `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -Dhcp Enabled`, p); err != nil {
+			return undo.restore, err
+		}
+	}
+	if err := apply("address", `New-NetIPAddress -InterfaceIndex $p.Index -IPAddress $p.IP -PrefixLength $p.Prefix -PolicyStore ActiveStore | Out-Null`, `Get-NetIPAddress -InterfaceIndex $p.Index -IPAddress $p.IP -PrefixLength $p.Prefix -ErrorAction SilentlyContinue | Remove-NetIPAddress -Confirm:$false`, p); err != nil {
+		return undo.restore, err
+	}
+	if err := apply("DNS", `Get-DnsClientServerAddress -InterfaceIndex $p.Index -AddressFamily IPv4 | Set-DnsClientServerAddress -ServerAddresses @($p.IP)`, `$dns=Get-DnsClientServerAddress -InterfaceIndex $p.Index -AddressFamily IPv4; if($p.StaticDNS){$dns | Set-DnsClientServerAddress -ServerAddresses @($p.DNS)}else{$dns | Set-DnsClientServerAddress -ResetServerAddresses}`, p); err != nil {
+		return undo.restore, err
+	}
+	return undo.restore, nil
 }
 
-func initTun(tun string, ipNet *net.IPNet, mtu int) (err error) {
-	tun = fmt.Sprintf(`"%s"`, tun)
-	ip := fmt.Sprintf(`"%s"`, ipNet.IP)
-	prefix := strings.Split(ipNet.String(), "/")[1]
-
-	// clear previous route.
-	clearRoute(tun)
-
-	// clear route on quit.
-	goodbye.Notify(context.Background())
-	goodbye.Register(func(ctx context.Context, s os.Signal) {
-		slog.Info("Clearing TUN routes", "interface", tun)
-		clearRoute(tun)
-	})
-
-	// set interface mtu and metric.
-	err = powershell(
-		"Set-NetIPInterface",
-		"-InterfaceAlias", tun,
-		"-NlMtuBytes", strconv.Itoa(mtu),
-		"-InterfaceMetric", "1")
-
+func (n systemNetwork) AddRoute(ctx context.Context, d Device, subnet *net.IPNet) (Cleanup, error) {
+	p := map[string]any{"Name": d.Name(), "Prefix": subnet.String(), "Gateway": n.gateway}
+	data, err := n.powershell(ctx, `$a=Get-NetAdapter -Name ([System.Management.Automation.WildcardPattern]::Escape($p.Name)); @(Get-NetRoute -DestinationPrefix $p.Prefix -InterfaceIndex $a.ifIndex -PolicyStore ActiveStore -AddressFamily IPv4 -NextHop $p.Gateway -ErrorAction SilentlyContinue).Count | ConvertTo-Json`, p)
 	if err != nil {
+		return nil, err
+	}
+	var count int
+	if err := json.Unmarshal(data, &count); err != nil {
+		return nil, err
+	}
+	if count != 0 {
+		return nil, fmt.Errorf("route %s already exists on %s", subnet, d.Name())
+	}
+	cleanup := func(ctx context.Context) error {
+		_, err := n.powershell(ctx, `$a=Get-NetAdapter -Name ([System.Management.Automation.WildcardPattern]::Escape($p.Name)); Get-NetRoute -DestinationPrefix $p.Prefix -InterfaceIndex $a.ifIndex -PolicyStore ActiveStore -AddressFamily IPv4 -NextHop $p.Gateway -ErrorAction SilentlyContinue | Remove-NetRoute -Confirm:$false`, p)
 		return err
 	}
-
-	// remove all previous ips of tun.
-	err = powershell(
-		"Remove-NetIPAddress",
-		"-InterfaceAlias", tun,
-		"-AddressFamily", "IPv4",
-		"-Confirm:$false")
-
-	if err != nil {
-		return err
-	}
-
-	// add dns for tun.
-	err = powershell(
-		"Set-DnsClientServerAddress",
-		"-InterfaceAlias", tun,
-		"-ServerAddresses", ip)
-
-	if err != nil {
-		return err
-	}
-
-	// add ip for tun.
-	return powershell(
-		"New-NetIPAddress",
-		"-InterfaceAlias", tun,
-		"-IPAddress", ip,
-		"-PrefixLength", prefix,
-		"-PolicyStore", "ActiveStore",
-		"-AddressFamily", "IPv4")
+	_, err = n.powershell(ctx, `$a=Get-NetAdapter -Name ([System.Management.Automation.WildcardPattern]::Escape($p.Name)); New-NetRoute -DestinationPrefix $p.Prefix -InterfaceIndex $a.ifIndex -PolicyStore ActiveStore -AddressFamily IPv4 -NextHop $p.Gateway | Out-Null`, p)
+	return cleanup, err
 }
 
-func fixTunIP(ip net.IP) net.IP {
-	return ip
-}
+func fixTunIP(ip net.IP) net.IP { return ip }

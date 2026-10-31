@@ -1,18 +1,13 @@
-//
-//   date  : 2016-05-13
-//   author: xjdrew
-//
-
 package kone
 
 import (
+	"context"
+	"github.com/xjdrew/kone/pkg/tcpip"
 	"io"
 	"log/slog"
 	"net"
 	"strconv"
-	"time"
-
-	"github.com/xjdrew/kone/pkg/tcpip"
+	"sync"
 )
 
 type TCPRelay struct {
@@ -20,123 +15,125 @@ type TCPRelay struct {
 	nat       *Nat
 	relayIP   net.IP
 	relayPort uint16
+	active    connections
 }
 
-func copy(src net.Conn, dst net.Conn, ch chan<- int64) {
-	defer dst.Close()
-
-	written, _ := io.Copy(dst, src)
-	ch <- written
+func (r *TCPRelay) realRemoteHost(conn net.Conn, data *ConnData) (string, string) {
+	return r.remoteHost(context.Background(), r.one.policy.Load(), conn, data)
 }
-
-func (r *TCPRelay) realRemoteHost(conn net.Conn, connData *ConnData) (addr string, proxy string) {
-	remoteAddr := conn.RemoteAddr().(*net.TCPAddr)
-	remotePort := uint16(remoteAddr.Port)
-
-	session := r.nat.getSession(remotePort)
-	if session == nil {
-		slog.Error("TCP session not found", "local_address", conn.LocalAddr(), "source", remoteAddr)
-		return
+func (r *TCPRelay) remoteHost(ctx context.Context, s *runtimeSnapshot, conn net.Conn, data *ConnData) (string, string) {
+	remote, ok := conn.RemoteAddr().(*net.TCPAddr)
+	if !ok {
+		return "", ""
 	}
-
-	one := r.one
-	one.policyMu.RLock()
-	defer one.policyMu.RUnlock()
-	dstIP := session.dstIP
-
-	var host string
-	if one.dnsTable.IsLocalIP(dstIP) { // for dns hijacked traffic
-		record := one.dnsTable.GetByIP(dstIP)
+	session := r.nat.getSession(uint16(remote.Port))
+	if session == nil {
+		return "", ""
+	}
+	host := session.dstIP.String()
+	policy := s.rule.Proxy(session.dstIP)
+	if r.one.dnsTable.IsLocalIP(session.dstIP) {
+		record := r.one.dnsTable.GetByIP(session.dstIP)
 		if record == nil {
-			slog.Debug("Virtual IP mapping expired", "src_ip", session.srcIP, "src_port", session.srcPort, "dst_ip", dstIP, "dst_port", session.dstPort)
-			return
+			return "", ""
 		}
-
 		host = record.Hostname
-		proxy = record.Proxy
-		connData.Dst = host
-		if proxy == "DIRECT" {
+		data.Dst = host
+		policy = s.rule.ProxyDNS(host, record.resolved)
+		if policy == "DIRECT" {
 			if record.RealIP == nil {
-				msg, err := one.dns.Resolve(record.Hostname)
+				msg, err := r.one.dns.ResolveContext(ctx, host)
 				if err != nil {
-					return
+					return "", ""
 				}
 				record.SetRealIP(msg)
-				one.dnsTable.SetRealIP(record.Hostname, msg)
+				r.one.dnsTable.SetRealIP(host, msg)
 			}
 			if record.RealIP == nil {
-				return
+				return "", ""
 			}
 			host = record.RealIP.String()
 		}
-	} else { // for IP-CIDR rule traffic
-		host = dstIP.String()
-		proxy = one.rule.Proxy(dstIP)
 	}
-
-	connData.Src = session.srcIP.String()
-	if connData.Dst == "" {
-		connData.Dst = host
+	data.Src = session.srcIP.String()
+	if data.Dst == "" {
+		data.Dst = host
 	}
-	connData.Proxy = proxy
+	data.Proxy = policy
+	return net.JoinHostPort(host, strconv.Itoa(int(session.dstPort))), policy
+}
 
-	addr = net.JoinHostPort(host, strconv.Itoa(int(session.dstPort)))
-	slog.Debug("TCP tunnel selected", "src_ip", session.srcIP, "src_port", session.srcPort, "destination", addr, "proxy", proxy)
+type copied struct {
+	upload bool
+	bytes  int64
+}
+
+func relayConnections(left, right net.Conn) (upload, download int64) {
+	results := make(chan copied, 2)
+	copyDirection := func(dst, src net.Conn, up bool) {
+		n, err := io.Copy(dst, src)
+		if err != nil {
+			left.Close()
+			right.Close()
+		} else if half, ok := dst.(interface{ CloseWrite() error }); ok {
+			half.CloseWrite()
+		} else {
+			dst.Close()
+		}
+		results <- copied{up, n}
+	}
+	go copyDirection(right, left, true)
+	go copyDirection(left, right, false)
+	for range 2 {
+		result := <-results
+		if result.upload {
+			upload = result.bytes
+		} else {
+			download = result.bytes
+		}
+	}
 	return
 }
 
-func (r *TCPRelay) handleConn(conn net.Conn) {
-	var connData ConnData
-	remoteAddr, proxy := r.realRemoteHost(conn, &connData)
-	if remoteAddr == "" {
-		conn.Close()
+func (r *TCPRelay) handleConn(ctx context.Context, s *runtimeSnapshot, conn net.Conn) {
+	defer func() { conn.Close(); r.active.remove(conn) }()
+	var data ConnData
+	addr, policy := r.remoteHost(ctx, s, conn, &data)
+	if addr == "" {
 		return
 	}
-
-	proxies := r.one.proxies
-	tunnel, err := proxies.Dial(proxy, remoteAddr)
+	tunnel, err := s.proxies.DialContext(ctx, policy, addr)
 	if err != nil {
-		conn.Close()
-		slog.Error("Proxy dial failed", "destination", remoteAddr, "proxy", proxy, "error", err)
+		if ctx.Err() == nil {
+			slog.Debug("Proxy dial failed", "destination", addr, "proxy", policy, "error", err)
+		}
 		return
 	}
-
-	slog.Debug("TCP tunnel opened", "destination", remoteAddr, "proxy", proxy)
-
-	uploadChan := make(chan int64)
-	downloadChan := make(chan int64)
-
-	go copy(conn, tunnel, uploadChan)
-	go copy(tunnel, conn, downloadChan)
-
-	connData.Upload = <-uploadChan
-	connData.Download = <-downloadChan
-
-	slog.Debug("TCP tunnel closed", "destination", remoteAddr, "upload_bytes", connData.Upload, "download_bytes", connData.Download)
+	if !r.active.add(tunnel) {
+		return
+	}
+	defer func() { tunnel.Close(); r.active.remove(tunnel) }()
+	data.Upload, data.Download = relayConnections(conn, tunnel)
 	if r.one.manager != nil {
-		r.one.manager.dataCh <- connData
+		r.one.manager.Record(data)
 	}
 }
 
-func (r *TCPRelay) Serve() error {
-	addr := &net.TCPAddr{IP: r.relayIP, Port: int(r.relayPort)}
-	ln, err := net.ListenTCP("tcp", addr)
-	if err != nil {
-		slog.Error("TCP listener failed", "error", err)
-		return err
-	}
-
-	slog.Info("TCP listener starting", "address", addr)
-
+func (r *TCPRelay) serve(parent context.Context, ln net.Listener) error {
+	ctx, cancel := context.WithCancel(parent)
+	var wg sync.WaitGroup
+	defer func() { cancel(); ln.Close(); r.active.close(); wg.Wait() }()
 	for {
-		conn, err := ln.AcceptTCP()
+		conn, err := ln.Accept()
 		if err != nil {
-			slog.Error("TCP accept failed", "error", err)
-			time.Sleep(time.Second) //prevent log storms
-			continue
+			return err
 		}
-		slog.Debug("TCP connection accepted", "source", conn.RemoteAddr(), "local_address", conn.LocalAddr())
-		go r.handleConn(conn)
+		if !r.active.add(conn) {
+			return nil
+		}
+		s := r.one.policy.Load()
+		wg.Add(1)
+		go func() { defer wg.Done(); r.handleConn(ctx, s, conn) }()
 	}
 }
 

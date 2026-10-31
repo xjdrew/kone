@@ -131,3 +131,26 @@ jobs:
       - uses: actions/checkout@v7.0.1
       - run: docker build -f deploy/docker/Dockerfile -t kone:ci .
       - run: docker run --rm kone:ci -check -config /etc/kone/config.toml
+
+  system:
+    name: Linux TUN lifecycle and fault injection
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Build system tests and CLI
+        run: |
+          go build -o "$RUNNER_TEMP/kone-system-cli" ./cmd/kone
+          go test -race -c -o "$RUNNER_TEMP/kone-system.test" ./test/integration
+      - name: Test real TUN in isolated network namespace
+        run: |
+          sudo unshare --net -- bash -c '
+            set -e
+            ip link set lo up
+            export KONE_SYSTEM_TEST=1
+            export KONE_SYSTEM_CLI="$1"
+            "$2" -test.run "^TestSystemLifecycle" -test.v -test.timeout 120s
+          ' -- "$RUNNER_TEMP/kone-system-cli" "$RUNNER_TEMP/kone-system.test"

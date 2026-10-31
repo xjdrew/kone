@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/xjdrew/kone/pkg/kone"
 )
@@ -13,6 +16,10 @@ import (
 var VERSION = "0.3-dev"
 
 func run(args []string, stdout, stderr io.Writer) int {
+	return runContext(context.Background(), args, stdout, stderr)
+}
+
+func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("kone", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	version := flags.Bool("version", false, "Print version")
@@ -65,8 +72,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		slog.Error("Startup failed", "error", err)
 		return 3
 	}
-	one.Serve()
+	if err := one.Run(ctx); err != nil {
+		slog.Error("KONE stopped", "error", err)
+		return 3
+	}
 	return 0
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := runContext(ctx, os.Args[1:], os.Stdout, os.Stderr)
+	stop()
+	os.Exit(code)
+}

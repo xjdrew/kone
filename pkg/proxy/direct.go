@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"net"
 	"time"
 )
@@ -11,5 +12,9 @@ type direct struct{}
 var Direct = direct{}
 
 func (direct) Dial(network, addr string) (net.Conn, error) {
-	return (&net.Dialer{Timeout: 30 * time.Second}).Dial(network, addr)
+	return Direct.DialContext(context.Background(), network, addr)
+}
+
+func (direct) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	return (&net.Dialer{Timeout: 30 * time.Second}).DialContext(ctx, network, addr)
 }

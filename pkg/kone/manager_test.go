@@ -15,8 +15,10 @@ func TestManagerReloadAndRedaction(t *testing.T) {
 	cleanProxyEnv(t)
 	one := testEngine(t)
 	filename := filepath.Join(t.TempDir(), "config.toml")
-	one.cfg.source = filename
-	m := NewManager(one, one.cfg)
+	cfg := one.Snapshot().Config
+	cfg.source = filename
+	require.NoError(t, one.Reload(cfg))
+	m := NewManager(one, one.Snapshot().Config)
 	handler := m.Handler()
 	get := httptest.NewRecorder()
 	handler.ServeHTTP(get, httptest.NewRequest(http.MethodGet, "/reload/", nil))
@@ -26,13 +28,15 @@ func TestManagerReloadAndRedaction(t *testing.T) {
 	post := httptest.NewRecorder()
 	handler.ServeHTTP(post, httptest.NewRequest(http.MethodPost, "/reload/", nil))
 	require.Equal(t, http.StatusInternalServerError, post.Code)
-	require.Equal(t, "A", one.rule.Proxy("example.com"))
-	require.Equal(t, "A", m.cfg.Rule[0].Proxy)
-	m.cfg.Proxy["Secret"] = "https://user:password@example.com:443"
+	require.Equal(t, "A", one.policy.Load().rule.Proxy("example.com"))
+	require.Equal(t, "A", one.Snapshot().Config.Rule[0].Proxy)
+	cfg = one.Snapshot().Config
+	cfg.Proxy["Secret"] = "https://user:password@example.com:443"
+	require.NoError(t, one.Reload(cfg))
 	view := httptest.NewRecorder()
 	handler.ServeHTTP(view, httptest.NewRequest(http.MethodGet, "/config/", nil))
 	require.Equal(t, http.StatusOK, view.Code)
 	require.False(t, strings.Contains(view.Body.String(), "password"))
 	// Each engine owns an independent mux; no global handler registrations.
-	require.NotPanics(t, func() { NewManager(one, one.cfg).Handler() })
+	require.NotPanics(t, func() { NewManager(one, one.Snapshot().Config).Handler() })
 }

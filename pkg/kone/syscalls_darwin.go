@@ -1,69 +1,51 @@
-//
-//   date  : 2017-07-14
-//   author: xjdrew
-//
-
 package kone
 
 import (
+	"context"
 	"fmt"
-	"log/slog"
 	"net"
-	"os/exec"
-	"strings"
+	"strconv"
 
 	"github.com/songgao/water"
 )
 
-func execCommand(name, sargs string) error {
-	args := strings.Split(sargs, " ")
-	cmd := exec.Command(name, args...)
-	slog.Info("Executing network command", "command", name, "arguments", sargs)
-	return cmd.Run()
-}
-
-func initTun(tun string, ipNet *net.IPNet, mtu int) error {
-	ip := ipNet.IP
-	maskIP := net.IP(ipNet.Mask)
-	sargs := fmt.Sprintf("%s %s %s mtu %d netmask %s up", tun, ip.String(), ip.String(), mtu, maskIP.String())
-	if err := execCommand("ifconfig", sargs); err != nil {
-		return err
+func (n systemNetwork) Open(ctx context.Context, cfg CoreConfig) (Device, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return addRoute(tun, ipNet)
+	if cfg.Tun != "" {
+		if _, err := net.InterfaceByName(cfg.Tun); err == nil {
+			return nil, fmt.Errorf("refusing to modify existing interface %q", cfg.Tun)
+		}
+	}
+	return water.New(water.Config{DeviceType: water.TUN, PlatformSpecificParams: water.PlatformSpecificParams{Name: cfg.Tun}})
 }
 
-func addRoute(tun string, subnet *net.IPNet) error {
-	ip := subnet.IP
-	maskIP := net.IP(subnet.Mask)
-	sargs := fmt.Sprintf("-n add -net %s -netmask %s -interface %s", ip.String(), maskIP.String(), tun)
-	return execCommand("route", sargs)
-}
-
-func createTun(name string, ip net.IP, mask net.IPMask) (tunDevice, error) {
-	ifce, err := water.New(water.Config{
-		DeviceType:             water.TUN,
-		PlatformSpecificParams: water.PlatformSpecificParams{Name: name},
-	})
-
+func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) (Cleanup, error) {
+	ip, subnet, _ := net.ParseCIDR(cfg.Network)
+	_, err := n.run(ctx, "ifconfig", d.Name(), ip.String(), ip.String(), "mtu", strconv.Itoa(MTU), "netmask", net.IP(subnet.Mask).String(), "up")
 	if err != nil {
 		return nil, err
 	}
+	var undo undoStack
+	undo.add("interface", func(ctx context.Context) error { _, err := n.run(ctx, "ifconfig", d.Name(), "down"); return err })
+	cleanup, err := n.AddRoute(ctx, d, subnet)
+	undo.add("virtual subnet", cleanup)
+	return undo.restore, err
+}
 
-	slog.Info("TUN device created", "interface", ifce.Name())
-
-	ipNet := &net.IPNet{
-		IP:   ip,
-		Mask: mask,
-	}
-
-	if err := initTun(ifce.Name(), ipNet, MTU); err != nil {
-		ifce.Close()
+func (n systemNetwork) AddRoute(ctx context.Context, d Device, subnet *net.IPNet) (Cleanup, error) {
+	args := []string{"-n", "add", "-net", subnet.IP.String(), "-netmask", net.IP(subnet.Mask).String(), "-interface", d.Name()}
+	_, err := n.run(ctx, "route", args...)
+	if err != nil {
 		return nil, err
 	}
-	return ifce, nil
+	return func(ctx context.Context) error {
+		copy := append([]string(nil), args...)
+		copy[1] = "delete"
+		_, err := n.run(ctx, "route", copy...)
+		return err
+	}, nil
 }
 
-// can't listen on tun's ip in macosx
-func fixTunIP(ip net.IP) net.IP {
-	return net.IPv4zero
-}
+func fixTunIP(ip net.IP) net.IP { return net.IPv4zero }

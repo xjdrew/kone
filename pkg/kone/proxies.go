@@ -1,6 +1,7 @@
 package kone
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,15 +13,19 @@ import (
 type Proxies struct{ proxies map[string]*proxy.Proxy }
 
 func (p *Proxies) Dial(name, addr string) (net.Conn, error) {
+	return p.DialContext(context.Background(), name, addr)
+}
+
+func (p *Proxies) DialContext(ctx context.Context, name, addr string) (net.Conn, error) {
 	if name == "REJECT" {
 		return nil, errors.New("connection rejected by routing policy")
 	}
 	if name == "DIRECT" {
-		return proxy.Direct.Dial("tcp", addr)
+		return proxy.Direct.DialContext(ctx, "tcp", addr)
 	}
 	slog.Debug("Dialing proxy", "destination", addr, "proxy", name)
 	if dialer := p.proxies[name]; dialer != nil {
-		return dialer.Dial("tcp", addr)
+		return dialer.DialContext(ctx, "tcp", addr)
 	}
 	return nil, fmt.Errorf("unknown proxy %q", name)
 }
