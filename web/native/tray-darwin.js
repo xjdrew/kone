@@ -27,6 +27,8 @@ function run(argv) {
   ObjC.bindFunction("exit", ["void", ["int"]]);
   ObjC.bindFunction("fcntl", ["int", ["int", "int", "int"]]);
   ObjC.bindFunction("read", ["long", ["int", "void *", "unsigned long"]]);
+  ObjC.bindFunction("objc_autoreleasePoolPush", ["void *", []]);
+  ObjC.bindFunction("objc_autoreleasePoolPop", ["void", ["void *"]]);
 
   var output = $.NSFileHandle.fileHandleWithStandardOutput;
   var errors = $.NSFileHandle.fileHandleWithStandardError;
@@ -216,7 +218,9 @@ function run(argv) {
     }
     write(output, "READY");
     while (alive) {
-      var pool = $.NSAutoreleasePool.alloc.init;
+      // NSAutoreleasePool objects cannot be retained by the JXA bridge. Use
+      // opaque runtime pool tokens so the bridge never wraps/retains a pool.
+      var pool = $.objc_autoreleasePoolPush();
       try {
         readState();
         if (!alive) break;
@@ -229,7 +233,7 @@ function run(argv) {
         if (!event.isNil()) app.sendEvent(event);
         app.updateWindows;
       } finally {
-        pool.drain;
+        $.objc_autoreleasePoolPop(pool);
       }
     }
   } catch (error) {

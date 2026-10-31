@@ -2,7 +2,7 @@
 
 本索引将 [产品需求](features.md) 和 [管理页面需求](management-ui-requirements.md) 关联到实现、自动化证据和仍需人工验收的边界。实现代码、用例存在、CI 通过及真机验收是四个不同状态；最终结果以 [本轮 PR 的最新检查](https://github.com/xjdrew/kone/pull/40/checks) 为准，不以编译成功或界面显示推断网络已经成功。
 
-开发验证只运行合成/回环服务及隔离浏览器 API，没有启动本机 KONE，也没有修改用户正在使用的代理、DNS、路由或防火墙。需要真实 TUN 的测试只在 CI 的 Linux 临时网络命名空间或 Windows 专用 runner 中执行。
+开发验证只运行合成/回环服务及隔离浏览器 API，没有启动本机 KONE，也没有修改用户正在使用的代理、DNS、路由或防火墙。需要真实 TUN 的测试只在 CI 的 Linux 临时网络命名空间及 Windows/macOS 专用 runner 中执行。
 
 | 需求 | 本轮落点 | 自动化证据/入口 | 验收边界 |
 | --- | --- | --- | --- |
@@ -16,7 +16,7 @@
 | DNS-02 | 最长后缀排他解析器，内部名称失败不回退公网，系统上游按运行发现 | [DNS 端点](../pkg/kone/dns_endpoint_test.go)、[配置](../pkg/kone/config_model_test.go)、[DNS 说明](configuration.md) | 原生多接口搜索域/企业 VPN 的全部解析语义仍需各平台验证 |
 | DNS-03 | 查询事件/缓存/负响应/真实与虚拟地址分离、容量/过期、活动映射 pin | [缓存与映射](../pkg/kone/dns_cache_test.go)、[查询界面](../web/src/app.js) | DoH/DoT 绕开不可观察；不解密 TLS，不永久保留全部查询 |
 | OBS-01/02/03 | TCP/UDP 统一载荷计数、零字节失败、独立整体计数、有界明细和快照游标 | [观察回归](../pkg/kone/observation_test.go)、[真实数据链路](../test/integration/observability_linux_test.go) | 已淘汰明细不由新连接补位；速率与累计、业务与控制分开 |
-| OBS-04 | Windows IPHelper、Linux proc、macOS lsof/ps 尽力关联，验证时间/标识，异步有界队列 | [进程采集](../pkg/process)、[本机真实连接](../pkg/process/native_test.go) | 远端 LAN、权限不足、复用或尚不支持的元组均标未知/远端，不伪归属 |
+| OBS-04 | Windows IPHelper、Linux proc、macOS lsof/ps 尽力关联本地 IPv4 流，验证时间/标识，异步有界队列 | [进程采集](../pkg/process)、[本机真实连接](../pkg/process/native_test.go) | IPv6、远端 LAN、权限不足或无法排除复用的元组标未知/远端，不伪归属 |
 | DIAG-01/02/03 | 用户明确目标、独立 TCP/可选 TLS、直连/代理对比、限并发/超时/去重/取消 | [诊断任务](../pkg/control/tasks_test.go)、[浏览器诊断](../web/e2e/console.spec.js) | 不重放业务；独立 UDP 探测暂不支持，界面明确禁用；内部名称使用其解析范围 |
 | CFG-01/02/03/04 | 无参数先打开管理，用户目录持久化，单 TUN 元数据，命名出站及稳定 ID/启停，凭据保留/替换/清除，严格 TOML 导入/默认恢复 | [存储与导入](../pkg/control/tasks_test.go)、[CLI](../test/integration/cli_test.go)、[管理端到端](../test/integration/control_test.go) | 禁用代理后新连接明确拒绝，不执行直连/UDP 回退；损坏原件保留，现有连接保留其原快照 |
 | UI-01/02/03 | 八页面离线 Web、状态/错误/权限、显式副作用、Host/Origin/会话/CSRF 保护 | [API 安全](../pkg/control/server_test.go)、[前端单元](../web/test)、[浏览器](../web/e2e/console.spec.js) | 前端禁用按钮之外还有服务端权限检查；请求成功不代替运行结果 |
@@ -27,7 +27,7 @@
 | PERF-01/02 | 规则、DNS、GeoIP、观察开关/会话/并发管理查询与高基数容量基线，system/mixed 构建留档 | [基线说明](performance.md)、[核心基准](../pkg/kone/core_benchmark_test.go)、[观察基准](../pkg/kone/observation_benchmark_test.go) | 这是核心 CPU/分配及合成计数，不是 TUN 带宽或 RTT；真实硬件/长时转发需独立实验 |
 | DATA-01 | 有界本地文件、可信 SHA-256、来源许可版本、原子保存、回退与明确下次加载 | [GeoIP 数据](../pkg/geoip/database_test.go)、[控制 API](../pkg/control/geoip_test.go)、[端到端](../test/integration/geoip_test.go)、[界面校验](../web/e2e/console.spec.js) | 不根据输入 URL 自动下载；保存前需暂停，不替换旧流持有的数据快照 |
 | PROTO-01 | SOCKS5 原生 UDP、保留 direct/reject/显式回退；Linux/Windows 可选 IPv6 A/AAAA、规则、TCP/UDP、清理 | [Linux IPv6](../test/integration/ipv6_linux_test.go)、[Windows IPv6](../test/integration/ipv6_windows_test.go)、[IPv6 范围](ipv6.md)、[UDP 传输](../pkg/proxy) | macOS IPv6 启用明确拒绝；ICMP、任意分片/扩展头不在未验收时承诺 |
-| PROTO-02 | 三种 Shadowsocks AEAD2017 方法，TCP/原生 UDP、认证与篡改拒绝 | [独立协议互操作](../test/integration/shadowsocks_test.go)、[出站说明](configuration.md) | 不支持旧流密码、AEAD-2022、插件；实际第三方服务端版本仍需部署互操作 |
+| PROTO-02 | 三种 Shadowsocks AEAD2017 方法，TCP/原生 UDP、认证与篡改拒绝；与固定官方 shadowsocks-rust v1.25.0 镜像互操作 | [独立协议互操作](../test/integration/shadowsocks_test.go)、[官方服务端验收](shadowsocks-interop.md)、[出站说明](configuration.md) | 不支持旧流密码、AEAD-2022、插件；其他服务端/版本需独立验收 |
 | REL-01/02/03 | 每 first-parent master SHA 独立全门禁，版本/源码/工件绑定，开发唯一预发布、稳定升格、撤回与回退 | [发布逻辑单测](../test/release/release.test.mjs)、[发布流程](../.github/workflows/release.yml)、[操作说明](releases.md) | PR 只验证打包，不产生生产 Release；签名/公证和真实发布由合并后授权流程验收 |
 
 ## 评审时按这条路径验证

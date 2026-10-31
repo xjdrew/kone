@@ -49,7 +49,9 @@ cp configs/kone.example.toml config.toml
 sudo ./dist/kone -config config.toml
 ```
 
-On Windows, build `dist/kone.exe`. Normal startup validates the configuration and requests UAC elevation when needed, handing off to a visible administrator window. Read-only flags do not request elevation; services/headless callers can use `-no-elevate`. Smart App Control trust is separate from UAC. See [Windows setup](docs/windows/README.md).
+On Windows, build `dist/kone.exe`. The managed console stays at ordinary user privileges and requests a separate UAC network helper when capture needs elevation. Explicit file mode hands off to a visible administrator window when needed; services/headless callers can use `-no-elevate`. Read-only flags do not request elevation. Smart App Control trust is separate from UAC. See [Windows setup](docs/windows/README.md).
+
+On macOS, the managed console and menu bar run as the ordinary desktop user. Enabling capture requests administrator authorization for a separate network helper. See [macOS permissions](docs/macos-helper.md) and [menu bar behavior](docs/macos-tray.md).
 
 `-check` validates configuration without creating a TUN device or changing routes. `-version` prints the version and exits successfully. `-debug` overrides the configured log level. Logs are structured text or JSON on stderr; CLI results go to stdout.
 
@@ -71,8 +73,8 @@ Reload atomically publishes domain/GeoIP/default rules and outbound definitions,
 - TCP uses the selected outbound. UDP uses direct for direct rules and always denies reject rules. SOCKS5 and supported Shadowsocks AEAD2017 outbounds carry native UDP; HTTP/HTTPS CONNECT do not. Unsupported proxy UDP is denied by default; set `udp-fallback = "direct"` only when direct UDP is intended. Shadowsocks plugins, legacy stream ciphers and AEAD-2022 are outside the supported range.
 - The default `system` stack works with an ordinary Go build. Optional `mixed` (system TCP and gVisor UDP) requires `-tags with_gvisor`; see [stack selection](docs/configuration.md#tun-backend-and-stack). Packet/fragment behavior depends on the selected stack; arbitrary fragmentation is not a compatibility guarantee yet.
 - Startup failures roll back owned network changes; normal signal/context shutdown closes active flows and restores adapter settings. Forced termination cannot run cleanup. See [runtime reliability](docs/runtime.md).
-- Full IPv4 capture requires `core.outbound-interface` so proxy transports and DNS leave through the physical interface. Changing that interface requires a restart; automatic network switching and crash recovery remain future work.
-- GeoIP rules currently use a bundled legacy database; database updates remain future work.
+- Full IPv4 capture requires `core.outbound-interface` so proxy transports and DNS leave through the physical interface. Network changes pause capture for a new preflight; the recovery journal detects leftovers and only restores resources whose ownership can be verified.
+- GeoIP uses bundled DB-IP Country Lite October 2026 IPv4 data, with verified local imports and previous-version recovery. IPv6 country lookup remains outside this dataset. See [GeoIP data and attribution](docs/geoip.md).
 - The explicit file mode's legacy manager has no authentication. The managed console authenticates local and mobile sessions; legacy bindings still require loopback isolation or an authenticated management layer.
 
 ## Development
@@ -86,7 +88,7 @@ cd web
 npm ci
 npm test
 npm run build
-npx playwright install chromium
+npx playwright install chromium webkit firefox
 npm run test:e2e
 ```
 

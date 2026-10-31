@@ -7,12 +7,36 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/route"
 	"golang.org/x/sys/unix"
 )
+
+// RTM_GET and RIB reads only inspect kernel state. This verifies the real
+// socket/acknowledgement ABI as an ordinary macOS user without adding routes,
+// creating a TUN, contacting a host, or changing DNS.
+func TestDarwinNativeRoutingSocketReadOnly(t *testing.T) {
+	r := newDarwinRoutes()
+	messages, err := r.read()
+	require.NoError(t, err)
+	require.NotEmpty(t, messages)
+	addresses := make([]route.Addr, unix.RTAX_MAX)
+	addresses[unix.RTAX_DST] = &route.Inet4Addr{IP: [4]byte{127, 0, 0, 1}}
+	addresses[unix.RTAX_IFP] = &route.LinkAddr{}
+	request := &route.RouteMessage{Version: unix.RTM_VERSION, Type: unix.RTM_GET, Flags: unix.RTF_UP | unix.RTF_HOST, ID: uintptr(os.Getpid()), Seq: int(darwinRouteSequence.Add(1)), Addrs: addresses}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	sent, response, err := exchangeDarwinRoute(ctx, request)
+	require.NoError(t, err)
+	require.True(t, sent)
+	require.Equal(t, request.Seq, response.Seq)
+	require.Equal(t, request.ID, response.ID)
+	require.Positive(t, response.Index, "loopback route must identify an actual local interface")
+}
 
 func testDarwinRouteTable() (darwinRoutes, *[]route.Message, *[]int) {
 	var messages []route.Message

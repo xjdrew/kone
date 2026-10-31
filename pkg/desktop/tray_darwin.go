@@ -12,10 +12,12 @@ import (
 	"github.com/xjdrew/kone/web"
 )
 
-// Enable only after native AppKit selector and protocol self-tests pass.
-const darwinTrayValidated = false
+// Native CI verifies real AppKit initialization and menu selectors. Availability
+// is finalized by the child's READY handshake; headless or failed desktop
+// sessions report the cause and retain Web management.
+const darwinTrayValidated = true
 
-func TrayAvailable() bool { return darwinTrayValidated }
+func TrayAvailable() bool { return darwinTrayValidated && os.Geteuid() != 0 }
 
 type trayDiagnostic struct {
 	sync.Mutex

@@ -60,6 +60,34 @@ func TestDarwinPrivateSocketOwnershipAndPeerCredentials(t *testing.T) {
 	require.Equal(t, executable, path)
 }
 
+func TestDarwinPublicHelperPreflightPreservesBlockingIssues(t *testing.T) {
+	require.True(t, PrivilegeSeparationAvailable(), "native IPC and UTUN acceptance enable the public macOS helper")
+	require.Equal(t, os.Geteuid() != 0, NeedsHelper())
+	require.Equal(t, os.Geteuid() != 0, TrayAvailable(), "ordinary desktop entry attempts a bounded runtime READY handshake")
+	cfg := kone.DefaultConfig()
+	cfg.Core.Network = "198.18.239.1/24"
+	report := Preflight(context.Background(), cfg)
+	if NeedsHelper() {
+		found := false
+		for _, issue := range report.Issues {
+			if issue.Code == "privileges" {
+				found = true
+				require.Equal(t, "info", issue.Severity)
+				require.Contains(t, issue.Message, "explicit macOS administrator authorization")
+			}
+		}
+		require.True(t, found, "ordinary management must explain deferred helper authorization")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.NoError(t, RunTray(ctx, TrayActions{}), "canceled tray startup must not launch a desktop process")
+	report = Preflight(ctx, cfg)
+	require.False(t, report.Ready, "the helper can relax only the privilege issue, never a real blocker")
+	require.Contains(t, report.Issues, kone.PreflightIssue{Code: "canceled", Severity: "error", Message: context.Canceled.Error()})
+	_, err := NewEngine(cfg, nil)
+	require.ErrorContains(t, err, "authorization launcher")
+}
+
 func TestDarwinPrivateHelperSubprocess(t *testing.T) {
 	if os.Getenv("KONE_PRIVATE_DARWIN_TEST") != "1" {
 		return

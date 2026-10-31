@@ -9,9 +9,10 @@ import (
 
 type LaunchHelper func(context.Context, string, []string) error
 
-// Enable only after the native macOS private-helper CI tests have passed.
+// Native CI verifies authenticated ordinary-user/root IPC, disconnect cleanup,
+// and real system/mixed UTUN traffic with ownership-preserving rollback.
 // Signing/notarization remains a separate distribution requirement.
-const darwinHelperValidated = false
+const darwinHelperValidated = true
 
 func PrivilegeSeparationAvailable() bool { return darwinHelperValidated }
 func NeedsHelper() bool                  { return darwinHelperValidated && os.Geteuid() != 0 }

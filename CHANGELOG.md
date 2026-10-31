@@ -14,8 +14,8 @@
 - Update built-in IPv4 country data to DB-IP Country Lite October 2026.
 - Show verified local process ownership where the operating system allows it.
 - Support optional IPv6 capture on Linux and Windows.
-- Request a separate Windows network helper when capture needs administrator permission.
-- Control capture from the Windows system tray.
+- Request a separate Windows/macOS network helper when capture needs administrator permission.
+- Control capture from the Windows system tray or macOS menu bar.
 - Support expiring domain rules and disabled proxy outbounds.
 - Guide system DNS through KONE on supported Linux systems.
 - Preserve discovered private DNS scopes and show resolver context.

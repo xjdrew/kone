@@ -518,9 +518,30 @@ func (one *One) Run(parent context.Context) (result error) {
 		if !ok {
 			return errors.New("network backend cannot configure system DNS")
 		}
-		restoreSystemDNS, err = configurer.ConfigureSystemDNS(ctx, device, cfg.Core, cfg.DNS)
+		var leaseFailures <-chan error
+		if lease, ok := configurer.(SystemDNSLeaseConfigurer); ok {
+			restoreSystemDNS, leaseFailures, err = lease.ConfigureSystemDNSLease(ctx, device, cfg.Core, cfg.DNS)
+			if err == nil && leaseFailures == nil {
+				err = errors.New("system DNS lease returned no failure channel")
+			}
+		} else {
+			restoreSystemDNS, err = configurer.ConfigureSystemDNS(ctx, device, cfg.Core, cfg.DNS)
+		}
 		if err != nil {
 			return fmt.Errorf("configure system DNS: %w", err)
+		}
+		if leaseFailures != nil {
+			start("system DNS lease", func() error {
+				select {
+				case failure, open := <-leaseFailures:
+					if !open || failure == nil {
+						return errors.New("system DNS lease ended unexpectedly")
+					}
+					return failure
+				case <-ctx.Done():
+					return nil
+				}
+			})
 		}
 	}
 	start("DNS cache", func() error { return one.dns.Maintain(ctx) })
