@@ -13,4 +13,6 @@ Local changes:
 
 All upstream source, tests, embedded official DLLs and license notices are retained. The root go.mod replaces only this module with `./pkg/singtun`; upstream version and other dependencies remain pinned. Root coverage concerns KONE code; this nested upstream module has its own targeted regression command in CI. Build/source artifacts include this module.
 
+The embedded DLLs are the unmodified official Wintun 0.14.1 prebuilt binaries, covered by the [Wintun Prebuilt Binaries License](../../licenses/WINTUN.txt). All four architecture DLLs were verified byte-for-byte against the [official archive](https://wintun.net/builds/wintun-0.14.1.zip), SHA-256 `07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51`. Their license is separate from KONE's GPL-3.0-or-later declaration; no WireGuard LLC or Wintun project endorsement is implied.
+
 When upgrading, compare the original version to this directory, reapply only fixes still needed, and run the Windows Wintun plus Linux system/mixed gateway acceptance. Remove the local replacement once an upstream release incorporates these fixes and passes the same checks. Original upstream notices apply; this file records modifications made on 2026-10-31.

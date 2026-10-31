@@ -76,4 +76,4 @@ See [dependency decisions and remaining work](docs/engineering.md), [Raspberry P
 
 ## License
 
-**GPL-3.0-or-later**. See [LICENSE](LICENSE) and [third-party notices](THIRD_PARTY_NOTICES.md). Earlier MIT notices remain in [LICENSE-MIT](LICENSE-MIT); copied components retain their own notices.
+**GPL-3.0-or-later**. See [LICENSE](LICENSE). Earlier MIT notices remain in [LICENSE-MIT](LICENSE-MIT); copied components retain their own notices. Embedded Wintun binaries use the [Wintun Prebuilt Binaries License](licenses/WINTUN.txt).

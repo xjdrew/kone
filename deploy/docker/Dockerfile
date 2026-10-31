@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /out/kone /usr/local/bin/kone
 COPY configs/kone.example.toml /etc/kone/config.toml
-COPY LICENSE LICENSE-MIT THIRD_PARTY_NOTICES.md /usr/share/doc/kone/
+COPY LICENSE LICENSE-MIT /usr/share/doc/kone/
 COPY licenses /usr/share/doc/kone/licenses/
 ENTRYPOINT ["/usr/local/bin/kone"]
 CMD ["-config", "/etc/kone/config.toml"]

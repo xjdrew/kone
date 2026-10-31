@@ -17,6 +17,7 @@
 - Create the required Windows inbound TCP exception explicitly, scoped to this executable and owned TUN address, instead of relying on upstream's silently failing COM helper; roll it back on startup failure and exit.
 - Use a unique Windows firewall rule ID and remove that exact ID, retaining the upstream display name; normalize DOS 8.3 executable paths for the application filter and make absent-rule rollback idempotent.
 - Verify real Windows firewall rules are absent after occupied-port rollback and normal shutdown in both system and mixed stacks.
+- Declare GPL-3.0-or-later explicitly in the project LICENSE; remove the separate third-party summary and update README, binary packaging and Docker while retaining original component licenses and Wintun provenance.
 
 # 2026/10/31 — runtime reliability
 - Add context-owned startup, cancellation, idempotent close and reverse-order network rollback; propagate component and cleanup failures.

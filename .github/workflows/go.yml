@@ -116,7 +116,7 @@ jobs:
             done
           done
           GOOS=linux GOARCH=arm GOARM=7 go build -trimpath -o dist/kone-linux-armv7 ./cmd/kone
-          cp LICENSE LICENSE-MIT THIRD_PARTY_NOTICES.md dist/
+          cp LICENSE LICENSE-MIT dist/
           cp -R licenses dist/
       - name: Bundle corresponding source and dependency notices
         run: |
