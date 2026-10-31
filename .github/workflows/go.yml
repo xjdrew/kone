@@ -50,14 +50,16 @@ jobs:
       - run: npm run build
       - name: Verify embedded assets match frontend sources
         run: git diff --exit-code -- dist
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit firefox
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: ${{ inputs.artifact-prefix }}management-ui-browser-results
           overwrite: true
-          path: web/test-results/
+          path: |
+            web/test-results/
+            web/playwright-report/
 
   test:
     name: Test (${{ matrix.os }})
@@ -289,6 +291,27 @@ jobs:
       - name: Test embedded Wintun without TAP installation
         run: go test -tags with_gvisor,kone_ipv6_acceptance -race -failfast -count=1 -timeout 12m -run '^TestSystemWindows(Wintun|IPv6Wintun)$' -v ./test/integration
 
+  mac-system:
+    name: macOS utun lifecycle and traffic
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build native utun acceptance binary
+        run: |
+          go test -tags with_gvisor -race -c -o "$RUNNER_TEMP/kone-darwin-system.test" ./test/integration
+          "$RUNNER_TEMP/kone-darwin-system.test" -test.list '^TestSystemDarwinUTUN$' | grep -qx TestSystemDarwinUTUN
+      - name: Exercise only owned utun routes and preserve system DNS/default route
+        run: sudo -n env KONE_DARWIN_SYSTEM_TEST=1 "$RUNNER_TEMP/kone-darwin-system.test" -test.run '^TestSystemDarwinUTUN$' -test.v -test.timeout 5m
+
   dns-system:
     name: Linux owned system DNS guidance
     runs-on: ubuntu-latest
@@ -379,8 +402,8 @@ jobs:
 
   verified:
     name: Required gates verified (${{ inputs.ref || github.sha }})
-    if: ${{ !cancelled() && inputs.ref != '' && needs.web.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success' && needs.packages.result == 'success' && needs.performance.result == 'success' && needs.dns-system.result == 'success' && needs.shadowsocks-interop.result == 'success' && needs.robustness.result == 'success' && needs.docker.result == 'success' && needs.system.result == 'success' && needs.windows-system.result == 'success' && (needs.coverage.result == 'success' || needs.coverage.result == 'skipped') }}
-    needs: [web, test, coverage, build, packages, performance, robustness, docker, system, dns-system, shadowsocks-interop, windows-system]
+    if: ${{ !cancelled() && inputs.ref != '' && needs.web.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success' && needs.packages.result == 'success' && needs.performance.result == 'success' && needs.dns-system.result == 'success' && needs.shadowsocks-interop.result == 'success' && needs.robustness.result == 'success' && needs.docker.result == 'success' && needs.system.result == 'success' && needs.windows-system.result == 'success' && needs.mac-system.result == 'success' && (needs.coverage.result == 'success' || needs.coverage.result == 'skipped') }}
+    needs: [web, test, coverage, build, packages, performance, robustness, docker, system, dns-system, shadowsocks-interop, windows-system, mac-system]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1

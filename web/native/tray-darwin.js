@@ -38,11 +38,11 @@ function run(argv) {
   var item;
   var flags = -1;
   try {
-    var session = $.CGSessionCopyCurrentDictionary();
-    if (
-      session.isNil() ||
-      !ObjC.unwrap(session.objectForKey("kCGSessionOnConsoleKey"))
-    ) {
+    // CoreGraphics returns a CFDictionaryRef, not an Objective-C wrapper.
+    var session = ObjC.deepUnwrap(
+      ObjC.castRefToObject($.CGSessionCopyCurrentDictionary()),
+    );
+    if (!session || session.kCGSessionOnConsoleKey !== true) {
       write(errors, "KONE_TRAY_UNAVAILABLE: no console WindowServer session");
       $.exit(77);
       return;
@@ -147,7 +147,8 @@ function run(argv) {
         degraded: "需处理",
         unknown: "状态未知",
       };
-      var label = labels[state.status] || state.status;
+      var label = labels[state.status];
+      if (typeof label !== "string") label = state.status;
       item.button.title = "KONE " + (state.status === "running" ? "●" : "○");
       item.button.toolTip =
         "KONE · " + label + (state.detail ? " · " + state.detail : "");

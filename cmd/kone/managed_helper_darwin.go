@@ -25,9 +25,12 @@ on run argv
     do shell script commandText & " </dev/null >/dev/null 2>&1 &" with administrator privileges
 end run`
 
-func helperAuthorizationCommand(ctx context.Context, executable string, args []string) *exec.Cmd {
+func helperAuthorizationCommand(_ context.Context, executable string, args []string) *exec.Cmd {
 	arguments := append([]string{"-e", helperAppleScript, "--", executable}, args...)
-	command := exec.CommandContext(ctx, "/usr/bin/osascript", arguments...)
+	// boundedAuthorization owns cancellation and retains the single prompt slot
+	// until this OS operation returns. Killing osascript could leave its system
+	// authorization dialog alive while incorrectly allowing another prompt.
+	command := exec.Command("/usr/bin/osascript", arguments...)
 	command.Stdin = nil
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard
@@ -36,6 +39,9 @@ func helperAuthorizationCommand(ctx context.Context, executable string, args []s
 }
 
 func launchManagedHelper(ctx context.Context, executable string, args []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := helperAuthorizationCommand(ctx, executable, args).Run(); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()

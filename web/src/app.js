@@ -1620,14 +1620,16 @@ function renderInbounds() {
             disabled:
               !canManage() ||
               (!model.state.capabilities?.ipv6 && !core["ipv6-network"]),
-            hint: "目前仅 Linux 支持；必须为 ULA /64..120。默认关闭，Windows/macOS 预检会拒绝启用。",
+            hint: model.state.capabilities?.ipv6
+              ? "本构建支持显式启用；必须为 ULA /64..120，默认关闭。"
+              : "本平台/构建不支持 IPv6 接管；保持留空，可清除已有配置。",
           },
         ),
         check(
           "接管全部 IPv6 流量",
           Boolean(core["auto-route6"]),
           (value) => configSet("core", "auto-route6", value),
-          "仅 Linux；需先设置 IPv6 网段与真实出口。保存不会自动添加路由。",
+          "需当前构建支持并先设置 IPv6 网段与真实出口。保存不会自动添加路由。",
           "inbound-auto-route6",
           !canManage() ||
             (!model.state.capabilities?.ipv6 && !core["auto-route6"]),
@@ -3173,7 +3175,7 @@ function renderSettings() {
         [
           "当前协议边界",
           model.state.capabilities?.ipv6
-            ? "IPv4；Linux 可显式配置 IPv6；代理 UDP 能力由出站检查决定"
+            ? "IPv4；可显式配置 IPv6；代理 UDP 能力由出站检查决定"
             : "IPv4 接管；代理 UDP 能力由出站检查决定",
         ],
         ["许可", "GPL-3.0-or-later；组件保留独立许可"],

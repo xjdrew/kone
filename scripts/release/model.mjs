@@ -22,6 +22,7 @@ export const requiredJobs = [
   "dns-system",
   "shadowsocks-interop",
   "windows-system",
+  "mac-system",
 ];
 export function validSHA(value) {
   if (!/^[a-f0-9]{40}$/.test(value || ""))

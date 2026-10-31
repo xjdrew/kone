@@ -52,7 +52,8 @@ type decisionRule struct {
 
 func normalizeDomain(domain string) string { return strings.TrimSuffix(strings.ToLower(domain), ".") }
 
-// ProxyDNS uses the first non-direct answer policy and retains endpoint bypass.
+// ProxyDNS compares the known domain, CNAME and address evidence using the
+// original rule order, retaining protected endpoint bypass.
 func (rule *Rule) ProxyDNS(domain string, msg *dns.Msg) string {
 	return rule.DecideDNS(domain, msg, "", 0).Outbound
 }
@@ -171,22 +172,26 @@ func (rule *Rule) Explain(val any, protocol string, port uint16) RoutingDecision
 
 func (rule *Rule) DecideDNS(domain string, msg *dns.Msg, protocol string, port uint16) RoutingDecision {
 	decision := rule.Decide(domain, protocol, port)
-	if rule.OutboundType(decision.Outbound) != OutboundDirect || decision.Protected || msg == nil {
+	if decision.Protected || msg == nil {
 		return decision
 	}
 	for _, answer := range msg.Answer {
+		var candidate RoutingDecision
 		switch value := answer.(type) {
 		case *dns.A:
-			decision = rule.Decide(value.A, protocol, port)
+			candidate = rule.Decide(value.A, protocol, port)
 		case *dns.AAAA:
-			decision = rule.Decide(value.AAAA, protocol, port)
+			candidate = rule.Decide(value.AAAA, protocol, port)
 		case *dns.CNAME:
-			decision = rule.Decide(normalizeDomain(value.Target), protocol, port)
+			candidate = rule.Decide(normalizeDomain(value.Target), protocol, port)
 		default:
 			continue
 		}
-		if rule.OutboundType(decision.Outbound) != OutboundDirect {
-			return decision
+		if candidate.Protected {
+			return candidate
+		}
+		if candidate.RuleOrder > 0 && (decision.RuleOrder == 0 || candidate.RuleOrder < decision.RuleOrder) {
+			decision = candidate
 		}
 	}
 	return decision

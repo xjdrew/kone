@@ -28,6 +28,7 @@
 - Pause capture when the physical network context changes.
 - Refresh expired DNS addresses and CNAME routing decisions without changing active connections.
 - Offer the last valid settings for repair when the saved profile is damaged.
+- Honor explicit direct domain rules before later default policies.
 
 # 2026/10/31
 

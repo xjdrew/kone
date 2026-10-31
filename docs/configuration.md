@@ -88,6 +88,8 @@ servers = ["192.168.1.53"]
 - 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 需要配置 `core.ipv6-network`，当前只允许 Linux 启动 IPv6 接管。
 - `DOMAIN-SUFFIX = example.com` 匹配自身和子域名，不匹配 `1example.com`。`DIRECT` CIDR 例外会保留规则优先级。
 
+原始域名、已知 CNAME 和已知 IP 的匹配共用配置中的规则顺序，选择最早的显式命中；后面的 `FINAL` 不会覆盖前面的显式 `DOMAIN direct`。受保护的代理端点绕过始终优先，没有显式命中时才使用默认 `direct`。没有真实 DNS 证据时只判断已知域名，不为了猜测地址规则而提前向本机解析器查询代理业务域名。
+
 `http_proxy`、`https_proxy`、`socks_proxy` 环境变量会定义或覆盖同名的 proxy 出站。未设置小写变量时读取大写形式；Windows 环境变量本身不区分大小写。文件中的重复定义或无效 URL 不会被环境变量掩盖；内置出站不受这些环境变量影响。
 
 ## 日志与管理接口

@@ -141,6 +141,8 @@ async function mount(page, options = {}) {
       headers: request.headers(),
       body: request.postDataJSON(),
     });
+    if (data.delay)
+      await new Promise((resolve) => setTimeout(resolve, data.delay));
     if (data.offline) return route.abort("connectionfailed");
     const respond = (body, status = 200) =>
       route.fulfill({
@@ -464,7 +466,16 @@ async function mount(page, options = {}) {
   return data;
 }
 
-test("uses embedded offline assets, removes token fragment, and renders native measured paths", async ({
+async function navigate(page, name) {
+  if (
+    (await page.locator("#menu-toggle").isVisible()) &&
+    !(await page.locator("#sidebar").getAttribute("class")).includes("open")
+  )
+    await page.locator("#menu-toggle").click();
+  await page.locator(`.nav-link[data-page=${name}]`).click();
+}
+
+test("@compat uses embedded offline assets, removes token fragment, and renders native measured paths", async ({
   page,
 }, testInfo) => {
   const external = [];
@@ -488,18 +499,26 @@ test("uses embedded offline assets, removes token fragment, and renders native m
     data.requests.find((r) => r.path === "/state").headers.authorization,
   ).toBeUndefined();
   expect(external).toEqual([]);
-  await page.screenshot({ path: testInfo.outputPath("desktop-home.png") });
+  const viewport = page.viewportSize();
+  await page.screenshot({
+    path: testInfo.outputPath(
+      `home-${testInfo.project.use.browserName}-${viewport.width}x${viewport.height}.png`,
+    ),
+  });
 });
 
-test("touch/keyboard Sankey drilldown preserves exact sample and returns to its selection", async ({
+test("@compat touch/keyboard Sankey drilldown preserves exact sample and returns to its selection", async ({
   page,
-}) => {
+}, testInfo) => {
   const data = await mount(page);
   const node = page
     .locator(".sankey-node")
     .filter({ hasText: "example.com:443" });
-  await node.focus();
-  await page.keyboard.press("Enter");
+  if (testInfo.project.use.hasTouch) await node.tap();
+  else {
+    await node.focus();
+    await page.keyboard.press("Enter");
+  }
   await expect(page.locator("#path-selection")).toContainText("1 条连接");
   await page.getByRole("button", { name: "查看连接", exact: true }).click();
   await expect(
@@ -518,7 +537,7 @@ test("touch/keyboard Sankey drilldown preserves exact sample and returns to its 
   await expect(page.getByRole("dialog")).toContainText("fake-ip");
   await expect(page.getByRole("dialog")).toContainText("来自其他设备");
   await page.getByRole("button", { name: "关闭详情" }).click();
-  await page.locator(".nav-link[data-page=home]").click();
+  await navigate(page, "home");
   await expect(page.locator("#path-selection")).toContainText(
     "example.com:443",
   );
@@ -574,7 +593,7 @@ test("version conflict retains draft and offers a persistent actionable message"
   await expect(page.locator("#draft-status")).toContainText("未保存");
 });
 
-test("readonly session sees every page but cannot save, diagnose, or start", async ({
+test("@compat readonly session sees every page but cannot save, diagnose, or start", async ({
   page,
 }) => {
   const data = await mount(page, { role: "read" });
@@ -588,7 +607,7 @@ test("readonly session sees every page but cannot save, diagnose, or start", asy
     "diagnostics",
     "settings",
   ]) {
-    await page.locator(`.nav-link[data-page=${name}]`).click();
+    await navigate(page, name);
     await expect(page.locator("#main h1")).toBeVisible();
   }
   expect(data.writes).toEqual([]);
@@ -598,7 +617,7 @@ test("readonly session sees every page but cannot save, diagnose, or start", asy
   await expect(page.locator("#runtime-status")).toContainText("已暂停");
 });
 
-test("mobile 320px all pages retain navigation, editing, and no body overflow", async ({
+test("@compat mobile 320px all pages retain navigation, editing, and no body overflow", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 320, height: 760 });
@@ -646,7 +665,9 @@ test("mobile 320px all pages retain navigation, editing, and no body overflow", 
   ).toBeVisible();
   await expect(page.locator("#sidebar")).not.toHaveClass(/open/);
   await page.screenshot({
-    path: testInfo.outputPath("mobile-home.png"),
+    path: testInfo.outputPath(
+      `home-${testInfo.project.use.browserName}-320x760.png`,
+    ),
     animations: "disabled",
   });
 });
@@ -664,6 +685,26 @@ test("empty and disconnected states never imply traffic or current healthy opera
     "管理连接中断",
   );
   await expect(page.locator("#lifecycle-toggle")).toBeDisabled();
+});
+
+test("@compat weak network recovery refreshes real state without repeating a mutation", async ({
+  page,
+}) => {
+  const data = await mount(page);
+  data.offline = true;
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(page.locator("#runtime-status")).toHaveText("状态未知");
+  await expect(page.locator("#lifecycle-toggle")).toBeDisabled();
+  await expect(page.locator("#connection-banner")).toContainText(
+    "管理连接中断",
+  );
+  data.offline = false;
+  data.delay = 200;
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#connection-banner")).toBeHidden();
+  await expect(page.locator("#lifecycle-toggle")).toBeEnabled();
+  expect(data.writes).toEqual([]);
 });
 
 test("untrusted domain and error strings render as text, never executable markup", async ({

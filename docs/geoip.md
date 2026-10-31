@@ -54,6 +54,8 @@ node scripts/data/convert-dbip.mjs \
 
 启动只解包一次，验证压缩与原始表摘要、大小和每段边界，再构建查询表；没有自动下载。国家代码字符串共享，查询不分配内存。362122 段在 64 位平台的范围表约 8.69 MB，在 ARMv7 的 32 位布局约 5.79 MB；另有约 2.27 MB 只读压缩资产，解包临时缓冲约 3.62 MB。ARMv7 数字来自结构布局估算，尚未视为 Raspberry Pi 硬件实测；内置解码测试和下述基准报告实际 CI 平台的启动耗时、分配量与查询速度。完整 JSON 导入会额外持有 JSON 与校验中间结果，建议在内存充足的管理机器转换，并在网关暂停接管后安装。
 
+在提交 `49b79ba` 的 [Linux amd64 CI 样本](https://github.com/xjdrew/kone/actions/runs/41229662366/job/124621057488)中，Go 1.27.3 单次解码约 37.0 ms、累计分配 12969536 字节，查询表为 8690928 字节。该结果只描述对应 runner 和数据版本，不外推 Raspberry Pi 启动时间；更换数据后国家规则的结果可能变化，应检查规则解释。
+
 ## 开发接口与性能基线
 
 `geoip.Load(reader, expectedSHA256)` 返回不可变数据库；`Country(netip.Addr)` 只读查询，`Metadata()` 返回独立元数据值，`Bytes()` 返回原始文件副本。`OpenRepository`、`Install`、`Rollback` 管理本地持久化；`RecoverPrevious` 是损坏后的显式修复操作。

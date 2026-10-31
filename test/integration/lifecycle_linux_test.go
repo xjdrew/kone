@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -23,6 +24,32 @@ import (
 	"github.com/xjdrew/kone/pkg/kone"
 )
 
+var systemDNSSequence atomic.Uint32
+
+// The system stack allocates kernel TCP forwarder ports before DNS listeners.
+// Keep the fixture's shared UDP/TCP DNS port below Linux's default ephemeral
+// range, and check both transports so previous TCP sessions cannot collide.
+func availableSystemDNSPort(t *testing.T) int {
+	t.Helper()
+	for range 128 {
+		port := 20000 + int((systemDNSSequence.Add(1)-1)%10000)
+		address := fmt.Sprintf("0.0.0.0:%d", port)
+		packet, err := net.ListenPacket("udp4", address)
+		if err != nil {
+			continue
+		}
+		listener, err := net.Listen("tcp4", address)
+		packet.Close()
+		if err != nil {
+			continue
+		}
+		listener.Close()
+		return port
+	}
+	t.Fatal("could not select a shared UDP/TCP DNS fixture port")
+	return 0
+}
+
 // These tests run only in a root-owned, isolated Linux network namespace in CI.
 func systemConfig(t *testing.T) *kone.KoneConfig {
 	t.Helper()
@@ -32,23 +59,15 @@ func systemConfig(t *testing.T) *kone.KoneConfig {
 	for _, key := range []string{"http_proxy", "https_proxy", "socks_proxy", "HTTP_PROXY", "HTTPS_PROXY", "SOCKS_PROXY"} {
 		t.Setenv(key, "")
 	}
-	port := func(network string) int {
-		if network == "tcp" {
-			ln, err := net.Listen("tcp4", "0.0.0.0:0")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer ln.Close()
-			return ln.Addr().(*net.TCPAddr).Port
-		}
-		conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
+	port := func() int {
+		listener, err := net.Listen("tcp4", "0.0.0.0:0")
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer conn.Close()
-		return conn.LocalAddr().(*net.UDPAddr).Port
+		defer listener.Close()
+		return listener.Addr().(*net.TCPAddr).Port
 	}
-	dnsPort := port("udp")
+	dnsPort := availableSystemDNSPort(t)
 	cfg, err := kone.ParseConfig([]byte(fmt.Sprintf(`[general]
 manager-addr="127.0.0.1:%d"
 [core]
@@ -57,7 +76,7 @@ network="10.203.0.1/24"
 [dns]
 servers=["127.0.0.1:5353"]
 listen-port=%d
-`, port("tcp"), dnsPort)))
+`, port(), dnsPort)))
 	if err != nil {
 		t.Fatal(err)
 	}
