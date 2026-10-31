@@ -6,8 +6,23 @@ import {
   ApiError,
   targetWithPort,
   flowQueryChunks,
+  normalizeTraffic,
 } from "../src/api.js";
 const originalFetch = globalThis.fetch;
+
+test("retained traffic preserves its actual observation time without inventing freshness", () => {
+  const timestamp = "2026-11-01T00:00:01Z";
+  const snapshot = normalizeTraffic({
+    traffic: { frozen: true, timestamp, records: [], totals: { active: 2 } },
+    sankey: { frozen: true },
+  });
+  assert.equal(snapshot.frozen, true);
+  assert.equal(snapshot.at, timestamp);
+  assert.equal(snapshot.stats.active, 2);
+  assert.equal(normalizeTraffic({ frozen: true }).at, "");
+  assert.equal(normalizeTraffic({ traffic: {}, sankey: { frozen: true } }).frozen, true);
+  assert.equal(normalizeTraffic({}).frozen, false);
+});
 afterEach(() => {
   globalThis.fetch = originalFetch;
   delete globalThis.location;

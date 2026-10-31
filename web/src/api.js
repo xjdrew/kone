@@ -258,6 +258,7 @@ export function normalizeTraffic(data = {}) {
     ) || [];
   return {
     ...data,
+    frozen: data.frozen === true || data.sankey?.frozen === true,
     flows: rawFlows.map(normalizeFlow),
     at:
       lookup(
@@ -268,7 +269,7 @@ export function normalizeTraffic(data = {}) {
         "Timestamp",
         "captured_at",
         "CapturedAt",
-      ) || new Date().toISOString(),
+      ) || "",
     session_id:
       lookup(data, "session_id", "SessionID", "session", "Session") || "",
     dropped: Number(

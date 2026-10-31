@@ -214,7 +214,7 @@ func TestNewWintunWithoutIPv4AddressCanBeConfigured(t *testing.T) {
 	undo, err := n.Configure(context.Background(), device, CoreConfig{Network: "10.192.0.1/16"})
 	require.NoError(t, err)
 	require.NoError(t, undo(context.Background()))
-	require.Equal(t, 10, calls)
+	require.Equal(t, 7, calls, "IPv4 properties restore in one PowerShell process")
 	require.True(t, configuredL3)
 }
 

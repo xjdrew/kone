@@ -609,7 +609,7 @@ function updateShell() {
   banner.textContent = text;
   banner.className = `banner ${!model.online || model.state.last_error ? "error" : ""}`;
   document.querySelector("#updated-at").textContent = model.lastSuccess
-    ? `数据时间 ${time(model.lastSuccess)}`
+    ? `管理状态更新时间 ${time(model.lastSuccess)}`
     : "等待数据";
   document.querySelectorAll(".nav-link").forEach((node) => {
     const active = node.dataset.page === model.page;
@@ -903,6 +903,7 @@ function readonlyNote() {
 function renderHome() {
   const flows = model.traffic.flows;
   const stats = model.traffic.stats;
+  const historical = model.traffic.frozen || !model.online;
   const upload = Number(
     stats.upload_rate ??
       stats.UploadRate ??
@@ -960,16 +961,20 @@ function renderHome() {
     "div",
     { class: "metrics" },
     metricCard(
-      "实时上传 / 下载",
+      historical ? "上次采样上传 / 下载" : "实时上传 / 下载",
       `${bytes(upload, true)} / ${bytes(download, true)}`,
-      "当前采样窗口 · 业务载荷",
+      historical
+        ? `保留采样 · ${time(model.traffic.at)}`
+        : "当前采样窗口 · 业务载荷",
       "↕",
     ),
     metricCard("本会话累计", bytes(total), "上下行合计 · 不叠加图形连线", "◴"),
     metricCard(
-      "活动连接",
+      historical ? "上次采样活动连接" : "活动连接",
       active.toLocaleString(),
-      "TCP 与 UDP · 仅进入 KONE",
+      historical
+        ? "历史数量 · 当前状态不由旧采样推断"
+        : "TCP 与 UDP · 仅进入 KONE",
       "⇄",
     ),
     metricCard(
@@ -993,7 +998,9 @@ function renderHome() {
             "aria-pressed": model.metric === metric,
             onclick: () => changeGraph("metric", metric),
           },
-          metric === "rate" ? "实时速率" : "会话累计",
+          metric === "rate"
+            ? historical ? "上次采样速率" : "实时速率"
+            : "会话累计",
         ),
       ),
     ),
@@ -1179,7 +1186,11 @@ function renderHome() {
       h(
         "span",
         {},
-        model.graphPaused
+        model.traffic.frozen
+          ? `接管已停止，显示保留采样 · ${time(graphData?.at)}`
+          : model.graphPaused && !model.online
+          ? "图形已固定；管理连接中断，当前接管状态未知。"
+          : model.graphPaused
           ? "图形已暂停；实时计数与接管继续运行。"
           : `同一业务量按每层各投影一次 · ${model.metric === "rate" ? "B/s" : "字节"} · ${time(graphData?.at)}`,
       ),
@@ -1228,6 +1239,11 @@ function renderHome() {
     ),
   );
   return [
+    model.traffic.frozen &&
+      note(
+        `接管已停止：这里是 ${time(model.traffic.at)} 的保留快照，速率与活动数量属于停止前的采样，不会继续实时更新。`,
+        "warning",
+      ),
     metrics,
     graphCard,
     h(

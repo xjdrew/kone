@@ -146,6 +146,7 @@ type TrafficObserver struct {
 	now          func() time.Time
 	session      string
 	started      time.Time
+	frozenAt     time.Time
 	capacity     int
 	pathCapacity int
 	retention    time.Duration
@@ -240,6 +241,11 @@ func addCounter(destination *uint64, value uint64) {
 func (o *TrafficObserver) Begin(record FlowRecord) *ObservedFlow {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if !o.frozenAt.IsZero() {
+		flow := &ObservedFlow{observer: o}
+		flow.done.Store(true)
+		return flow
+	}
 	o.sequence++
 	id := fmt.Sprintf("%s-%020d", o.session, o.sequence)
 	addCounter(&o.totals.Started, 1)
@@ -286,6 +292,9 @@ func (f *ObservedFlow) Stage(stage string) {
 	o := f.observer
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if !o.frozenAt.IsZero() {
+		return
+	}
 	f.stage = stage
 	if record := o.records[f.id]; record != nil && record.EndedAt == nil {
 		record.Stage, record.UpdatedAt = stage, o.now()
@@ -296,6 +305,9 @@ func (f *ObservedFlow) Decision(decision RoutingDecision, effective, realDestina
 	o := f.observer
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if !o.frozenAt.IsZero() {
+		return
+	}
 	if record := o.records[f.id]; record != nil && record.EndedAt == nil {
 		record.RuleID, record.RuleName, record.RuleSource, record.RuleOrder = decision.RuleID, decision.RuleName, decision.RuleSource, decision.RuleOrder
 		record.GeoIPVersion, record.GeoIPSHA256 = decision.GeoIPVersion, decision.GeoIPSHA256
@@ -313,6 +325,9 @@ func (f *ObservedFlow) Process(result processinfo.Result) {
 	o := f.observer
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if !o.frozenAt.IsZero() {
+		return
+	}
 	if record := o.records[f.id]; record != nil {
 		record.ProcessStatus, record.ProcessReason, record.ProcessSource = result.Status, result.Reason, result.Source
 		record.ProcessPID, record.ProcessName, record.ProcessPath = result.PID, result.Name, result.Path
@@ -329,6 +344,9 @@ func (f *ObservedFlow) UpdateTarget(domain, fakeIP, target string) {
 	o := f.observer
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if !o.frozenAt.IsZero() {
+		return
+	}
 	if record := o.records[f.id]; record != nil && record.EndedAt == nil {
 		record.Domain, record.FakeIP, record.Target = domain, fakeIP, target
 		if domain != "" {
@@ -347,7 +365,7 @@ func (f *ObservedFlow) add(upload, download, uploadPackets, downloadPackets uint
 	o := f.observer
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if f.done.Load() {
+	if f.done.Load() || !o.frozenAt.IsZero() {
 		return
 	}
 	addCounter(&o.totals.Upload, upload)
@@ -378,6 +396,9 @@ func (f *ObservedFlow) TransferError(err error) {
 	o := f.observer
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if !o.frozenAt.IsZero() {
+		return
+	}
 	f.transferFailed = true
 	if record := o.records[f.id]; record != nil && record.Error == "" {
 		record.Error, record.ErrorKind = safeTrafficError(err), "transfer"
@@ -391,6 +412,9 @@ func (f *ObservedFlow) Finish(err error, stopping bool) {
 	o := f.observer
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if !o.frozenAt.IsZero() {
+		return
+	}
 	if o.totals.Active > 0 {
 		o.totals.Active--
 	}

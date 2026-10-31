@@ -130,6 +130,7 @@ func RunTray(ctx context.Context, actions TrayActions) error {
 }
 
 func runTray(ctx context.Context, actions TrayActions, notify trayNotify) error {
+	actions = prepareTrayActions(actions)
 	if err := ctx.Err(); err != nil {
 		return nil
 	}

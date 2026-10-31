@@ -24,11 +24,10 @@ function normalizeTrayState(input) {
 function run(argv) {
   ObjC.import("Foundation");
   ObjC.import("AppKit");
+  ObjC.import("CoreFoundation");
   ObjC.bindFunction("exit", ["void", ["int"]]);
   ObjC.bindFunction("fcntl", ["int", ["int", "int", "int"]]);
   ObjC.bindFunction("read", ["long", ["int", "void *", "unsigned long"]]);
-  ObjC.bindFunction("objc_autoreleasePoolPush", ["void *", []]);
-  ObjC.bindFunction("objc_autoreleasePoolPop", ["void", ["void *"]]);
 
   var output = $.NSFileHandle.fileHandleWithStandardOutput;
   var errors = $.NSFileHandle.fileHandleWithStandardError;
@@ -38,6 +37,7 @@ function run(argv) {
   var bar;
   var item;
   var flags = -1;
+  var timer;
   try {
     // A background/SSH session is not proof that AppKit is unavailable. Ask
     // AppKit itself, without automating other apps or changing OS settings.
@@ -55,6 +55,11 @@ function run(argv) {
     var alive = true;
     var emitted = [];
     var entries = {};
+    var pendingError;
+    function stopLoop() {
+      app.stop($());
+      $.CFRunLoopStop($.CFRunLoopGetCurrent());
+    }
     function emit(action) {
       if (closing && action !== "OPEN") return;
       if (action === "START" && !state.can_start) return;
@@ -71,6 +76,18 @@ function run(argv) {
       name: "KoneTrayMenuTarget",
       superclass: "NSObject",
       methods: {
+        "tick:": {
+          types: ["void", ["id"]],
+          implementation: function () {
+            try {
+              readState();
+              if (!alive) stopLoop();
+            } catch (error) {
+              pendingError = error;
+              stopLoop();
+            }
+          },
+        },
         "open:": {
           types: ["void", ["id"]],
           implementation: function () {
@@ -216,26 +233,20 @@ function run(argv) {
         if (lines[i]) update(JSON.parse(lines[i]));
       }
     }
+    timer = $.NSTimer.timerWithTimeIntervalTargetSelectorUserInfoRepeats(
+      0.2,
+      target,
+      "tick:",
+      $(),
+      true,
+    );
+    $.NSRunLoop.mainRunLoop.addTimerForMode(timer, $.NSRunLoopCommonModes);
+    koneTrayObjects.push(timer);
     write(output, "READY");
-    while (alive) {
-      // NSAutoreleasePool objects cannot be retained by the JXA bridge. Use
-      // opaque runtime pool tokens so the bridge never wraps/retains a pool.
-      var pool = $.objc_autoreleasePoolPush();
-      try {
-        readState();
-        if (!alive) break;
-        var event = app.nextEventMatchingMaskUntilDateInModeDequeue(
-          $.NSEventMaskAny,
-          $.NSDate.dateWithTimeIntervalSinceNow(0.1),
-          $.NSDefaultRunLoopMode,
-          true,
-        );
-        if (!event.isNil()) app.sendEvent(event);
-        app.updateWindows;
-      } finally {
-        $.objc_autoreleasePoolPop(pool);
-      }
-    }
+    // AppKit owns event dispatch and autorelease scopes. Explicit native pools
+    // cannot safely span JXA bridge calls; do not push/pop them from JavaScript.
+    app.run;
+    if (pendingError) throw pendingError;
   } catch (error) {
     var reason = String(error.message || "native tray failure");
     if (
@@ -255,6 +266,7 @@ function run(argv) {
     if (item && bar) bar.removeStatusItem(item);
     $.exit(1);
   } finally {
+    if (timer) timer.invalidate;
     if (flags >= 0) $.fcntl(0, 4, flags);
     if (item && bar) bar.removeStatusItem(item);
     koneTrayObjects = undefined;

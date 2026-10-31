@@ -236,11 +236,17 @@ func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.M
 	record := table.Get(domain)
 	policy := s.rule.Proxy(domain)
 	refreshed := false
-	if s.rule.OutboundType(policy) == OutboundDirect && record != nil && record.resolved != nil && !record.resolutionFresh(time.Now()) {
-		if err := d.refreshResolution(ctx, table, record, r); err != nil {
-			return nil, err
+	if record != nil && record.resolved != nil && !record.resolutionFresh(time.Now()) {
+		if s.rule.OutboundType(policy) == OutboundReject {
+			// A refused domain needs no speculative lookup. Expired address
+			// evidence cannot override the current domain-only refusal.
+			record.resolved, record.RealIP = nil, nil
+		} else {
+			if err := d.refreshResolution(ctx, table, record, r); err != nil {
+				return nil, err
+			}
+			refreshed = true
 		}
-		refreshed = true
 	}
 	if record != nil {
 		policy = s.rule.ProxyDNS(domain, record.resolved)

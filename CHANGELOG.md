@@ -30,6 +30,7 @@
 - Offer the last valid settings for repair when the saved profile is damaged.
 - Honor explicit direct domain rules before later default policies.
 - Preserve existing macOS routes when capture startup fails.
+- Mark retained traffic as historical after capture stops.
 
 # 2026/10/31
 

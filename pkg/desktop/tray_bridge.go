@@ -51,6 +51,7 @@ type trayProcess struct {
 // UI helper. Credentials, management URLs, configuration and network operations
 // never pass through the native process protocol.
 func runTrayBridge(parent context.Context, actions TrayActions, process trayProcess, startup time.Duration) (result error) {
+	actions = prepareTrayActions(actions)
 	ctx, cancel := context.WithCancel(parent)
 	events := make(chan string, 8)
 	readErrors := make(chan error, 1)

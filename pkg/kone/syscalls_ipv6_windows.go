@@ -57,9 +57,9 @@ func (n systemNetwork) configureIPv6(ctx context.Context, d Device, cfg CoreConf
 	ip, subnet, _ := net.ParseCIDR(cfg.IPv6Network)
 	prefix, _ := subnet.Mask.Size()
 	p := map[string]any{"Name": d.Name(), "Index": old.Index, "GUID": old.GUID, "IP": ip.String(), "Prefix": prefix, "MTU": MTU, "OldMTU": old.MTU, "Metric": old.Metric, "Auto": old.AutomaticMetric, "DHCP": old.DHCP, "Router": old.RouterDiscovery, "Dad": old.DadTransmits, "Managed": old.Managed, "Stateful": old.Stateful}
-	var undo undoStack
+	undo := windowsRestoreBatch{network: n}
 	apply := func(name, script, restore string) error {
-		undo.add(name, func(ctx context.Context) error { _, err := n.powershell(ctx, ownedIPv6Identity+restore, p); return err })
+		undo.add(name, ownedIPv6Identity+restore, p)
 		_, err := n.powershell(ctx, ownedIPv6Identity+script, p)
 		return err
 	}

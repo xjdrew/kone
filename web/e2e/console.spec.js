@@ -242,6 +242,7 @@ async function mount(page, options = {}) {
         rejected: 0,
       };
       const traffic = {
+        frozen: Boolean(data.frozen),
         records,
         totals,
         timestamp: end,
@@ -315,6 +316,7 @@ async function mount(page, options = {}) {
       return respond({
         traffic,
         sankey: {
+          frozen: Boolean(data.frozen),
           session_id: traffic.session_id,
           timestamp: end,
           scope: "business",
@@ -1026,4 +1028,18 @@ test("initial transport failure displays unknown counters instead of invented ze
   await expect(page.locator("#runtime-status")).toHaveText("状态未知");
   await expect(page.locator(".metric-value")).toHaveText(["—", "—", "—", "—"]);
   await expect(page.locator("#lifecycle-toggle")).toBeDisabled();
+});
+
+test("@compat retained capture observations never claim live sampling after repeated refresh", async ({ page }) => {
+  const data = await mount(page, { frozen: true, state: "paused" });
+  await expect(page.locator(".metric-label").filter({ hasText: "上次采样上传 / 下载" })).toBeVisible();
+  await expect(page.locator(".metric-label").filter({ hasText: "上次采样活动连接" })).toBeVisible();
+  await expect(page.getByText(/接管已停止：这里是/)).toContainText("不会继续实时更新");
+  await expect(page.getByRole("button", {name: "上次采样速率", exact: true})).toBeVisible();
+  const note = await page.getByText(/接管已停止：这里是/).textContent();
+  await page.getByRole("button", {name: "刷新", exact: true}).first().click();
+  await expect.poll(() => data.requests.filter((request) => request.path === "/traffic").length).toBeGreaterThan(1);
+  await expect(page.getByText(/接管已停止：这里是/)).toHaveText(note);
+  await expect(page.locator(".metric-label").filter({ hasText: "实时上传 / 下载" })).toHaveCount(0);
+  await expect(page.getByRole("button", {name: "实时速率", exact: true})).toHaveCount(0);
 });

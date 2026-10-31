@@ -71,6 +71,9 @@ func TestWindowsIPv6ConfigurationRollsBackAttemptedChanges(t *testing.T) {
 			require.NotContains(t, script, "-AddressFamily IPv4")
 			if strings.Contains(script, "external IPv6") {
 				restores++
+				params := windowsCommandParams(t, script)
+				require.Len(t, params["Actions"], calls, "every attempted write remains in the reverse-order restoration batch")
+				require.Contains(t, script, "catch { $koneRestoreErrors.Add")
 				return nil, nil
 			}
 			calls++
@@ -89,7 +92,7 @@ func TestWindowsIPv6ConfigurationRollsBackAttemptedChanges(t *testing.T) {
 		}
 		require.NotNil(t, undo)
 		require.NoError(t, undo(context.Background()))
-		require.Equal(t, calls, restores)
+		require.Equal(t, 1, restores, "all attempted IPv6 writes restore in one PowerShell process")
 	}
 }
 

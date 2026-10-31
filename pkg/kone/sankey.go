@@ -167,6 +167,9 @@ func (o *TrafficObserver) Sankey(query TrafficQuery, options SankeyOptions) Sank
 
 func (o *TrafficObserver) sankeyLocked(query TrafficQuery, options SankeyOptions, now time.Time) SankeySnapshot {
 	o.prune(now)
+	if !o.frozenAt.IsZero() {
+		now = o.frozenAt
+	}
 	if options.Window < time.Second {
 		options.Window = time.Second
 	}
@@ -191,7 +194,7 @@ func (o *TrafficObserver) sankeyLocked(query TrafficQuery, options SankeyOptions
 	if options.Metric == "cumulative" {
 		start, end = o.started, now
 	}
-	result := SankeySnapshot{SessionID: o.session, Timestamp: now, Scope: TrafficScope, Metric: options.Metric, Unit: "bytes/s", WindowStart: start, WindowEnd: end, Nodes: []SankeyNode{}, Links: []SankeyLink{}, Paths: []SankeyPath{}, Anchor: fmt.Sprintf("%s-%020d", o.session, o.sequence), Truncated: o.dropped > 0 || !o.recording || o.paths["other"] != nil}
+	result := SankeySnapshot{Frozen: !o.frozenAt.IsZero(), SessionID: o.session, Timestamp: now, Scope: TrafficScope, Metric: options.Metric, Unit: "bytes/s", WindowStart: start, WindowEnd: end, Nodes: []SankeyNode{}, Links: []SankeyLink{}, Paths: []SankeyPath{}, Anchor: fmt.Sprintf("%s-%020d", o.session, o.sequence), Truncated: o.dropped > 0 || !o.recording || o.paths["other"] != nil}
 	if options.Metric == "cumulative" {
 		result.Unit = "bytes"
 	}

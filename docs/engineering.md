@@ -1,5 +1,7 @@
 # 第一轮工程化与依赖决策
 
+本文保留各轮依赖选择的历史背景。当前产品已增加持久管理、独立权限助手、DNS TCP/分流、SOCKS5/SS UDP、Linux/Windows IPv6、网络变化暂停和 GeoIP 更新；实现与逐平台验收以 [验收索引](acceptance.md) 为准。
+
 ## 后续决策：sing-tun 迁移（2026-10-31）
 
 维护者已接受 GPL-3.0-or-later。当前采用 SagerNet/sing-tun `v0.9.7-0.20261023115432-040db71fcd33`，对应 sing-box v1.14.4 使用的固定版本；移除 water。下文第一轮保留 water、维持 MIT 的决定为历史记录，不再代表现状。
@@ -61,10 +63,8 @@ CLI 使用标准库 `signal.NotifyContext`，由 engine 统一负责关闭与恢
 单元测试和 `test/integration` 中的 CLI 端到端测试一起执行；覆盖率统计使用 `go test` 生成的 profile，独立子进程的覆盖数据不会自动并入。
 本地比较：`go run ./cmd/covercheck -base base.out -head head.out`。工具包含单元测试和实际编译执行的端到端用例，验证下降、持平、提升、重复 block 和无效报告。
 
-## 下一轮边界
+## 后续部署验收
 
-生命周期、启动失败回滚、正常退出恢复、快照及故障注入已纳入第二轮，设计和验收方式见 [运行可靠性](runtime.md)。
-Linux 的真实 TUN 场景在隔离网络命名空间执行；本轮迁移新增 Windows Wintun 真实流量与回滚验收。macOS 的特权驱动验收、网络切换和进程崩溃后的恢复仍需后续完善。
+生命周期、启动失败回滚、正常退出恢复、快照及故障注入见 [运行可靠性](runtime.md)。Linux 的真实 TUN 在隔离网络命名空间执行，Windows Wintun 与 macOS UTUN 在 disposable runner 中验证；这不代替 Raspberry Pi 长期负载、真实授权弹窗、休眠/多 VPN、手机证书信任及签名安装体验的部署验收。
 
-数据面仍以 IPv4 TCP 为主；上游 DNS 取消和出站接口绑定已实现。完整 UDP 代理、IPv6、DNS TCP/截断回退属于后续功能迭代。
-内嵌 GeoIP 数据来自旧生成文件；后续应引入可更新的数据来源、版本/校验和及许可说明，避免仅替换查询库却继续使用旧数据。
+协议范围、官方 Shadowsocks 服务端互操作、GeoIP 数据来源及性能测量入口集中在 [验收索引](acceptance.md)，避免把历史选型中尚未实现的判断当作当前能力。

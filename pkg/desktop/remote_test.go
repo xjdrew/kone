@@ -251,7 +251,7 @@ func TestRemoteGuardsAndCredentialRedaction(t *testing.T) {
 	require.Error(t, err)
 	require.NotContains(t, helperError(errors.New("dial https://user:password@proxy:443 failed")), "password")
 	selected := make(chan int, 3)
-	actions := TrayActions{Open: func() { selected <- 1 }, Pause: func() { selected <- 2 }, Exit: func() { selected <- 3 }}
+	actions := prepareTrayActions(TrayActions{Open: func() { selected <- 1 }, Pause: func() { selected <- 2 }, Exit: func() { selected <- 3 }})
 	for index := 1; index <= 3; index++ {
 		invokeTrayAction(actions, uintptr(index))
 		require.Equal(t, index, <-selected)

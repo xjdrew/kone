@@ -80,16 +80,24 @@ func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) 
 		ipv6Snapshot = &settings
 	}
 	var undo undoStack
+	ipv4Undo := windowsRestoreBatch{network: n}
+	undo.add("IPv4 interface", ipv4Undo.restore)
 	apply := func(name, script, restore string, params any) error {
 		// Property setters can complete before a timeout is observed. Restore
 		// the saved value even if an attempted command reports an error.
-		undo.add(name, func(ctx context.Context) error { _, err := n.powershell(ctx, restore, params); return err })
+		if ipv6Snapshot != nil {
+			restore = ownedIPv6Identity + restore
+		}
+		ipv4Undo.add(name, restore, params)
 		if _, err := n.powershell(ctx, script, params); err != nil {
 			return err
 		}
 		return nil
 	}
 	p := map[string]any{"Index": old.Index, "IP": ip.String(), "Prefix": prefix, "MTU": MTU, "OldMTU": old.MTU, "Metric": old.Metric, "Auto": old.AutomaticMetric, "DNS": old.DNS, "StaticDNS": old.StaticDNS}
+	if ipv6Snapshot != nil {
+		p["Name"], p["GUID"] = d.Name(), ipv6Snapshot.GUID
+	}
 	if _, owned := d.(*singDevice); owned {
 		// A newly owned L3 adapter needs the same kernel TCP prerequisites as
 		// sing-tun's native Windows configurator. Device removal rolls these

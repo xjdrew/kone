@@ -1,5 +1,17 @@
 package kone
 
+// freezeObservation runs only after flow admission, workers and protocol stacks
+// have stopped. UI graph pause and recording preferences do not call this hook.
+func (one *One) freezeObservation() { one.TrafficObserver().freeze() }
+
+func (observer *TrafficObserver) freeze() {
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	if observer.frozenAt.IsZero() {
+		observer.frozenAt = observer.now()
+	}
+}
+
 // Data reads table, counters and graph under the same observation lock and clock.
 // Their anchor and payload totals therefore describe one coherent point in time.
 func (observer *TrafficObserver) Data(query TrafficQuery, options SankeyOptions) (TrafficSnapshot, SankeySnapshot) {

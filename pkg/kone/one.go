@@ -270,6 +270,7 @@ func (one *One) Close() error {
 		if one.flows != nil {
 			one.flows.close()
 		}
+		one.freezeObservation()
 		close(one.done)
 	}
 	<-one.done
@@ -353,6 +354,7 @@ func (one *One) Run(parent context.Context) (result error) {
 		}
 		one.flows.workers.Wait()
 		wg.Wait()
+		one.freezeObservation()
 		one.mu.Lock()
 		one.cleanupErr = errors.Join(cleanup...)
 		result = errors.Join(result, one.cleanupErr)
