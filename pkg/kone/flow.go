@@ -23,7 +23,6 @@ import (
 // to the original LAN client, not to a desktop-only loopback listener.
 type flowHandler struct {
 	one     *One
-	dialer  *net.Dialer
 	mu      sync.Mutex
 	closed  bool
 	active  map[io.Closer]struct{}
@@ -78,30 +77,57 @@ func (h *flowHandler) destination(ctx context.Context, s *runtimeSnapshot, desti
 	}
 	ip := net.IP(destination.Addr.AsSlice())
 	policy, host := s.rule.Proxy(ip), destination.Addr.String()
+	var record *DomainRecord
 	if h.one.dnsTable.IsLocalIP(ip) {
-		record := h.one.dnsTable.GetByIP(ip)
+		record = h.one.dnsTable.GetByIP(ip)
 		if record == nil {
 			return "", "", errors.New("unknown virtual address")
 		}
 		host = record.Hostname
 		policy = s.rule.ProxyDNS(host, record.resolved)
-		if s.rule.OutboundType(policy) != OutboundReject && (s.rule.OutboundType(policy) == OutboundDirect || udp) {
-			if record.RealIP == nil {
-				msg, err := h.one.dns.ResolveContext(ctx, host)
-				if err != nil {
-					return "", "", err
-				}
-				record.SetRealIP(msg)
-				h.one.dnsTable.SetRealIP(host, msg)
+	}
+	selectOutbound := func(name string) (string, error) {
+		if s.rule.OutboundType(name) == OutboundReject {
+			return name, ErrRejected
+		}
+		if !udp {
+			return name, nil
+		}
+		target, err := s.outbounds.UDPOutbound(name)
+		if err != nil {
+			return name, err
+		}
+		if target != name {
+			slog.Debug("UDP fallback selected", "outbound", name, "udp_outbound", target, "reason", ErrUDPUnsupported.Error(), "version", s.version)
+		}
+		return target, nil
+	}
+	var err error
+	policy, err = selectOutbound(policy)
+	if err != nil {
+		return "", policy, err
+	}
+	if record != nil && (s.rule.OutboundType(policy) == OutboundDirect || udp) {
+		if record.RealIP == nil {
+			msg, err := h.one.dns.ResolveContext(ctx, host)
+			if err != nil {
+				return "", policy, err
 			}
+			record.SetRealIP(msg)
+			h.one.dnsTable.SetRealIP(host, msg)
+			// A fresh resolution can reveal a CNAME/IP rule that was unknown
+			// when the Fake-IP was allocated. Apply the same snapshot again.
+			policy, err = selectOutbound(s.rule.ProxyDNS(record.Hostname, msg))
+			if err != nil {
+				return "", policy, err
+			}
+		}
+		if s.rule.OutboundType(policy) == OutboundDirect || udp {
 			if record.RealIP == nil {
-				return "", "", errors.New("domain has no IPv4 address")
+				return "", policy, errors.New("domain has no IPv4 address")
 			}
 			host = record.RealIP.String()
 		}
-	}
-	if s.rule.OutboundType(policy) == OutboundReject {
-		return "", policy, errors.New("connection rejected by routing policy")
 	}
 	return net.JoinHostPort(host, strconv.Itoa(int(destination.Port))), policy, nil
 }
@@ -145,11 +171,14 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 	}
 }
 
-// Preserve the existing direct UDP behavior. The stack provides interception
-// and sessions; SOCKS5 UDP ASSOCIATE remains an independent outbound feature.
+// Each UDP session retains one snapshot. Check policy/capability before any
+// destination resolution or socket creation, and never silently bypass a proxy.
 func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	var result error
 	defer func() {
+		if result != nil && ctx.Err() == nil {
+			slog.Debug("UDP session ended", "source", source, "destination", destination, "error", result)
+		}
 		if onClose != nil {
 			onClose(result)
 		}
@@ -161,12 +190,13 @@ func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 	defer h.workers.Done()
 	defer h.remove(conn)
 	s := h.one.policy.Load()
-	addr, _, err := h.destination(ctx, s, destination, true)
+	addr, policy, err := h.destination(ctx, s, destination, true)
 	if err != nil {
+		slog.Warn("UDP outbound denied", "outbound", policy, "destination", destination, "reason", err.Error(), "version", s.version)
 		result = err
 		return
 	}
-	remote, err := h.dialer.DialContext(ctx, "udp4", addr)
+	remote, err := s.outbounds.DialUDPContext(ctx, policy, addr)
 	if err != nil {
 		result = err
 		return

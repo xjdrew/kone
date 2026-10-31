@@ -62,7 +62,7 @@ func TestReloadFailureLeavesPolicyIntact(t *testing.T) {
 		name   string
 		change func(*KoneConfig)
 	}{
-		{"core", func(c *KoneConfig) { c.Core.TcpListenPort = 83 }},
+		{"core", func(c *KoneConfig) { c.Core.Network = "10.193.0.1/16" }},
 		{"logging", func(c *KoneConfig) { c.General.LogLevel = "debug" }},
 		{"route", func(c *KoneConfig) { c.Rule = []RuleConfig{{Schema: "IP-CIDR", Pattern: "8.8.8.0/24", Outbound: "A"}} }},
 		{"invalid", func(c *KoneConfig) { c.Rule[0].Outbound = "Missing" }},
@@ -76,34 +76,6 @@ func TestReloadFailureLeavesPolicyIntact(t *testing.T) {
 			require.Equal(t, "A", policyFor(one, "example.com"))
 		})
 	}
-}
-
-type flowConn struct {
-	net.Conn
-	remote net.Addr
-}
-
-func (c flowConn) RemoteAddr() net.Addr { return c.remote }
-
-func TestCachedVirtualAddressCanBecomeDirect(t *testing.T) {
-	cleanProxyEnv(t)
-	one := testEngine(t)
-	record := one.dnsTable.Set("example.com", "A")
-	answer := &dns.Msg{Answer: []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET}, A: net.ParseIP("203.0.113.10")}}}
-	one.dnsTable.SetRealIP(record.Hostname, answer)
-	cfg := one.Snapshot().Config
-	cfg.Rule[0].Outbound = "direct"
-	require.NoError(t, one.Reload(cfg))
-	relay := NewTCPRelay(one, cfg.Core)
-	_, port := relay.nat.allocSession(net.IPv4(192, 168, 1, 2), record.IP, 50000, 443)
-	left, right := net.Pipe()
-	defer left.Close()
-	defer right.Close()
-	var data ConnData
-	addr, policy := relay.realRemoteHost(flowConn{Conn: left, remote: &net.TCPAddr{IP: record.IP, Port: int(port)}}, &data)
-	require.Equal(t, "203.0.113.10:443", addr)
-	require.Equal(t, "direct", policy)
-	require.Equal(t, "example.com", data.Dst)
 }
 
 func TestConcurrentReloadAndDNS(t *testing.T) {

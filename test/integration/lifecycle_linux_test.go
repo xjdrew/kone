@@ -47,25 +47,16 @@ func systemConfig(t *testing.T) *kone.KoneConfig {
 		defer conn.Close()
 		return conn.LocalAddr().(*net.UDPAddr).Port
 	}
-	dnsPort, udpPort := port("udp"), port("udp")
-	for dnsPort == udpPort {
-		udpPort = port("udp")
-	}
+	dnsPort := port("udp")
 	cfg, err := kone.ParseConfig([]byte(fmt.Sprintf(`[general]
 manager-addr="127.0.0.1:%d"
 [core]
 tun="kone-e2e"
 network="10.203.0.1/24"
-tcp-listen-port=%d
-udp-listen-port=%d
-tcp-nat-port-start=10000
-tcp-nat-port-end=11000
-udp-nat-port-start=10000
-udp-nat-port-end=11000
 [dns]
 servers=["127.0.0.1:5353"]
 listen-port=%d
-`, port("tcp"), port("tcp"), udpPort, dnsPort)))
+`, port("tcp"), dnsPort)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,18 +115,14 @@ func TestSystemLifecyclePortFailure(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			cfg := systemConfig(t)
 			var occupied io.Closer
-			if kind == "tcp" || kind == "manager" {
+			if kind == "manager" {
 				ln, err := net.Listen("tcp4", "0.0.0.0:0")
 				if err != nil {
 					t.Fatal(err)
 				}
 				occupied = ln
 				port := ln.Addr().(*net.TCPAddr).Port
-				if kind == "tcp" {
-					cfg.Core.TcpListenPort = uint16(port)
-				} else {
-					cfg.General.ManagerAddr = fmt.Sprintf("127.0.0.1:%d", port)
-				}
+				cfg.General.ManagerAddr = fmt.Sprintf("127.0.0.1:%d", port)
 			} else {
 				conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
 				if err != nil {
@@ -143,11 +130,7 @@ func TestSystemLifecyclePortFailure(t *testing.T) {
 				}
 				occupied = conn
 				port := uint16(conn.LocalAddr().(*net.UDPAddr).Port)
-				if kind == "udp" {
-					cfg.Core.UdpListenPort = port
-				} else {
-					cfg.DNS.ListenPort = port
-				}
+				cfg.DNS.ListenPort = port
 			}
 			defer occupied.Close()
 			one, err := kone.FromConfig(cfg)

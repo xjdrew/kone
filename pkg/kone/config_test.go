@@ -33,10 +33,34 @@ func setTestOutbound(cfg *KoneConfig, name string, url string) {
 	cfg.Outbounds = append(cfg.Outbounds, OutboundConfig{Name: name, URL: url})
 }
 
-func cleanProxyEnv(t *testing.T) {
+func cleanProxyEnv(t testing.TB) {
 	t.Helper()
 	for _, key := range []string{HTTP_PROXY, HTTPS_PROXY, SOCKS_PROXY, "HTTP_PROXY", "HTTPS_PROXY", "SOCKS_PROXY"} {
 		t.Setenv(key, "")
+	}
+}
+
+func TestRemovedRelayConfigurationIsRejected(t *testing.T) {
+	cleanProxyEnv(t)
+	for _, key := range []string{"tcp-listen-port", "tcp-nat-port-start", "tcp-nat-port-end", "udp-listen-port", "udp-nat-port-start", "udp-nat-port-end"} {
+		_, err := ParseConfig([]byte("[core]\n" + key + "=10000"))
+		require.ErrorContains(t, err, "unknown configuration key")
+		require.ErrorContains(t, err, key)
+	}
+	_, err := ParseConfig([]byte("[dns]\nlisten-port=82"))
+	require.NoError(t, err, "DNS no longer conflicts with an unused legacy UDP relay")
+}
+
+func TestUDPFallbackConfiguration(t *testing.T) {
+	cleanProxyEnv(t)
+	for _, target := range []string{"", BuiltinDirect, BuiltinReject} {
+		cfg, err := ParseConfig([]byte("[[outbounds]]\nname='office'\nurl='http://127.0.0.1:8080'\nudp-fallback='" + target + "'"))
+		require.NoError(t, err)
+		require.Equal(t, target, cfg.Outbounds[0].UDPFallback)
+	}
+	for _, target := range []string{"DIRECT", "missing", "office", "other"} {
+		_, err := ParseConfig([]byte("[[outbounds]]\nname='office'\nurl='http://127.0.0.1:8080'\nudp-fallback='" + target + "'\n[[outbounds]]\nname='other'\nurl='socks5://127.0.0.1:1080'"))
+		require.ErrorContains(t, err, "udp-fallback must be direct or reject")
 	}
 }
 
@@ -68,8 +92,6 @@ outbound = 'direct'
 `)
 	require.Equal(t, "127.0.0.1:9200", cfg.General.ManagerAddr)
 	require.Equal(t, "json", cfg.General.LogFormat)
-	require.Equal(t, uint16(82), cfg.Core.TcpListenPort)
-	require.Equal(t, uint16(60000), cfg.Core.UdpNatPortEnd)
 	require.Equal(t, []string{"1.1.1.1:53", "[2001:4860:4860::8888]:53"}, cfg.DNS.Servers)
 	require.Len(t, cfg.Rule, 2)
 	require.Equal(t, "FINAL", cfg.Rule[1].Schema)
@@ -107,13 +129,7 @@ func TestConfigValidation(t *testing.T) {
 		{"network address", baseConfig + "network = '10.0.0.0/24'", "host address"},
 		{"broadcast", baseConfig + "network = '10.0.0.255/24'", "host address"},
 		{"loopback", baseConfig + "network = '127.0.0.1/24'", "host address"},
-		{"zero port", baseConfig + "tcp-listen-port = 0", "tcp-listen-port"},
-		{"overflow port", baseConfig + "tcp-listen-port = 65536", "decode TOML"},
-		{"negative port", baseConfig + "tcp-listen-port = -1", "decode TOML"},
-		{"reversed range", baseConfig + "tcp-nat-port-start = 60000\ntcp-nat-port-end = 10000", "tcp-nat-port-start"},
-		{"zero range", baseConfig + "udp-nat-port-start = 0", "udp-nat-port-start"},
-		{"range collision", baseConfig + "tcp-listen-port = 10000", "overlaps"},
-		{"DNS port collision", "[dns]\nlisten-port = 82", "dns.listen-port"},
+		{"zero DNS port", "[dns]\nlisten-port = 0", "dns.listen-port"},
 		{"TTL", "[dns]\nttl = 0", "dns.ttl"},
 		{"packet size", "[dns]\npacket-size = 100", "dns.packet-size"},
 		{"timeout", "[dns]\nread-timeout = 301", "timeouts"},

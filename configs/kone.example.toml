@@ -28,18 +28,6 @@ stack = "system"
 # 本机回环代理/DNS stub 仍使用回环路径；改变出口接口需要重启。
 # outbound-interface = ""
 
-# 以下为旧 relay API 的兼容选项，仍校验合法性；sing-tun 生产数据面不使用它们。
-# TCP relay 监听端口；不得位于对应 NAT 端口范围内。
-# tcp-listen-port = 82
-# TCP NAT 端口范围，左闭右开：[start, end)。
-# tcp-nat-port-start = 10000
-# tcp-nat-port-end = 60000
-# UDP relay 监听端口；不得与 DNS 监听端口相同。
-# udp-listen-port = 82
-# UDP NAT 端口范围，左闭右开：[start, end)。
-# udp-nat-port-start = 10000
-# udp-nat-port-end = 60000
-
 # [dns] 整段可省略；默认在启动前读取当前系统 DNS，用于真实域名解析。
 # 系统上游会固定到本次运行，规则热更新不会重读已指向 KONE 的网卡 DNS。
 # [dns]
@@ -64,8 +52,12 @@ stack = "system"
 name = "office"
 # 支持 http、https CONNECT 或 socks5，必须显式提供端口。
 # 也可填写 socks5://127.0.0.1:1080 或 https://username:password@example.com:443。
-# 当前代理出站仅转发 TCP；UDP 保持直连行为，未实现 SOCKS5 UDP ASSOCIATE。
+# 当前代理出站仅支持 TCP；HTTP/HTTPS/SOCKS5 均未实现 UDP 代理。
 url = "http://127.0.0.1:8080"
+# 可选 UDP 回退出站；省略或空字符串时，代理不支持 UDP 就拒绝，禁止自动直连。
+# 仅允许 direct（明确允许直连 UDP）或 reject（明确拒绝）；不能引用其他代理。
+# 回退只影响该代理的 UDP，不改变 TCP 或 reject 规则；可随代理/规则热更新。
+# udp-fallback = ""
 
 # 规则按顺序匹配，outbound 引用代理名称或内置 direct、reject（小写）。
 # direct：KONE 接收后直接连接目标；reject：拒绝连接，域名 DNS 查询返回 REFUSED。

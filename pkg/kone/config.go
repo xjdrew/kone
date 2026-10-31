@@ -39,12 +39,6 @@ type CoreConfig struct {
 	AutoRoute         bool   `toml:"auto-route"`
 	OutboundInterface string `toml:"outbound-interface"`
 	Network           string `toml:"network"`
-	TcpListenPort     uint16 `toml:"tcp-listen-port"`
-	TcpNatPortStart   uint16 `toml:"tcp-nat-port-start"`
-	TcpNatPortEnd     uint16 `toml:"tcp-nat-port-end"`
-	UdpListenPort     uint16 `toml:"udp-listen-port"`
-	UdpNatPortStart   uint16 `toml:"udp-nat-port-start"`
-	UdpNatPortEnd     uint16 `toml:"udp-nat-port-end"`
 }
 
 type DNSConfig struct {
@@ -68,8 +62,9 @@ const (
 )
 
 type OutboundConfig struct {
-	Name string `toml:"name"`
-	URL  string `toml:"url"`
+	Name        string `toml:"name"`
+	URL         string `toml:"url"`
+	UDPFallback string `toml:"udp-fallback,omitempty"`
 }
 
 func builtinOutbounds() map[string]OutboundType {
@@ -97,8 +92,7 @@ type KoneConfig struct {
 func defaultConfig() *KoneConfig {
 	return &KoneConfig{
 		General: GeneralConfig{ManagerAddr: "127.0.0.1:9200", LogLevel: "info", LogFormat: "text"},
-		Core: CoreConfig{Network: "10.192.0.1/16", Stack: "system", TcpListenPort: 82, TcpNatPortStart: 10000, TcpNatPortEnd: 60000,
-			UdpListenPort: 82, UdpNatPortStart: 10000, UdpNatPortEnd: 60000},
+		Core:    CoreConfig{Network: "10.192.0.1/16", Stack: "system"},
 		DNS: DNSConfig{ListenPort: DnsDefaultPort, TTL: DnsDefaultTtl, PacketSize: DnsDefaultPacketSize,
 			ReadTimeout: DnsDefaultReadTimeout, WriteTimeout: DnsDefaultWriteTimeout},
 	}
@@ -202,6 +196,11 @@ func validateOutbounds(config []OutboundConfig) (map[string]OutboundType, error)
 		}
 		if _, err := proxy.FromUrl(o.URL); err != nil {
 			return nil, fail("invalid proxy URL (expected http, https or socks5 with host and port)")
+		}
+		// Current proxy protocols only implement TCP. Keep fallback targets
+		// terminal: never recurse through another unsupported proxy or a cycle.
+		if o.UDPFallback != "" && o.UDPFallback != BuiltinDirect && o.UDPFallback != BuiltinReject {
+			return nil, fail("udp-fallback must be direct or reject; proxy outbounds do not support UDP")
 		}
 		types[o.Name] = OutboundProxy
 	}
@@ -307,25 +306,8 @@ func (cfg *KoneConfig) Validate() error {
 	if cfg.General.LogFormat != "text" && cfg.General.LogFormat != "json" {
 		return errors.New("general.log-format must be text or json")
 	}
-	for _, item := range []struct {
-		name               string
-		listen, start, end uint16
-	}{
-		{"tcp", cfg.Core.TcpListenPort, cfg.Core.TcpNatPortStart, cfg.Core.TcpNatPortEnd},
-		{"udp", cfg.Core.UdpListenPort, cfg.Core.UdpNatPortStart, cfg.Core.UdpNatPortEnd},
-	} {
-		if item.listen == 0 {
-			return fmt.Errorf("core.%s-listen-port must be nonzero", item.name)
-		}
-		if item.start == 0 || item.start >= item.end {
-			return fmt.Errorf("core.%s-nat-port-start must be nonzero and less than the exclusive end", item.name)
-		}
-		if item.listen >= item.start && item.listen < item.end {
-			return fmt.Errorf("core.%s-listen-port overlaps NAT port range", item.name)
-		}
-	}
-	if cfg.DNS.ListenPort == 0 || cfg.DNS.ListenPort == cfg.Core.UdpListenPort {
-		return errors.New("dns.listen-port must be nonzero and different from core.udp-listen-port")
+	if cfg.DNS.ListenPort == 0 {
+		return errors.New("dns.listen-port must be nonzero")
 	}
 	if cfg.DNS.TTL == 0 || cfg.DNS.TTL > math.MaxUint32 {
 		return errors.New("dns.ttl must be between 1 and 4294967295 seconds")

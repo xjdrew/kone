@@ -11,6 +11,8 @@ import (
 	singtun "github.com/sagernet/sing-tun"
 )
 
+const MTU = 1500
+
 type singDevice struct {
 	singtun.Tun
 	name string

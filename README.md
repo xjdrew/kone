@@ -15,7 +15,7 @@ These capabilities form the compatibility baseline for future refactoring. New f
 | F01 | Desktop and gateway deployment | Linux, macOS and Windows; Linux amd64, arm64 and ARMv7 builds, including Raspberry Pi gateways |
 | F02 | LAN traffic takeover | Selective Fake-IP/CIDR routing or optional full IPv4 capture; clients use the gateway and KONE DNS, with forwarding and firewall rules configured by the operator |
 | F03 | DNS and routing policy | Stable Fake-IP addresses; ordered domain, suffix, keyword, IPv4 CIDR, GeoIP, DIRECT, REJECT and final rules |
-| F04 | Upstream proxies | TCP through HTTP CONNECT, HTTPS CONNECT or SOCKS5; direct TCP and direct UDP forwarding |
+| F04 | Outbound policy | HTTP/HTTPS CONNECT and SOCKS5 TCP; built-in direct/reject; unsupported proxy UDP is denied unless an explicit direct fallback is configured |
 | F05 | Safe rule reload | Atomic rule/proxy snapshots; virtual addresses and established connections survive reload |
 | F06 | Predictable lifecycle | Startup rollback, signal/context shutdown, owned route/device cleanup and failed TUN opens without panics |
 | F07 | Gateway outbound isolation | Bind proxy transports and upstream DNS to the physical interface to avoid recapture by full-tunnel routes |
@@ -52,7 +52,7 @@ Reload atomically publishes domain/GeoIP/default rules and outbound definitions,
 ## Current boundaries
 
 - IPv4 DNS virtual-address routing, explicit CIDR routes and optional full IPv4 route capture. Full capture still follows DIRECT/REJECT/proxy rules and existing more-specific system routes. LAN clients must use KONE DNS and the gateway; DHCP and firewall setup remain operator-owned.
-- TCP uses the configured proxy. UDP currently connects directly to the resolved destination; SOCKS5 UDP ASSOCIATE is not implemented. IPv6 interception is not supported and `IP-CIDR6` rules are rejected.
+- TCP uses the selected outbound. UDP uses direct for direct rules and always denies reject rules. Current proxies have no UDP support, so proxy UDP is denied by default; set the proxy's optional `udp-fallback = "direct"` only when direct UDP is intended. SOCKS5 UDP ASSOCIATE and IPv6 interception are not implemented.
 - The default `system` stack works with an ordinary Go build. Optional `mixed` (system TCP and gVisor UDP) requires `-tags with_gvisor`; see [stack selection](docs/configuration.md#tun-backend-and-stack). Packet/fragment behavior depends on the selected stack; arbitrary fragmentation is not a compatibility guarantee yet.
 - Startup failures roll back owned network changes; normal signal/context shutdown closes active flows and restores adapter settings. Forced termination cannot run cleanup. See [runtime reliability](docs/runtime.md).
 - Full IPv4 capture requires `core.outbound-interface` so proxy transports and DNS leave through the physical interface. Changing that interface requires a restart; automatic network switching and crash recovery remain future work.
@@ -67,7 +67,7 @@ Read [the architecture and core traffic paths](docs/architecture.md) for DNS/Fak
 go test ./...
 go vet ./...
 go test -race ./... # requires CGO and a platform C compiler
-go test ./pkg/tcpip -run '^$' -fuzz '^FuzzParseIPv4$' -fuzztime 15s
+go test ./pkg/kone -run '^$' -fuzz '^FuzzParseConfig$' -fuzztime 15s
 ```
 
 CI runs native race tests, non-decreasing PR coverage, cross-platform builds, dependency checks and container smoke tests. Privileged acceptance exercises TUN lifecycle, route ownership, reload, shutdown, Windows Wintun and traffic from a separate LAN client. Real Raspberry Pi throughput, suspend/resume and multi-VPN coexistence still need deployment-specific testing.

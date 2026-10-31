@@ -3,6 +3,7 @@ package kone
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -40,8 +41,11 @@ func TestFlowDestinationUsesSnapshotAndVirtualAddress(t *testing.T) {
 	_, policy, err = h.destination(context.Background(), old, destination, false)
 	require.NoError(t, err)
 	require.Equal(t, "A", policy)
-	addr, _, err = h.destination(context.Background(), old, destination, true)
+	_, _, err = h.destination(context.Background(), old, destination, true)
+	require.ErrorIs(t, err, ErrUDPUnsupported)
+	addr, policy, err = h.destination(context.Background(), one.policy.Load(), destination, true)
 	require.NoError(t, err)
+	require.Equal(t, "direct", policy)
 	require.Equal(t, "192.0.2.10:443", addr)
 	updated.Rule[0].Outbound = "reject"
 	require.NoError(t, one.Reload(updated))
@@ -123,8 +127,19 @@ func (c returnPacketConn) WritePacket(b *buf.Buffer, _ M.Socksaddr) error {
 }
 
 func TestTransparentUDPReplyAndConcurrentShutdown(t *testing.T) {
+	for _, fallback := range []bool{false, true} {
+		t.Run(fmt.Sprint("proxy fallback=", fallback), func(t *testing.T) { testUDPReplyAndShutdown(t, fallback) })
+	}
+}
+
+func testUDPReplyAndShutdown(t *testing.T, fallback bool) {
 	cleanProxyEnv(t)
-	one, err := FromConfig(parseTestConfig(t, ""))
+	cfg := parseTestConfig(t, "")
+	if fallback {
+		cfg.Outbounds = []OutboundConfig{{Name: "office", URL: "http://127.0.0.1:8080", UDPFallback: BuiltinDirect}}
+		cfg.Rule = []RuleConfig{{Schema: "FINAL", Outbound: "office"}}
+	}
+	one, err := FromConfig(cfg)
 	require.NoError(t, err)
 	listen := func() *net.UDPConn {
 		conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -135,8 +150,11 @@ func TestTransparentUDPReplyAndConcurrentShutdown(t *testing.T) {
 	echo, client, inbound := listen(), listen(), listen()
 	go func() {
 		data := make([]byte, 65535)
-		n, addr, err := echo.ReadFromUDP(data)
-		if err == nil {
+		for {
+			n, addr, err := echo.ReadFromUDP(data)
+			if err != nil {
+				return
+			}
 			echo.WriteToUDP(data[:n], addr)
 		}
 	}()
@@ -146,12 +164,18 @@ func TestTransparentUDPReplyAndConcurrentShutdown(t *testing.T) {
 	conn := returnPacketConn{bufio.NewPacketConn(inbound), M.SocksaddrFromNet(client.LocalAddr())}
 	go one.flows.NewPacketConnectionEx(ctx, conn, M.ParseSocksaddr("192.168.10.20:4000"), M.SocksaddrFromNet(echo.LocalAddr()), func(err error) { done <- err })
 	client.SetDeadline(time.Now().Add(2 * time.Second))
-	_, err = client.WriteToUDP([]byte("gateway udp"), inbound.LocalAddr().(*net.UDPAddr))
-	require.NoError(t, err)
-	data := make([]byte, 100)
-	n, _, err := client.ReadFromUDP(data)
-	require.NoError(t, err)
-	require.Equal(t, "gateway udp", string(data[:n]))
+	for _, message := range []string{"gateway udp", "existing session"} {
+		_, err = client.WriteToUDP([]byte(message), inbound.LocalAddr().(*net.UDPAddr))
+		require.NoError(t, err)
+		data := make([]byte, 100)
+		n, _, err := client.ReadFromUDP(data)
+		require.NoError(t, err)
+		require.Equal(t, message, string(data[:n]))
+		updated := one.Snapshot().Config
+		updated.Rule = []RuleConfig{{Schema: "FINAL", Outbound: BuiltinReject}}
+		updated.Outbounds = nil
+		require.NoError(t, one.Reload(updated))
+	}
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Add(1)

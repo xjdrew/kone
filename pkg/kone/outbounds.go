@@ -11,9 +11,13 @@ import (
 )
 
 type configuredOutbound struct {
-	kind  OutboundType
-	proxy *proxy.Proxy
+	kind        OutboundType
+	proxy       *proxy.Proxy
+	udpFallback string
 }
+
+var ErrUDPUnsupported = errors.New("outbound does not support UDP")
+var ErrRejected = errors.New("connection rejected by routing policy")
 
 type Outbounds struct {
 	entries map[string]configuredOutbound
@@ -31,7 +35,7 @@ func (p *Outbounds) DialContext(ctx context.Context, name, addr string) (net.Con
 	}
 	switch outbound.kind {
 	case OutboundReject:
-		return nil, errors.New("connection rejected by routing policy")
+		return nil, ErrRejected
 	case OutboundDirect:
 		return p.dial(ctx, "tcp", addr)
 	case OutboundProxy:
@@ -39,6 +43,49 @@ func (p *Outbounds) DialContext(ctx context.Context, name, addr string) (net.Con
 		return outbound.proxy.DialContextVia(ctx, "tcp", addr, p.dial)
 	}
 	return nil, fmt.Errorf("invalid outbound type for %q", name)
+}
+
+// SupportsUDP describes the actual transport implementation, not the URL's
+// potential protocol features. SOCKS5 UDP ASSOCIATE is not implemented yet.
+func (p *Outbounds) SupportsUDP(name string) bool {
+	entry, ok := p.entries[name]
+	return ok && entry.kind == OutboundDirect
+}
+
+// UDPOutbound resolves policy before DNS or dialing. Fallbacks are explicitly
+// configured terminal targets, and can never turn a reject rule into a dial.
+func (p *Outbounds) UDPOutbound(name string) (string, error) {
+	entry, ok := p.entries[name]
+	if !ok {
+		return "", fmt.Errorf("unknown outbound %q", name)
+	}
+	if entry.kind == OutboundReject {
+		return "", fmt.Errorf("outbound %q: %w", name, ErrRejected)
+	}
+	if p.SupportsUDP(name) {
+		return name, nil
+	}
+	switch entry.udpFallback {
+	case BuiltinDirect:
+		return BuiltinDirect, nil
+	case BuiltinReject:
+		return "", fmt.Errorf("outbound %q UDP fallback reject: %w", name, ErrRejected)
+	default:
+		return "", fmt.Errorf("outbound %q: %w; configure udp-fallback explicitly to allow direct UDP", name, ErrUDPUnsupported)
+	}
+}
+
+func (p *Outbounds) DialUDPContext(ctx context.Context, name, addr string) (net.Conn, error) {
+	target, err := p.UDPOutbound(name)
+	if err != nil {
+		return nil, err
+	}
+	// Only direct currently supports UDP. Future UDP proxy implementations
+	// belong here, using the selected outbound's own protocol association.
+	if target == BuiltinDirect {
+		return p.dial(ctx, "udp4", addr)
+	}
+	return nil, ErrUDPUnsupported
 }
 
 func NewOutbounds(config []OutboundConfig) (*Outbounds, error) {
@@ -52,7 +99,7 @@ func NewOutbounds(config []OutboundConfig) (*Outbounds, error) {
 	for _, o := range config {
 		dialer, _ := proxy.FromUrl(o.URL) // validated above; never log credentials
 		slog.Debug("Proxy configured", "outbound", o.Name, "scheme", dialer.Url.Scheme, "endpoint", dialer.Url.Host)
-		p.entries[o.Name] = configuredOutbound{kind: OutboundProxy, proxy: dialer}
+		p.entries[o.Name] = configuredOutbound{kind: OutboundProxy, proxy: dialer, udpFallback: o.UDPFallback}
 	}
 	return p, nil
 }

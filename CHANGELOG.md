@@ -1,4 +1,7 @@
 # 2026/10/31 — forked TUN fixes and explicit configuration model
+- Remove the legacy packet dispatcher, NAT and TCP/UDP relays plus their port/range configuration; migrate remaining Fake-IP and CIDR address operations to net/netip and remove pkg/tcpip.
+- Deny UDP on unsupported proxy outbounds by default, before destination DNS/dialing; add explicit per-proxy udp-fallback=direct/reject with strict validation and immutable session snapshots, preserving direct/reject and gateway behavior.
+- Replace legacy relay fixtures with stack/flow lifecycle regressions, fuzz strict configuration parsing, and extend system/mixed LAN gateway acceptance through UDP deny/fallback/reload phases. Simplify the architecture guide around the current flow and separate TCP statistics from DNS records/UDP sessions.
 - Move sing-tun fixes to a reviewable PR in xjdrew/sing-tun; pin its commit through a remote module replacement and remove the in-tree source copy.
 - Normalize Wintun HRESULT adapter errors so standard Go error matching recognizes duplicate devices; retain PE/session/exclusive-creation race and native regressions in fork CI.
 - Replace the proxies dictionary with named proxy outbounds arrays; rules reference proxy names or built-in direct/reject targets, with duplicate/type/URL/reference validation and atomic reload.

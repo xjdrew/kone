@@ -73,7 +73,7 @@ KONE 添加两条半网默认路由捕获 IPv4，退出时删除它们并保留�
 - 根据非对称 TUN 路由需要设置 reverse-path filtering，例如相关接口采用 loose 模式 `rp_filter=2`；严格模式可能丢弃来自 LAN 的回注报文。不要直接清空现有防火墙规则。
 - 本轮只接管 IPv4。若网络也启用 IPv6，应由部署者明确选择独立 IPv6 路由/过滤策略，不能假定 IPv6 自动经过 KONE。
 
-UDP 保留原来的直连行为，不通过 HTTP/HTTPS/SOCKS5 TCP 代理。全局接管也不会自动增加 UDP 代理协议支持。
+UDP 命中 `direct` 时直连，命中 `reject` 时拒绝；命中 HTTP/HTTPS/SOCKS5 代理时默认拒绝，因为这些出站目前只实现 TCP。确实允许代理规则的 UDP 直连时，在对应代理条目添加 `udp-fallback = "direct"`；该设置可热更新，新 UDP 会话立即使用新策略。全局接管不会自动增加 UDP 代理协议支持。
 当前管理页面只监听树莓派本机回环地址，可用 SSH 端口转发访问。停止或卸载后，管理员仍需撤销自己配置的 DHCP、静态路由、forwarding 和防火墙设置；KONE 只回滚自己拥有的设备和路由。
 
 ## 验收

@@ -44,9 +44,6 @@ type One struct {
 	flows           *flowHandler
 	dnsTable        *DnsTable
 	dns             *Dns
-	tcpRelay        *TCPRelay
-	udpRelay        *UDPRelay
-	tun             *TunDriver
 	manager         *Manager
 }
 
@@ -138,21 +135,19 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 		return nil, err
 	}
 	p.dial = dialer.DialContext
-	one.flows = &flowHandler{one: one, dialer: dialer}
+	one.flows = &flowHandler{one: one}
 	rule := NewRule(cfg.Rule, cfg.Outbounds)
 	p.bypassEndpoints(rule)
 	one.policy.Store(&runtimeSnapshot{version: 1, cfg: cfg, rule: rule, outbounds: p})
 	one.dnsTable = NewDnsTable(ip, subnet)
 	// The system TCP forwarder uses the address after the TUN address.
 	next := netip.MustParseAddr(ip.String()).Next()
-	one.dnsTable.ipPool.reserve(net.IP(next.AsSlice()))
+	one.dnsTable.ipPool.reserve(next)
 	one.dnsTable.ttl = uint32(cfg.DNS.TTL)
 	if one.dns, err = NewDns(one, dnsCfg); err != nil {
 		return nil, err
 	}
 	one.dns.client.Dialer = dialer
-	one.tcpRelay = NewTCPRelay(one, cfg.Core)
-	one.udpRelay = NewUDPRelay(one, cfg.Core)
 	one.manager = NewManager(one, cfg)
 	return one, nil
 }
@@ -258,8 +253,6 @@ func (one *One) Run(parent context.Context) (result error) {
 				c.Close()
 			}
 		}
-		one.tcpRelay.active.close()
-		one.udpRelay.close()
 		one.flows.close()
 		if dnsConn != nil {
 			dnsConn.Close()
@@ -284,8 +277,6 @@ func (one *One) Run(parent context.Context) (result error) {
 		}
 		one.flows.workers.Wait()
 		wg.Wait()
-		one.tcpRelay.nat.clear()
-		one.udpRelay.nat.clear()
 		one.mu.Lock()
 		one.cleanupErr = errors.Join(cleanup...)
 		result = errors.Join(result, one.cleanupErr)
@@ -354,9 +345,10 @@ func (one *One) Run(parent context.Context) (result error) {
 		}
 	}
 	for _, pattern := range one.policy.Load().rule.patterns {
-		if p, ok := pattern.(IPCIDRPattern); ok && one.policy.Load().rule.OutboundType(p.Proxy()) != OutboundDirect && !seen[p.ipNet.String()] {
-			routes := []*net.IPNet{p.ipNet}
-			if p.ipNet.String() == "0.0.0.0/0" {
+		if p, ok := pattern.(IPCIDRPattern); ok && one.policy.Load().rule.OutboundType(p.Proxy()) != OutboundDirect && !seen[p.prefix.String()] {
+			_, subnet, _ := net.ParseCIDR(p.prefix.String())
+			routes := []*net.IPNet{subnet}
+			if p.prefix.Bits() == 0 {
 				routes = nil
 				for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
 					_, subnet, _ := net.ParseCIDR(cidr)
@@ -374,7 +366,7 @@ func (one *One) Run(parent context.Context) (result error) {
 				}
 				seen[route.String()] = true
 			}
-			seen[p.ipNet.String()] = true
+			seen[p.prefix.String()] = true
 		}
 	}
 	if ctx.Err() != nil {

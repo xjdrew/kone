@@ -10,7 +10,6 @@ import (
 	"net"
 	"os/exec"
 	"reflect"
-	"sync"
 	"time"
 )
 
@@ -95,39 +94,4 @@ func runCommand(ctx context.Context, name string, args ...string) ([]byte, error
 		return nil, fmt.Errorf("%s: %w: %s", name, err, &stderr)
 	}
 	return out, nil
-}
-
-// connections synchronizes shutdown with connections accepted/dialed in flight.
-type connections struct {
-	mu     sync.Mutex
-	closed bool
-	items  map[net.Conn]struct{}
-}
-
-func (c *connections) add(conn net.Conn) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		conn.SetDeadline(time.Now())
-		conn.Close()
-		return false
-	}
-	if c.items == nil {
-		c.items = make(map[net.Conn]struct{})
-	}
-	c.items[conn] = struct{}{}
-	return true
-}
-func (c *connections) remove(conn net.Conn) { c.mu.Lock(); delete(c.items, conn); c.mu.Unlock() }
-func (c *connections) close() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.closed = true
-	for conn := range c.items {
-		// TLS Close may write close_notify; an expired deadline prevents a
-		// stalled peer from delaying shutdown once per active connection.
-		conn.SetDeadline(time.Now())
-		conn.Close()
-		delete(c.items, conn)
-	}
 }

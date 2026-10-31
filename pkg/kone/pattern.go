@@ -8,10 +8,10 @@ package kone
 import (
 	"log/slog"
 	"net"
+	"net/netip"
 	"strings"
 
 	"github.com/xjdrew/kone/pkg/geoip"
-	"github.com/xjdrew/kone/pkg/tcpip"
 )
 
 type Pattern interface {
@@ -112,8 +112,10 @@ func (p GEOIPPattern) Proxy() string {
 func (p GEOIPPattern) Match(val interface{}) bool {
 	var country string
 	switch ip := val.(type) {
-	case uint32:
-		country = geoip.QueryCountry(ip)
+	case netip.Addr:
+		if ip.Unmap().Is4() {
+			country = geoip.QueryCountryByIP(net.IP(ip.AsSlice()))
+		}
 	case net.IP:
 		country = geoip.QueryCountryByIP(ip)
 	}
@@ -130,8 +132,8 @@ func NewGEOIPPattern(proxy string, country string) Pattern {
 
 // IP-CIDR
 type IPCIDRPattern struct {
-	proxy string
-	ipNet *net.IPNet
+	proxy  string
+	prefix netip.Prefix
 }
 
 func (p IPCIDRPattern) Proxy() string {
@@ -141,18 +143,19 @@ func (p IPCIDRPattern) Proxy() string {
 func (p IPCIDRPattern) Match(val interface{}) bool {
 	switch ip := val.(type) {
 	case net.IP:
-		return p.ipNet.Contains(ip)
-	case uint32:
-		return p.ipNet.Contains(tcpip.ConvertUint32ToIPv4(ip))
+		address, _ := netip.AddrFromSlice(ip)
+		return p.prefix.Contains(address.Unmap())
+	case netip.Addr:
+		return p.prefix.Contains(ip.Unmap())
 	}
 
 	return false
 }
 
-func NewIPCIDRPattern(proxy string, ipNet *net.IPNet) Pattern {
+func NewIPCIDRPattern(proxy string, prefix netip.Prefix) Pattern {
 	return IPCIDRPattern{
-		proxy: proxy,
-		ipNet: ipNet,
+		proxy:  proxy,
+		prefix: prefix.Masked(),
 	}
 }
 
@@ -186,11 +189,9 @@ func CreatePattern(rc RuleConfig) Pattern {
 	case "DOMAIN-KEYWORD":
 		return NewDomainKeywordPattern(proxy, pattern)
 	case "IP-CIDR":
-		fallthrough
-	case "IP-CIDR6":
-		_, ipNet, err := net.ParseCIDR(pattern)
-		if err == nil {
-			return NewIPCIDRPattern(proxy, ipNet)
+		prefix, err := netip.ParsePrefix(pattern)
+		if err == nil && prefix.Addr().Is4() {
+			return NewIPCIDRPattern(proxy, prefix)
 		}
 	case "GEOIP":
 		return NewGEOIPPattern(proxy, pattern)

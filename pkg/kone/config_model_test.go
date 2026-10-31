@@ -14,6 +14,7 @@ import (
 
 	"github.com/miekg/dns"
 	"github.com/pelletier/go-toml/v2"
+	M "github.com/sagernet/sing/common/metadata"
 	"github.com/stretchr/testify/require"
 )
 
@@ -197,6 +198,12 @@ func TestBuiltInRejectAppliesAfterCNAMEAndIPResolution(t *testing.T) {
 		require.Equal(t, dns.RcodeRefused, reply.Rcode)
 		require.Empty(t, reply.Answer)
 		require.Nil(t, one.dnsTable.Get("origin.example"))
+		// A cached Fake-IP from an earlier proxy rule can need its first
+		// real lookup after reload. Newly discovered CNAME/IP rejection must
+		// also stop the UDP flow before any destination socket is created.
+		record := one.dnsTable.Set("origin.example", BuiltinDirect)
+		_, _, err = one.flows.destination(context.Background(), one.policy.Load(), M.SocksaddrFromNet(&net.UDPAddr{IP: record.IP, Port: 443}), true)
+		require.ErrorIs(t, err, ErrRejected)
 	}
 }
 

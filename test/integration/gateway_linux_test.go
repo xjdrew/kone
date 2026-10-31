@@ -89,11 +89,19 @@ func TestSystemGatewayLANFullCapture(t *testing.T) {
 	cfg.DNS.Servers = []string{fmt.Sprintf("203.0.113.53:%d", dnsPort)}
 	cfg.Outbounds = append(cfg.Outbounds, kone.OutboundConfig{Name: "Gateway", URL: fmt.Sprintf("http://203.0.113.2:%d", proxyPort)})
 	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "203.0.113.9/32", Outbound: kone.BuiltinDirect}, {Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Outbound: kone.BuiltinReject}, {Schema: "FINAL", Outbound: "Gateway"}}
-	_, stop, done := systemStart(t, cfg)
-	client := exec.CommandContext(ctx, "ip", "netns", "exec", clientNS, executable, "-test.run=^TestGatewayNamespaceHelper$", "-test.timeout=20s")
-	client.Env = append(os.Environ(), "KONE_GATEWAY_ROLE=client", fmt.Sprintf("KONE_GATEWAY_DNS=10.203.0.1:%d", cfg.DNS.ListenPort), fmt.Sprintf("KONE_GATEWAY_UDP_PORT=%d", udpPort), fmt.Sprintf("KONE_GATEWAY_DIRECT_PORT=%d", directPort))
-	if out, err := client.CombinedOutput(); err != nil {
-		t.Fatalf("LAN forwarding: %v\n%s", err, out)
+	one, stop, done := systemStart(t, cfg)
+	// Exercise default denial, explicit fallback, then removal by hot reload.
+	// Each client opens new UDP sessions; established sessions retain snapshots.
+	for _, fallback := range []string{"", kone.BuiltinDirect, ""} {
+		cfg.Outbounds[0].UDPFallback = fallback
+		if err := one.Reload(cfg); err != nil {
+			t.Fatal(err)
+		}
+		client := exec.CommandContext(ctx, "ip", "netns", "exec", clientNS, executable, "-test.run=^TestGatewayNamespaceHelper$", "-test.timeout=20s")
+		client.Env = append(os.Environ(), "KONE_GATEWAY_ROLE=client", "KONE_GATEWAY_UDP_FALLBACK="+fallback, fmt.Sprintf("KONE_GATEWAY_DNS=10.203.0.1:%d", cfg.DNS.ListenPort), fmt.Sprintf("KONE_GATEWAY_UDP_PORT=%d", udpPort), fmt.Sprintf("KONE_GATEWAY_DIRECT_PORT=%d", directPort))
+		if out, err := client.CombinedOutput(); err != nil {
+			t.Fatalf("LAN forwarding (udp-fallback=%q): %v\n%s", fallback, err, out)
+		}
 	}
 	// Management must retain the LAN client's identity, rather than loopback or
 	// the TUN listener's rewritten source address.
@@ -234,7 +242,7 @@ func gatewayClient(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		conn.SetDeadline(time.Now().Add(3 * time.Second))
+		conn.SetDeadline(time.Now().Add(time.Second))
 		_, err = conn.Write([]byte("LAN UDP"))
 		if err != nil {
 			t.Fatal(err)
@@ -242,6 +250,12 @@ func gatewayClient(t *testing.T) {
 		data := make([]byte, 32)
 		n, err := conn.Read(data)
 		conn.Close()
+		if target == fake && os.Getenv("KONE_GATEWAY_UDP_FALLBACK") == "" {
+			if err == nil {
+				t.Fatal("proxy UDP silently fell back to direct without permission")
+			}
+			continue
+		}
 		if err != nil || string(data[:n]) != "LAN UDP" {
 			t.Fatalf("LAN UDP: %q %v", data[:n], err)
 		}
