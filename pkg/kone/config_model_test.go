@@ -216,7 +216,7 @@ func TestExampleDocumentsEveryConfigurationField(t *testing.T) {
 	require.Empty(t, cfg.DNS.Servers, "example must use system DNS by default")
 	require.Equal(t, "system", cfg.Core.Stack)
 	// Enable commented defaults to validate their spelling, types, and values.
-	option := regexp.MustCompile(`^#\s*(\[[^\]]+\]|[a-z][a-z0-9-]*\s*=.*)$`)
+	option := regexp.MustCompile(`^#\s*(\[\[?[a-z][a-z0-9.-]*\]\]?|[a-z][a-z0-9-]*\s*=.*)$`)
 	lines := strings.Split(string(data), "\n")
 	for i, line := range lines {
 		if match := option.FindStringSubmatch(strings.TrimSpace(line)); match != nil {

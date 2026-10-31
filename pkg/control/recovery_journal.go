@@ -138,8 +138,10 @@ func (c *Controller) readRecoveryJournal(migrate bool) (recoveryJournal, error) 
 	if err != nil {
 		return record, err
 	}
-	defer file.Close()
 	data, err := io.ReadAll(io.LimitReader(file, 65537))
+	// Close before any migration replaces the file: Windows does not permit
+	// atomic replacement while this read handle is still open.
+	err = errors.Join(err, file.Close())
 	if err != nil {
 		return record, err
 	}
