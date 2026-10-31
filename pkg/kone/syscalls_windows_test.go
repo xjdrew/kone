@@ -42,11 +42,14 @@ func TestWindowsStackFirewallOwnership(t *testing.T) {
 			}
 			if calls == 2 {
 				require.Contains(t, script, "New-NetFirewallRule")
+				require.Contains(t, script, "-Name $p.Name")
 				require.Contains(t, script, "-LocalAddress $p.IP")
 				require.Contains(t, script, "-Program $p.Program")
 				return nil, nil
 			}
 			require.Contains(t, script, "Remove-NetFirewallRule")
+			require.Contains(t, script, "-Name $p.Name")
+			require.NotContains(t, script, "Where-Object")
 			return nil, nil
 		}}
 		undo, err := n.PrepareStack(context.Background(), CoreConfig{Network: "10.192.0.1/16"})
