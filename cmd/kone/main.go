@@ -20,11 +20,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	return runContextWithElevation(ctx, args, stdout, stderr, elevateForWindows)
+}
+
+type elevationFunc func(context.Context, string, bool, io.Writer) (bool, error)
+
+func runContextWithElevation(ctx context.Context, args []string, stdout, stderr io.Writer, elevate elevationFunc) int {
 	flags := flag.NewFlagSet("kone", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	version := flags.Bool("version", false, "Print version")
 	debug := flags.Bool("debug", false, "Enable structured debug logs")
 	check := flags.Bool("check", false, "Validate configuration without changing system networking")
+	noElevate := flags.Bool("no-elevate", false, "Do not request Windows UAC elevation (for services and headless use)")
 	filename := flags.String("config", "config.toml", "TOML configuration file")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -65,6 +72,16 @@ func runContext(ctx context.Context, args []string, stdout, stderr io.Writer) in
 	if *check {
 		fmt.Fprintln(stdout, "Configuration valid")
 		return 0
+	}
+	if !*noElevate {
+		handedOff, err := elevate(ctx, *filename, *debug, stderr)
+		if err != nil {
+			slog.Error("Windows administrator authorization failed", "error", err)
+			return 3
+		}
+		if handedOff {
+			return 0
+		}
 	}
 	slog.Info("Starting KONE", "config", *filename, "version", VERSION)
 	one, err := kone.FromConfig(cfg)

@@ -1,3 +1,20 @@
+# 2026/10/31 — Windows UAC startup
+- Request Windows UAC elevation after configuration validation on ordinary CLI startup; hand off to a visible administrator window with absolute configuration paths, preserved working directory/debug settings and recursion prevention.
+- Keep check/version/help unprivileged; add no-elevate for services/headless callers and explicit cancellation/error feedback without repeated prompts.
+- Refuse automatic handoff when active rules depend on terminal proxy-environment overrides that runas cannot reliably transfer; provide an explicit configuration/manual-elevation path without exposing credentials.
+- Add argument-escaping, elevation-ordering, cancellation and Windows CLI regressions; document handoff lifetime and per-build trusted signing separately from Smart App Control.
+- Explain that Let's Encrypt does not issue code-signing certificates and point eligible open-source projects to SignPath Foundation's reviewed signing program.
+
+# 2026/10/31 — Windows local startup diagnostics
+- Check the Windows process elevation token before native TUN creation and report how to retry from an administrator terminal, preserving access-denied error matching and separate token-query failures.
+- Keep configuration-only checks unprivileged, preserve cancellation priority and Unix behavior, and add unit/Windows CLI regressions.
+- Document explicit Windows executable paths, strict configuration migration, and the distinction between TUN permissions and pre-launch Smart App Control policy blocks.
+
+# 2026/10/31 — management UI requirements
+- Extend the requirements to phone/tablet browsers with responsive pages, touch-friendly Sankey exploration, mobile reconnect behavior and acceptance cases; define explicitly enabled, authenticated LAN access with revocable read-only/management sessions.
+- Add a dedicated management UI requirements document covering navigation, default desktop startup, inbound/outbound/rule/DNS configuration, the homepage Sankey diagram, diagnostics, recovery and acceptance criteria traced to the product feature list.
+- Define configuration and runtime states, actual-path traffic accounting, stable drill-down context, credential handling and capability-driven forms; link the document from the feature list and README.
+
 # 2026/10/31 — forked TUN fixes and explicit configuration model
 - Remove the legacy packet dispatcher, NAT and TCP/UDP relays plus their port/range configuration; migrate remaining Fake-IP and CIDR address operations to net/netip and remove pkg/tcpip.
 - Deny UDP on unsupported proxy outbounds by default, before destination DNS/dialing; add explicit per-proxy udp-fallback=direct/reject with strict validation and immutable session snapshots, preserving direct/reject and gateway behavior.
@@ -34,6 +51,11 @@
 - Verify real Windows firewall rules are absent after occupied-port rollback and normal shutdown in both system and mixed stacks.
 - Declare GPL-3.0-or-later explicitly in the project LICENSE; remove the separate third-party summary and update README, binary packaging and Docker while retaining original component licenses and Wintun provenance.
 
+# 2026/10/31 — product requirements
+- Expand the future plan into a product requirements draft covering core problems, current capability boundaries, safety, selective proxying, DNS, diagnostics, configuration, desktop delivery, performance and releases.
+- Add traceable requirement IDs, acceptance scenarios, implementation stages and explicit open decisions; link the roadmap from README.
+- Confirm Windows/macOS startup with application-managed defaults and UI-based inbound/outbound configuration, limit observation to traffic entering KONE, and specify the homepage Sankey diagram with actual paths, consistent metrics and drill-down acceptance criteria.
+
 # 2026/10/31 — runtime reliability
 - Add context-owned startup, cancellation, idempotent close and reverse-order network rollback; propagate component and cleanup failures.
 - Restore Windows adapter DNS/DHCP/MTU/metric and remove only owned addresses/routes; isolate newly created Linux/macOS devices.
@@ -61,13 +83,3 @@
 - [x] tech: merge proxy code
 - [x] feat: reload rule by manager: curl http://127.0.0.1:9200/reload
 - [x] tech: use system dns config as default
-
-# plan
-- [ ] feat: default hijack dns query
-- [ ] feat: show process name of network
-- [ ] bug: traffic will be endless loop if proxy's ip use proxy by rule
-- [ ] feat: support ss protocol
-- [ ] feat: support IPv6
-- [ ] feat: update GEOIP database
-- [ ] feat: record all dns query
-- [ ] feat: support for internal domain name resolution
