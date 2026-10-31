@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,7 +80,10 @@ proxy="Win"
 				if err != nil {
 					t.Fatal(err)
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+				// The first Wintun creation on a clean runner also installs the
+				// signed driver. Allow that cold path; fault cases still must return
+				// the actual listener error, never a generic configuration failure.
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 				defer cancel()
 				done := make(chan error, 1)
 				go func() { done <- one.Run(ctx) }()
@@ -87,8 +91,8 @@ proxy="Win"
 				if fail {
 					select {
 					case err := <-done:
-						if err == nil {
-							t.Fatal("occupied DNS port accepted")
+						if err == nil || !strings.Contains(err.Error(), "DNS listener") {
+							t.Fatalf("expected occupied DNS listener error, got %v", err)
 						}
 					case <-ctx.Done():
 						t.Fatal("startup did not fail promptly")

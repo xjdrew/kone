@@ -1,6 +1,7 @@
 FROM golang:1.27.3-bookworm AS builder
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY pkg/singtun ./pkg/singtun
 RUN go mod download
 COPY . .
 ARG TARGETOS=linux

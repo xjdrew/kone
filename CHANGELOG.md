@@ -7,6 +7,7 @@
 - Adopt GPL-3.0-or-later with original MIT/component notices preserved; reorganize README around stable product capabilities and refresh configuration/deployment documentation.
 - Add a developer architecture guide explaining DNS/Fake-IP, transparent TCP/UDP, gateway capture, sing-tun/gVisor boundaries, lifecycle and future optimization points.
 - Retain the pinned sing-tun source with bounded PE section slices for Windows race/checkptr and immediate adapter cleanup on session failure; record patch provenance and add the upstream regression to CI.
+- Accept newly created Wintun adapters with no IPv4 address when taking the initial snapshot; preserve other snapshot errors and validate the exact occupied-listener failure in acceptance tests.
 
 # 2026/10/31 — runtime reliability
 - Add context-owned startup, cancellation, idempotent close and reverse-order network rollback; propagate component and cleanup failures.

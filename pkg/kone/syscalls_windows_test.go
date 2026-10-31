@@ -113,6 +113,24 @@ func TestWindowsSnapshotErrorsDoNotMutate(t *testing.T) {
 	}
 }
 
+func TestNewWintunWithoutIPv4AddressCanBeConfigured(t *testing.T) {
+	calls := 0
+	n := systemNetwork{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls++
+		script := decodePowerShell(t, args)
+		if calls == 1 {
+			require.Contains(t, script, "CmdletizationQuery_NotFound*")
+			require.Contains(t, script, "-ErrorAction Stop")
+			return []byte(`{"Index":42,"MTU":1500,"Metric":0,"AutomaticMetric":"Enabled","DHCP":"Disabled","StaticDNS":false,"DNS":[],"Addresses":[]}`), nil
+		}
+		return nil, nil
+	}}
+	undo, err := n.Configure(context.Background(), newMemoryDevice(), CoreConfig{Network: "10.192.0.1/16"})
+	require.NoError(t, err)
+	require.NoError(t, undo(context.Background()))
+	require.Equal(t, 9, calls)
+}
+
 func TestWindowsRouteOwnershipAndTimeout(t *testing.T) {
 	_, subnet, _ := net.ParseCIDR("203.0.113.0/24")
 	for _, existing := range []bool{false, true} {

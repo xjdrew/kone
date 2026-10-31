@@ -45,7 +45,8 @@ $i=Get-NetIPInterface -InterfaceIndex $a.ifIndex -AddressFamily IPv4;
 $dns=Get-DnsClientServerAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4;
 $key='HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\'+([guid]$a.InterfaceGuid).ToString('B');
 $static=(Get-ItemProperty -LiteralPath $key).NameServer;
-[pscustomobject]@{Index=[int]$a.ifIndex;MTU=[int]$i.NlMtu;Metric=[int]$i.InterfaceMetric;AutomaticMetric=$i.AutomaticMetric.ToString();DHCP=$i.Dhcp.ToString();DNS=@($dns.ServerAddresses);StaticDNS=![string]::IsNullOrWhiteSpace($static);Addresses=@(Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 | Select-Object IPAddress,PrefixLength)} | ConvertTo-Json -Depth 5 -Compress`
+try { $addresses=@(Get-NetIPAddress -InterfaceIndex $a.ifIndex -AddressFamily IPv4 -ErrorAction Stop) } catch { if($_.FullyQualifiedErrorId -notlike 'CmdletizationQuery_NotFound*'){throw}; $addresses=@() };
+[pscustomobject]@{Index=[int]$a.ifIndex;MTU=[int]$i.NlMtu;Metric=[int]$i.InterfaceMetric;AutomaticMetric=$i.AutomaticMetric.ToString();DHCP=$i.Dhcp.ToString();DNS=@($dns.ServerAddresses);StaticDNS=![string]::IsNullOrWhiteSpace($static);Addresses=@($addresses | Select-Object IPAddress,PrefixLength)} | ConvertTo-Json -Depth 5 -Compress`
 
 func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) (Cleanup, error) {
 	data, err := n.powershell(ctx, readWindowsSettings, map[string]any{"Name": d.Name()})
