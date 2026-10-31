@@ -5,6 +5,8 @@
 - Move DNS settings from core into an optional dns section. Resolve omitted upstreams from system settings once before startup, preserve automatic configuration through reload, and reject invalid/self-routed upstreams.
 - Keep loopback proxies and local DNS stubs on the loopback path when a physical outbound interface is selected.
 - Document every supported configuration key and its default in the example, comment optional defaults, and add schema-completeness, DNS-default, outbound-policy and migration regressions.
+- Pin the merged sing-tun PR #1 commit; its independent native reproducers and minimal additions to the existing platform workflow pass CI without consumer-specific coupling.
+- Rewrite the architecture guide with rendered sequence diagrams, consistent terms and a glossary; explain the full Fake-IP TCP return path and distinguish current UDP direct fallback from the recommended explicit capability/fallback policy.
 
 # 2026/10/31 — sing-tun migration and gateway compatibility
 - Replace water with pinned SagerNet/sing-tun; use embedded Wintun on Windows without a preinstalled TAP adapter.

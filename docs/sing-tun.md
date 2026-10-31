@@ -1,13 +1,13 @@
 # sing-tun 依赖与修补
 
 KONE 使用 [xjdrew/sing-tun](https://github.com/xjdrew/sing-tun) 的固定提交
-`1b310d7937079beb5018c1cab0885520d8b326e7`，通过 go.mod 的远程 replace
+`fc4685fee0a37e59f174ad964e7b0b4b7894a251`，通过 go.mod 的远程 replace
 保留 `github.com/sagernet/sing-tun` 导入路径。仓库内不再复制 sing-tun 源码，
 也不依赖开发者本机的 `../sing-tun` 目录；克隆 KONE 即可独立构建。
 
 基线为上游 `040db71fcd33`（sing-box v1.14.4 使用的版本），避免把依赖迁移
-与 dev 分支的协议栈/API 变化混在一起。修补在 [fork PR #1](https://github.com/xjdrew/sing-tun/pull/1)
-单独 review，目标为标记原始基线的 `codex/kone-stable-base` 分支。
+与 dev 分支的协议栈/API 变化混在一起。修补通过 [fork PR #1](https://github.com/xjdrew/sing-tun/pull/1)
+独立审查并合并到 `codex/kone-stable-base`；KONE 固定引用其合并提交。
 
 修补内容：
 
@@ -16,8 +16,9 @@ KONE 使用 [xjdrew/sing-tun](https://github.com/xjdrew/sing-tun) 的固定提�
 3. 可选 `EXP_Exclusive`：Linux 使用 IFF_TUN_EXCL，Windows 拒绝回退打开同名设备；KONE 启用此项。
 4. 将 adapter API 返回的 HRESULT_FROM_WIN32 转为普通 Win32 错误，使 errors.Is 正确识别重名等错误。
 
-fork CI 在 Go 1.25/1.27.3、Linux/Windows 下运行 race 回归，包括持久 TUN、
-真实 Wintun、注入 session 失败和 PE 堆内存边界。KONE CI 另外验证 system/mixed
+fork 保留原有平台/ping CI，只补 Linux 持久 TUN 步骤和一个 Go 1.27.3 Windows
+race 回归任务，包括真实 Wintun、默认复用、注入 session 失败和 PE 堆内存边界。
+独立用例和原始基线的失败证据见 fork 的 [复现说明](https://github.com/xjdrew/sing-tun/blob/fc4685fee0a37e59f174ad964e7b0b4b7894a251/docs/tun-creation.md)。KONE CI 另外验证 system/mixed
 的真实网关、DNS/TCP/UDP 和启动/退出回滚，并对已固定的 fork 模块执行 Windows 回归。
 
 升级时同步检查 fork 的修补是否已被上游吸收；更新固定提交后重新执行这两组 CI。
