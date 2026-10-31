@@ -148,6 +148,12 @@ func New(options Options) (*Controller, error) {
 	} else if err != nil {
 		c.configError = "Saved settings need repair; the original file has been preserved"
 		doc = Document{Version: 1, Config: managementDefaults(), Inbound: Inbound{"tun-main", "TUN", false}}
+		for _, path := range []string{c.confirmedPath(), c.settingsPath() + ".previous", c.confirmedPath() + ".previous"} {
+			if fallback, backupErr := readDocument(path); backupErr == nil && fallback.Version >= doc.Version {
+				doc = fallback
+				c.configError = "Saved settings need repair; showing the last valid backup while preserving the original file"
+			}
+		}
 	}
 	c.doc = doc
 	c.configureLogging = options.ConfigureLogging

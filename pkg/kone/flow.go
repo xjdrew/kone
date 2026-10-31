@@ -135,10 +135,26 @@ func (h *flowHandler) resolveDestination(ctx context.Context, s *runtimeSnapshot
 		}
 		host = record.Hostname
 		target.release = table.Pin(host)
-		target.decision = s.rule.DecideDNS(host, record.resolved, protocol, destination.Port)
 		if observation != nil {
 			observation.UpdateTarget(host, destination.Addr.String(), net.JoinHostPort(host, strconv.Itoa(int(destination.Port))))
 		}
+		domainDecision := s.rule.DecideDNS(host, nil, protocol, destination.Port)
+		if s.rule.OutboundType(domainDecision.Outbound) == OutboundDirect && record.resolved != nil && !record.resolutionFresh(time.Now()) {
+			if observation != nil {
+				observation.Stage("dns")
+			}
+			kind := uint16(dns.TypeA)
+			if destination.Addr.Is6() {
+				kind = dns.TypeAAAA
+			}
+			message, err := h.one.dns.ResolveTypeContext(ctx, host, kind)
+			if err != nil {
+				return target, err
+			}
+			record.SetRealIP(message)
+			table.SetRealIP(host, message)
+		}
+		target.decision = s.rule.DecideDNS(host, record.resolved, protocol, destination.Port)
 	}
 	selectOutbound := func(name string) (string, error) {
 		if err := s.outbounds.CheckEnabled(name); err != nil {

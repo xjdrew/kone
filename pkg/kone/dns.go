@@ -233,11 +233,15 @@ func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.M
 	if table == nil {
 		return d.resolve(ctx, r)
 	}
-	if table.IsNonProxyDomain(domain, s.version) {
-		return d.resolve(ctx, r)
-	}
 	record := table.Get(domain)
 	policy := s.rule.Proxy(domain)
+	refreshed := false
+	if s.rule.OutboundType(policy) == OutboundDirect && record != nil && record.resolved != nil && !record.resolutionFresh(time.Now()) {
+		if err := d.refreshResolution(ctx, table, record, r); err != nil {
+			return nil, err
+		}
+		refreshed = true
+	}
 	if record != nil {
 		policy = s.rule.ProxyDNS(domain, record.resolved)
 	}
@@ -262,7 +266,13 @@ func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.M
 		}
 		return record.Answer(r), nil
 	}
-	msg, err := d.resolve(ctx, r)
+	var msg *dns.Msg
+	var err error
+	if refreshed {
+		msg = record.resolved.Copy()
+	} else {
+		msg, err = d.resolve(ctx, r)
+	}
 	if err != nil || len(msg.Answer) == 0 {
 		return msg, err
 	}
@@ -284,7 +294,6 @@ func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.M
 		}
 		return record.Answer(r), nil
 	}
-	table.SetNonProxyDomain(domain, msg.Answer[0].Header().Ttl, s.version)
 	return msg, nil
 }
 

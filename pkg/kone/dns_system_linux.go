@@ -35,6 +35,7 @@ type resolvedDNS struct {
 	readFile        func(string) ([]byte, error)
 	verifyNamespace func(uint32) error
 	owner           string
+	paths           map[int]string
 }
 
 func SupportsSystemDNS() bool { return true }
@@ -143,7 +144,10 @@ func (d *resolvedDNS) set(ctx context.Context, index int, command, argument stri
 	default:
 		return errors.New("unsupported resolver setter")
 	}
-	_, err := d.bus(ctx, append([]string{"call", resolvedService, resolvedManager, "org.freedesktop.resolve1.Manager", method, signature}, values...)...)
+	if d.owner == "" {
+		return errors.New("resolver owner is not verified")
+	}
+	_, err := d.bus(ctx, append([]string{"call", d.owner, resolvedManager, "org.freedesktop.resolve1.Manager", method, signature}, values...)...)
 	return err
 }
 
@@ -215,7 +219,7 @@ func (d *resolvedDNS) check(ctx context.Context) error {
 	}
 	d.owner = owner
 	for _, property := range []string{"DNSSEC", "DNSOverTLS"} {
-		data, err = d.bus(ctx, "get-property", resolvedService, resolvedManager, "org.freedesktop.resolve1.Manager", property)
+		data, err = d.bus(ctx, "get-property", owner, resolvedManager, "org.freedesktop.resolve1.Manager", property)
 		if err != nil {
 			return fmt.Errorf("inspect system resolver security: %w", err)
 		}
@@ -232,7 +236,31 @@ func (d *resolvedDNS) check(ctx context.Context) error {
 }
 
 func (d *resolvedDNS) profile(ctx context.Context, index int) (resolvedProfile, error) {
-	args := []string{"get-property", resolvedService, resolvedManager + "/link/_" + strconv.Itoa(index), resolvedLinkInterface}
+	path := d.paths[index]
+	if path == "" {
+		data, err := d.bus(ctx, "call", d.owner, resolvedManager, "org.freedesktop.resolve1.Manager", "GetLink", "i", strconv.Itoa(index))
+		if err != nil {
+			return nil, err
+		}
+		value, err := busJSON(data, "o", true)
+		if err != nil || json.Unmarshal(value, &path) != nil {
+			return nil, errors.New("invalid resolver link object path")
+		}
+		label := strings.TrimPrefix(path, resolvedManager+"/link/")
+		if label == path || label == "" || len(label) > 128 {
+			return nil, errors.New("unexpected resolver link object path")
+		}
+		for _, ch := range label {
+			if !(ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_') {
+				return nil, errors.New("invalid resolver link object label")
+			}
+		}
+		if d.paths == nil {
+			d.paths = map[int]string{}
+		}
+		d.paths[index] = path
+	}
+	args := []string{"get-property", d.owner, path, resolvedLinkInterface}
 	for _, property := range resolvedConfigProperties {
 		args = append(args, property.name)
 	}

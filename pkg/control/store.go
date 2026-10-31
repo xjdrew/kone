@@ -171,6 +171,9 @@ func assignReadIDs(cfg *kone.KoneConfig) {
 }
 
 func prepareDocument(request SaveRequest, current Document) (Document, error) {
+	if current.Version == ^uint64(0) {
+		return Document{}, errors.New("configuration revision limit reached; restore the profile explicitly")
+	}
 	if request.BaseVersion != current.Version {
 		return Document{}, ErrConflict
 	}

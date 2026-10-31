@@ -513,7 +513,7 @@ func (o *TrafficObserver) prune(now time.Time) {
 	}
 	o.order = kept
 	for id, path := range o.paths {
-		if id == "other" || activePaths[id] || path.lastSeen.IsZero() || now.Sub(path.lastSeen) <= o.retention {
+		if id == "other" || activePaths[id] || path.LastSeen.IsZero() || now.Sub(path.LastSeen) <= o.retention {
 			continue
 		}
 		other := o.paths["other"]

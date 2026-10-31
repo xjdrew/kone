@@ -31,6 +31,11 @@ func TestDNSCacheTTLNegativeAndCapacity(t *testing.T) {
 	negative.SetRcode(request, dns.RcodeNameError)
 	negative.Ns = []dns.RR{&dns.SOA{Hdr: dns.RR_Header{Name: "example.", Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 60}, Ns: "ns.example.", Mbox: "hostmaster.example.", Minttl: 5}}
 	require.Equal(t, uint32(5), cacheTTL(negative))
+	negative.Answer = []dns.RR{&dns.CNAME{Hdr: dns.RR_Header{Name: "alias.example.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 60}, Target: "missing.example."}}
+	require.Equal(t, uint32(5), cacheTTL(negative), "CNAME does not replace the negative SOA TTL")
+	withoutSOA := negative.Copy()
+	withoutSOA.Ns = nil
+	require.Zero(t, cacheTTL(withoutSOA), "NXDOMAIN with a CNAME still needs an SOA to be cached")
 	cache.put(key, negative, now)
 	require.Equal(t, dns.RcodeNameError, cache.get(key, request.Id, now).Rcode)
 	other := request.Copy()

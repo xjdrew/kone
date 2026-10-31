@@ -32,6 +32,7 @@ type RemoteEngine struct {
 	recorder                         func(string, int) error
 	identity                         DeviceIdentity
 	archive                          *StopReply
+	archiveAnonymous                 bool
 	geoIP                            *geoip.Database
 	requests                         chan struct{}
 	probeSequence                    atomic.Uint64
@@ -310,9 +311,7 @@ func simpleArchiveQuery(query kone.TrafficQuery) bool {
 	return query.Protocol == "" && query.Status == "" && query.Outbound == "" && query.RuleID == "" && query.Inbound == "" && query.Target == "" && query.Source == "" && query.Cursor == "" && query.Anchor == "" && len(query.PathIDs) == 0 && len(query.FlowIDs) == 0 && query.Since.IsZero() && query.Until.IsZero()
 }
 func (e *RemoteEngine) TrafficData(query kone.TrafficQuery, options kone.SankeyOptions) (kone.TrafficSnapshot, kone.SankeySnapshot, error) {
-	e.mu.Lock()
-	archive, closed := e.archive, e.closed
-	e.mu.Unlock()
+	archive, closed := e.cachedArchive()
 	if closed {
 		if archive == nil || !simpleArchiveQuery(query) || options.Window > time.Second || options.Metric != "" && options.Metric != "total" && options.Metric != "cumulative" {
 			return kone.TrafficSnapshot{}, kone.SankeySnapshot{}, errors.New("capture is stopped; this filtered or live snapshot is unavailable")
@@ -337,9 +336,7 @@ func (e *RemoteEngine) TrafficData(query kone.TrafficQuery, options kone.SankeyO
 	return reply.Traffic, reply.Sankey, err
 }
 func (e *RemoteEngine) FlowRecord(id string) (kone.FlowRecord, bool, error) {
-	e.mu.Lock()
-	archive, closed := e.archive, e.closed
-	e.mu.Unlock()
+	archive, closed := e.cachedArchive()
 	if closed {
 		if archive != nil {
 			for _, record := range archive.Traffic.Traffic.Records {
@@ -355,9 +352,7 @@ func (e *RemoteEngine) FlowRecord(id string) (kone.FlowRecord, bool, error) {
 	return reply.Record, reply.Found, err
 }
 func (e *RemoteEngine) DNSData() (kone.DNSRuntimeStatus, []kone.DNSQueryEvent, error) {
-	e.mu.Lock()
-	archive, closed := e.archive, e.closed
-	e.mu.Unlock()
+	archive, closed := e.cachedArchive()
 	if closed {
 		if archive == nil {
 			return kone.DNSRuntimeStatus{}, nil, errors.New("final DNS observations are unavailable")
@@ -371,7 +366,10 @@ func (e *RemoteEngine) DNSData() (kone.DNSRuntimeStatus, []kone.DNSQueryEvent, e
 func (e *RemoteEngine) ClearObservation() error {
 	e.mu.Lock()
 	if e.closed {
-		e.archive = nil
+		if e.archive != nil {
+			e.archive = anonymousArchive(e.archive, true)
+			e.archiveAnonymous = true
+		}
 		e.mu.Unlock()
 		return nil
 	}

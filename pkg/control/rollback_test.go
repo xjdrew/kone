@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -38,6 +39,39 @@ func TestControlStartupPersistenceFailuresStopTheEngine(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCorruptSettingsOfferLastValidBackupWithoutOverwritingOrStarting(t *testing.T) {
+	directory := t.TempDir()
+	cfg := kone.DefaultConfig()
+	backup := Document{Version: 8, Config: cfg, Inbound: Inbound{ID: "tun-main", Name: "Last confirmed gateway", Enabled: true}}
+	require.NoError(t, writeDocument(filepath.Join(directory, "confirmed.json"), backup))
+	bad := []byte("{damaged-settings}")
+	require.NoError(t, os.WriteFile(filepath.Join(directory, "settings.json"), bad, 0600))
+	c := testController(t, Options{Directory: directory})
+	require.Equal(t, uint64(8), c.State().SavedVersion)
+	require.Equal(t, "Last confirmed gateway", c.doc.Inbound.Name)
+	require.Error(t, c.Start(t.Context()))
+	original, err := os.ReadFile(c.settingsPath())
+	require.NoError(t, err)
+	require.Equal(t, bad, original)
+	_, err = c.Save(currentRequest(c))
+	require.NoError(t, err)
+	require.Equal(t, uint64(9), c.State().SavedVersion)
+}
+
+func TestManagedLoggingIsConfiguredBeforeCaptureAndUsesSavedSettings(t *testing.T) {
+	var levels []string
+	c := testController(t, Options{ConfigureLogging: func(cfg kone.GeneralConfig) error { levels = append(levels, cfg.LogLevel); return nil }})
+	require.Equal(t, []string{"info"}, levels)
+	r := currentRequest(c)
+	r.Config["general"].(map[string]any)["log-level"] = "debug"
+	r.Inbound.Enabled = true
+	_, err := c.Save(r)
+	require.NoError(t, err)
+	require.NoError(t, c.Start(t.Context()))
+	require.Equal(t, []string{"info", "debug"}, levels)
+	require.NoError(t, c.Pause(t.Context()))
 }
 
 func TestCleanupFailureBlocksRestartAndReportsUnrestoredState(t *testing.T) {

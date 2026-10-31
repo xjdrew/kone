@@ -25,6 +25,8 @@
 - Keep management available while capture is paused or fails to start.
 - Preserve active Fake-IP mappings and prevent private DNS fallback to public resolvers.
 - Pause capture when the physical network context changes.
+- Refresh expired DNS addresses and CNAME routing decisions without changing active connections.
+- Offer the last valid settings for repair when the saved profile is damaged.
 
 # 2026/10/31
 

@@ -155,7 +155,7 @@ func (o *TrafficObserver) emptySnapshot(now time.Time, anchor string) TrafficSna
 	end := now.Truncate(time.Second)
 	counts := o.windowCounts(end.Add(-time.Second), end)
 	totals.UploadRate, totals.DownloadRate = float64(counts.Upload), float64(counts.Download)
-	return TrafficSnapshot{SessionID: o.session, StartedAt: o.started, Timestamp: now, Scope: TrafficScope, Totals: totals, Records: []FlowRecord{}, Anchor: anchor, Capacity: o.capacity, RetentionSeconds: int64(o.retention / time.Second), DroppedDetails: o.dropped, Recording: o.recording, Truncated: o.dropped > 0}
+	return TrafficSnapshot{SessionID: o.session, StartedAt: o.started, Timestamp: now, Scope: TrafficScope, Totals: totals, Records: []FlowRecord{}, Anchor: anchor, Capacity: o.capacity, RetentionSeconds: int64(o.retention / time.Second), DroppedDetails: o.dropped, Recording: o.recording, Truncated: o.dropped > 0 || !o.recording || o.paths["other"] != nil}
 }
 
 func (o *TrafficObserver) Get(id string) (FlowRecord, bool) {

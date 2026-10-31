@@ -76,6 +76,12 @@ func (c *Controller) SetLAN(enabled bool, address string) (map[string]any, error
 		}
 		return c.LANStatus(), nil
 	}
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return nil, errors.New("application is stopping")
+	}
 	if err := privateLocalAddress(address); err != nil {
 		return nil, err
 	}

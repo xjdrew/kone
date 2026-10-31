@@ -140,8 +140,18 @@ export function nativePaths(
   { metric = "rate", direction = "total" } = {},
 ) {
   if (!snapshot?.paths) return null;
+  const versions = new Set(
+    snapshot.paths.map((path) => path.config_version ?? "unknown"),
+  );
   const paths = snapshot.paths
     .map((path) => {
+      const version = path.config_version ?? "unknown";
+      const versionLabel =
+        versions.size > 1
+          ? version === "unknown"
+            ? " · 版本未知"
+            : ` · v${version}`
+          : "";
       const value =
         metric === "cumulative" && direction !== "total"
           ? Number(path[direction] || 0)
@@ -154,14 +164,16 @@ export function nativePaths(
           type: "inbound",
         },
         {
-          id: `rule:${path.rule_id}`,
-          label: path.rule_name || "默认策略",
+          id: `rule:${version}:${path.rule_id}`,
+          color_key: `rule:${path.rule_id}`,
+          label: `${path.rule_name || "默认策略"}${versionLabel}`,
           column: 1,
           type: "rule",
         },
         {
-          id: `out:${path.effective_outbound}`,
-          label: path.effective_outbound || "未建立出站",
+          id: `out:${version}:${path.effective_outbound}`,
+          color_key: `out:${path.effective_outbound}`,
+          label: `${path.effective_outbound || "未建立出站"}${versionLabel}`,
           column: 2,
           type: "outbound",
         },
@@ -253,7 +265,7 @@ export function buildGraph(aggregation, width = 1000) {
       node.x = 26 + (columnIndex * (width - 66)) / 3;
       node.y = y;
       node.height = node.value * scale;
-      node.color = colorFor(node.id);
+      node.color = colorFor(node.color_key || node.id);
       y += node.height + padding;
     }
   }
@@ -274,9 +286,8 @@ export function buildGraph(aggregation, width = 1000) {
     const dx = (x1 - x0) * 0.48;
     edge.d = `M${x0},${y0} C${x0 + dx},${y0} ${x1 - dx},${y1} ${x1},${y1} L${x1},${y1 + thickness} C${x1 - dx},${y1 + thickness} ${x0 + dx},${y0 + thickness} ${x0},${y0 + thickness} Z`;
     edge.flow_ids = [...edge.flow_ids];
-    edge.color = colorFor(
-      edge.target.startsWith("out:") ? edge.target : edge.source,
-    );
+    const colorNode = edge.target.startsWith("out:") ? target : source;
+    edge.color = colorFor(colorNode.color_key || colorNode.id);
   }
   return {
     nodes: [...nodeMap.values()],

@@ -24,7 +24,7 @@ func TestFlowDestinationUsesSnapshotAndVirtualAddress(t *testing.T) {
 	one := testEngine(t)
 	h := one.flows
 	record := one.dnsTable.Set("example.com", "A")
-	one.dnsTable.SetRealIP("example.com", &dns.Msg{Answer: []dns.RR{&dns.A{A: net.IPv4(192, 0, 2, 10)}}})
+	one.dnsTable.SetRealIP("example.com", &dns.Msg{Answer: []dns.RR{&dns.A{Hdr: dns.RR_Header{Ttl: 60}, A: net.IPv4(192, 0, 2, 10)}}})
 	destination := M.SocksaddrFromNet(&net.TCPAddr{IP: record.IP, Port: 443})
 	old := one.policy.Load()
 	addr, policy, err := h.destination(context.Background(), old, destination, false)

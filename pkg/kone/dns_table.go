@@ -26,9 +26,10 @@ type DomainRecord struct {
 	Hits    int
 	Expires time.Time
 
-	answer   *dns.A // cache dns answer
-	answer6  *dns.AAAA
-	resolved *dns.Msg // original answers used to recompute IP/CNAME policy on reload
+	answer          *dns.A // cache dns answer
+	answer6         *dns.AAAA
+	resolved        *dns.Msg  // original answers used to recompute IP/CNAME policy on reload
+	resolvedExpires time.Time // real DNS TTL is independent of the Fake-IP mapping lifetime
 }
 
 func cloneRecord(record *DomainRecord) *DomainRecord {
@@ -55,9 +56,8 @@ func (record *DomainRecord) SetRealIP(msg *dns.Msg) {
 		return
 	}
 	record.resolved = msg.Copy()
-	if record.RealIP != nil {
-		return
-	}
+	record.resolvedExpires = time.Now().Add(time.Duration(cacheTTL(msg)) * time.Second)
+	record.RealIP = nil
 
 	for _, item := range msg.Answer {
 		switch answer := item.(type) {
@@ -76,6 +76,10 @@ func (record *DomainRecord) SetRealIP(msg *dns.Msg) {
 			return
 		}
 	}
+}
+
+func (record *DomainRecord) resolutionFresh(now time.Time) bool {
+	return record != nil && record.resolved != nil && now.Before(record.resolvedExpires)
 }
 
 func (record *DomainRecord) Answer(request *dns.Msg) *dns.Msg {

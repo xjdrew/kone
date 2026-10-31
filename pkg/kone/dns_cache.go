@@ -85,7 +85,8 @@ func cacheTTL(message *dns.Msg) uint32 {
 			ttl = record.Header().Ttl
 		}
 	}
-	if len(message.Answer) == 0 {
+	if message.Rcode == dns.RcodeNameError || len(message.Answer) == 0 {
+		found = false
 		for _, record := range message.Ns {
 			if soa, ok := record.(*dns.SOA); ok {
 				found = true

@@ -177,8 +177,12 @@ func TestRemoteHelperReportsRealSnapshotsAndPreservesFinalEvidence(t *testing.T)
 	_, _, err = remote.TrafficData(kone.TrafficQuery{Protocol: "udp"}, kone.SankeyOptions{})
 	require.ErrorContains(t, err, "stopped")
 	require.NoError(t, remote.ClearObservation())
-	_, _, err = remote.TrafficData(kone.TrafficQuery{}, kone.SankeyOptions{})
-	require.Error(t, err)
+	traffic, graph, err = remote.TrafficData(kone.TrafficQuery{}, kone.SankeyOptions{Metric: "cumulative"})
+	require.NoError(t, err)
+	require.Empty(t, traffic.Records)
+	require.Equal(t, uint64(40), traffic.Totals.Bytes)
+	require.Equal(t, float64(40), graph.Total)
+	require.True(t, graph.Paths[0].Other)
 }
 
 func TestParentDisconnectionCancelsStartupAndRestoresHelper(t *testing.T) {

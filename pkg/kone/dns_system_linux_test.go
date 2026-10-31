@@ -75,8 +75,11 @@ func (f *resolvedFixture) run(_ context.Context, tool string, args ...string) ([
 			if arg == "GetConnectionUnixProcessID" {
 				return resolvedEnvelope("u", []uint32{42}), nil
 			}
+			if arg == "GetLink" {
+				return resolvedEnvelope("o", []string{resolvedManager + "/link/escaped_17"}), nil
+			}
 		}
-		if strings.Contains(strings.Join(args, " "), resolvedManager+"/link/_") {
+		if strings.Contains(strings.Join(args, " "), resolvedManager+"/link/escaped_17") {
 			var output []byte
 			for _, property := range resolvedConfigProperties {
 				var value any
@@ -148,6 +151,7 @@ func TestSystemDNSGuidanceRestoresOnlyOwnedLink(t *testing.T) {
 		require.NotContains(t, call, "resolv.conf")
 		if strings.Contains(call, " SetLink") {
 			require.Contains(t, call, "--allow-interactive-authorization=no")
+			require.Contains(t, call, " call :1.19 ")
 			require.Contains(t, call, " 17 ")
 		}
 	}

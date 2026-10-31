@@ -173,6 +173,50 @@ test("node ordering and outbound colors survive record order changes", () => {
   assert.equal(bytes(1250, true), "1.3 KB/s");
 });
 
+test("native historical paths retain distinct snapshot nodes and stable logical colors", () => {
+  const paths = [1, 2].map((version) => ({
+    id: `path-v${version}`,
+    config_version: version,
+    inbound: "tun-main",
+    rule_id: "rule-a",
+    rule_name: "相同规则",
+    effective_outbound: "Proxy A",
+    target: "example.com:443",
+    value: version * 100,
+    filter: { flow_ids: [`flow-v${version}`] },
+  }));
+  const first = buildGraph(nativePaths({ paths, unit: "B/s" }));
+  const second = buildGraph(
+    nativePaths({ paths: [...paths].reverse(), unit: "B/s" }),
+  );
+  assert.equal(first.total, 300);
+  assert.deepEqual(
+    first.columns.map((nodes) => nodes.length),
+    [1, 2, 2, 1],
+  );
+  assert.deepEqual(
+    first.columns.map((nodes) => nodes.map((node) => node.id)),
+    second.columns.map((nodes) => nodes.map((node) => node.id)),
+  );
+  for (const column of [1, 2]) {
+    assert.match(first.columns[column][0].label, /v1$/);
+    assert.match(first.columns[column][1].label, /v2$/);
+    assert.equal(
+      first.columns[column][0].color,
+      first.columns[column][1].color,
+    );
+    assert.equal(
+      first.columns[column].reduce((sum, node) => sum + node.value, 0),
+      300,
+    );
+  }
+  assert.ok(
+    first.edges.every((edge) => edge.value === 100 || edge.value === 200),
+  );
+  const single = nativePaths({ paths: [paths[0]], unit: "B/s" });
+  assert.equal(single.paths[0].nodes[2].label, "Proxy A");
+});
+
 test("API adapter maps native contracts without guessing real IP or process ownership", () => {
   const native = {
     id: "f",

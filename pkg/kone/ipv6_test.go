@@ -126,7 +126,7 @@ func TestAAAAFakeIPPolicyAndFamilyCorrectFlowResolution(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "dual.example:443", address)
 	require.Equal(t, "B", outbound)
-	one.dnsTable6.SetRealIP("dual.example", &dns.Msg{Answer: []dns.RR{&dns.AAAA{AAAA: net.ParseIP("2001:db8::9")}}})
+	one.dnsTable6.SetRealIP("dual.example", &dns.Msg{Answer: []dns.RR{&dns.AAAA{Hdr: dns.RR_Header{Ttl: 60}, AAAA: net.ParseIP("2001:db8::9")}}})
 	cfg.Rule[0].Outbound = BuiltinDirect
 	require.NoError(t, one.Reload(cfg))
 	address, outbound, err = one.flows.destination(context.Background(), one.policy.Load(), destination, true)

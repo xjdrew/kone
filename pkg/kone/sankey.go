@@ -49,7 +49,7 @@ type SankeyPath struct {
 	Failures          uint64       `json:"failures"`
 	Other             bool         `json:"other"`
 	Filter            TrafficQuery `json:"filter"`
-	lastSeen          time.Time
+	LastSeen          time.Time    `json:"last_seen"`
 }
 
 type SankeySnapshot struct {
@@ -122,7 +122,7 @@ func (o *TrafficObserver) countPath(flowID, pathID string, upload, download, con
 	addCounter(&path.Download, download)
 	addCounter(&path.Connections, connections)
 	addCounter(&path.Failures, failures)
-	path.lastSeen = o.now()
+	path.LastSeen = o.now()
 	second := o.now().Unix()
 	index := (second%61 + 61) % 61
 	bucket := &o.buckets[index]
@@ -344,6 +344,45 @@ func boolCounter(value bool) uint64 {
 		return 1
 	}
 	return 0
+}
+
+// WithoutExpiredDetails preserves measured weights while removing expired
+// target/client/rule metadata from a frozen, disconnected helper snapshot.
+func (result SankeySnapshot) WithoutExpiredDetails(before time.Time) (SankeySnapshot, bool) {
+	kept := make([]SankeyPath, 0, len(result.Paths))
+	other := SankeyPath{ID: "other:expired", Inbound: "other", RuleID: "other", RuleName: "Expired aggregate details", EffectiveOutbound: "other", Target: "other", Other: true}
+	changed := false
+	for _, path := range result.Paths {
+		if path.Other || path.LastSeen.IsZero() || !path.LastSeen.Before(before) {
+			kept = append(kept, path)
+			continue
+		}
+		changed = true
+		other.Value += path.Value
+		addCounter(&other.Upload, path.Upload)
+		addCounter(&other.Download, path.Download)
+		addCounter(&other.Connections, path.Connections)
+		addCounter(&other.Failures, path.Failures)
+	}
+	if !changed {
+		return result, false
+	}
+	for index, path := range kept {
+		if path.ID == other.ID {
+			other.Value += path.Value
+			addCounter(&other.Upload, path.Upload)
+			addCounter(&other.Download, path.Download)
+			addCounter(&other.Connections, path.Connections)
+			addCounter(&other.Failures, path.Failures)
+			kept = append(kept[:index], kept[index+1:]...)
+			break
+		}
+	}
+	result.Paths = append(kept, other)
+	result.Nodes, result.Links = []SankeyNode{}, []SankeyLink{}
+	result.Truncated, result.AnchorExpired = true, true
+	result.buildGraph()
+	return result, true
 }
 
 func (result *SankeySnapshot) buildGraph() {

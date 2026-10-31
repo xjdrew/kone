@@ -266,6 +266,7 @@ async function mount(page, options = {}) {
         .filter((r) => r.upload + r.download > 0)
         .map((r) => ({
           id: `path-${r.id}`,
+          config_version: r.config_version,
           inbound: r.inbound,
           rule_id: r.rule_id,
           rule_name: r.rule_name,
@@ -544,6 +545,7 @@ test("rename updates rule references atomically and explicitly preserves masked 
   const data = await mount(page);
   await page.locator(".nav-link[data-page=outbounds]").click();
   await page.locator("#outbound-name-0").fill("Office");
+  await page.locator("#outbound-name-0").dispatchEvent("input");
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.locator("#page-notice")).toContainText("已保存");
   const save = data.writes.find((r) => r.path === "/config");
@@ -625,6 +627,11 @@ test("mobile 320px all pages retain navigation, editing, and no body overflow", 
     }[name];
     await expect(
       page.getByRole("heading", { name: title, exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.locator(".workspace-footer").getByRole("link", {
+        name: "IP Geolocation by DB-IP",
+      }),
     ).toBeVisible();
     expect(
       await page.evaluate(
@@ -745,6 +752,11 @@ test("GeoIP requires an independent checksum and sends a raw bounded upload with
 }) => {
   const data = await mount(page);
   await page.locator(".nav-link[data-page=settings]").click();
+  const attribution = page.locator("main").getByRole("link", {
+    name: "IP Geolocation by DB-IP",
+  });
+  await expect(attribution).toHaveAttribute("href", "https://db-ip.com");
+  await expect(attribution).toHaveAttribute("rel", "noopener noreferrer");
   const content = JSON.stringify({
     format: 1,
     version: "test-v2",
@@ -963,4 +975,14 @@ test("corrupt GeoIP still permits explicit revalidation of the saved previous da
       () => data.writes.find((write) => write.path === "/geoip/rollback")?.body,
     )
     .toEqual({ base_version: 1, base_sha256: "" });
+});
+
+test("initial transport failure displays unknown counters instead of invented zero observations", async ({
+  page,
+}) => {
+  await page.route("**/api/v1/**", (route) => route.abort("connectionfailed"));
+  await page.goto("/#home");
+  await expect(page.locator("#runtime-status")).toHaveText("状态未知");
+  await expect(page.locator(".metric-value")).toHaveText(["—", "—", "—", "—"]);
+  await expect(page.locator("#lifecycle-toggle")).toBeDisabled();
 });

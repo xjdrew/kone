@@ -86,7 +86,7 @@ func TestUDPPolicyBeforeResolutionAndSnapshotReload(t *testing.T) {
 	require.ErrorIs(t, err, ErrUDPUnsupported, "must reject before upstream DNS is needed")
 	require.Equal(t, "A", policy)
 	require.Nil(t, one.dnsTable.Get(record.Hostname).RealIP)
-	one.dnsTable.SetRealIP(record.Hostname, &dns.Msg{Answer: []dns.RR{&dns.A{A: net.IPv4(192, 0, 2, 9)}}})
+	one.dnsTable.SetRealIP(record.Hostname, &dns.Msg{Answer: []dns.RR{&dns.A{Hdr: dns.RR_Header{Ttl: 60}, A: net.IPv4(192, 0, 2, 9)}}})
 	cfg := one.Snapshot().Config
 	cfg.Outbounds[0].UDPFallback = BuiltinDirect
 	require.NoError(t, one.Reload(cfg))

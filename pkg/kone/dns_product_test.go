@@ -193,6 +193,35 @@ func TestDNSResponseCacheAndQueryHistory(t *testing.T) {
 	require.Empty(t, one.DNSQueries())
 }
 
+func TestDNSRechecksIPPolicyAfterFreshResolution(t *testing.T) {
+	var queries atomic.Int32
+	handler := dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		address := "192.0.2.9"
+		if queries.Add(1) > 1 {
+			address = "203.0.113.9"
+		}
+		replyA(w, r, address)
+	})
+	upstream := startDNSListeners(t, handler, handler)
+	cleanProxyEnv(t)
+	cfg := parseTestConfig(t, "[[outbounds]]\nname='office'\nurl='http://127.0.0.1:1'\n[[rules]]\ntype='IP-CIDR'\npattern='203.0.113.0/24'\noutbound='office'\n[[rules]]\ntype='FINAL'\noutbound='direct'")
+	cfg.DNS.Servers = []string{upstream}
+	one, err := FromConfig(cfg)
+	require.NoError(t, err)
+	question := new(dns.Msg)
+	question.SetQuestion("rotating.example.", dns.TypeA)
+	first, err := one.dns.HandleQuery(context.Background(), question, "udp", "client")
+	require.NoError(t, err)
+	require.Equal(t, "192.0.2.9", first.Answer[0].(*dns.A).A.String())
+	one.dnsTable.SetNonProxyDomain("rotating.example", 7200, one.policy.Load().version)
+	one.ClearDNSCache()
+	second, err := one.dns.HandleQuery(context.Background(), question, "udp", "client")
+	require.NoError(t, err)
+	fake := second.Answer[0].(*dns.A).A
+	require.True(t, one.dnsTable.IsLocalIP(fake), "freshly resolved IP/CNAME policy must be re-evaluated after an old direct answer")
+	require.Equal(t, "203.0.113.9", one.dnsTable.Get("rotating.example").RealIP.String())
+}
+
 func TestDNSCancellationAndConcurrencyLimit(t *testing.T) {
 	entered := make(chan struct{})
 	var enterOnce sync.Once

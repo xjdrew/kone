@@ -945,8 +945,16 @@ function renderHome() {
         title,
         h("span", { class: "metric-glyph", "aria-hidden": true }, glyph),
       ),
-      h("div", { class: "metric-value" }, value),
-      h("div", { class: "metric-foot" }, foot),
+      h(
+        "div",
+        { class: "metric-value" },
+        model.traffic.session_id ? value : "—",
+      ),
+      h(
+        "div",
+        { class: "metric-foot" },
+        model.traffic.session_id ? foot : "等待有效主机快照",
+      ),
     );
   const metrics = h(
     "div",
@@ -1749,6 +1757,7 @@ function renderOutbounds() {
           outbound.name,
           (value) => {
             const previous = outbound.name;
+            if (value === previous) return;
             outbound.name = value;
             model.credentialActions[value] = {
               ...model.credentialActions[previous],
@@ -3208,6 +3217,21 @@ function renderGeoIP() {
     "从可信来源手动选择 JSON 数据文件；只解释地址归属，不代表目标可达。",
     model.geoError && note(model.geoError, "error"),
     metadata,
+    h(
+      "p",
+      { class: "muted" },
+      "内置 IPv4 归属数据：",
+      h(
+        "a",
+        {
+          href: "https://db-ip.com",
+          target: "_blank",
+          rel: "noopener noreferrer",
+        },
+        "IP Geolocation by DB-IP",
+      ),
+      "。IPv6 国家归属尚不支持。",
+    ),
     running() &&
       note(
         "先暂停接管，才能更换或回退 GeoIP。保存后需显式启用接管加载。",
