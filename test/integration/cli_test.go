@@ -10,20 +10,26 @@ import (
 	"testing"
 )
 
-func TestCLI(t *testing.T) {
+func buildBinary(t *testing.T, pkg string) (string, string) {
+	t.Helper()
 	if testing.Short() {
 		t.Skip("builds CLI")
 	}
 	root := filepath.Join("..", "..")
-	binary := filepath.Join(t.TempDir(), "kone")
+	binary := filepath.Join(t.TempDir(), filepath.Base(pkg))
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.Command("go", "build", "-o", binary, "./cmd/kone")
+	build := exec.Command("go", "build", "-o", binary, pkg)
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
+	return root, binary
+}
+
+func TestCLI(t *testing.T) {
+	root, binary := buildBinary(t, "./cmd/kone")
 	for _, tc := range []struct {
 		name string
 		args []string

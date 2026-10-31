@@ -43,6 +43,16 @@
 - IPv4 fuzz 和 `govulncheck`；Docker 构建及无特权 `-check` 烟雾测试。
 - 原生测试覆盖率和六种二进制作为 CI artifacts 保存。
 
+## PR 覆盖率门禁
+
+`Coverage must not decrease` 检查每次 PR 的全项目语句覆盖率，要求不低于该 PR 目标分支的精确 base SHA。
+基线会重新运行测试，不依赖历史 artifact；失败、缺失或无有效语句的覆盖率报告均使门禁失败。
+使用 Windows runner 和 PR 的 Go 工具链作为统一口径，避免跨平台语句集合不同，也兼容旧 `master` 的 Unix 构建问题。
+
+三平台测试均使用 `-coverpkg=./...`，包含未执行代码的包；按语句数加权并合并重复 block，使用精确分数比较，不以四舍五入后的百分比判定。
+单元测试和 `test/integration` 中的 CLI 端到端测试一起执行；覆盖率统计使用 `go test` 生成的 profile，独立子进程的覆盖数据不会自动并入。
+本地比较：`go run ./cmd/covercheck -base base.out -head head.out`。工具包含单元测试和实际编译执行的端到端用例，验证下降、持平、提升、重复 block 和无效报告。
+
 ## 下一轮边界
 
 本轮没有把构建通过当作完整 TUN 运行验收。下一轮应加入特权集成测试与故障注入，验证设备创建、路由安装、DNS 恢复、启动失败回滚、信号退出和网络切换。

@@ -1,4 +1,6 @@
 # 2026/10/31 — engineering foundation
+- Simplify development rules; require CHANGELOG updates, unit/end-to-end tests and non-decreasing coverage.
+- Add a PR coverage gate against the exact target commit using full-project statement counts, duplicate-block merging and exact fraction comparison.
 - Go 1.27.3 across module, CI and Docker; native Windows/macOS/Linux CI and six build targets.
 - Move implementation to pkg/, examples to configs/, deployment assets to deploy/ and docs/.
 - Replace INI with strict TOML (breaking configuration change) and go-logging with structured slog.

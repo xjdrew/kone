@@ -35,11 +35,50 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test with race detector
-        run: go test -race -count=1 '-coverprofile=coverage.out' -covermode=atomic ./...
+        run: go test -race -count=1 '-coverpkg=./...' '-coverprofile=coverage.out' -covermode=atomic ./...
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: coverage-${{ matrix.os }}
           path: coverage.out
+
+  coverage:
+    name: Coverage must not decrease
+    if: github.event_name == 'pull_request'
+    needs: test
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: coverage-windows-latest
+          path: .coverage-head
+      - name: Check out exact PR base
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .coverage-base
+          persist-credentials: false
+      - name: Measure base with the same toolchain and flags
+        working-directory: .coverage-base
+        run: go test -race -count=1 '-coverpkg=./...' '-coverprofile=../coverage-base.out' -covermode=atomic ./...
+      - name: Reject coverage regression
+        run: go run ./cmd/covercheck -base coverage-base.out -head .coverage-head/coverage.out
+      - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-comparison
+          path: |
+            coverage-base.out
+            .coverage-head/coverage.out
+          include-hidden-files: true
 
   build:
     name: Build all supported targets
