@@ -1,0 +1,15 @@
+# Linux only. Host networking lets the TUN routes serve the host/LAN.
+# Replace the sample upstream proxy and review routes before starting.
+services:
+  kone:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - ../../configs/kone.example.toml:/etc/kone/config.toml:ro
+    restart: unless-stopped

@@ -1,0 +1,42 @@
+# Copy to config.toml and replace the example proxy endpoint before running.
+[general]
+manager-addr = "127.0.0.1:9200" # empty string disables the manager
+log-level = "info" # debug, info, warn, error
+log-format = "text" # text or json; logs go to stderr
+
+[core]
+network = "10.192.0.1/16"
+# tun = "tun0" # Linux; macOS uses utunN, Windows an existing TAP adapter name
+# Explicit upstreams make this example reproducible. Omit to use system DNS.
+dns-server = ["1.1.1.1", "8.8.8.8:53"]
+dns-ttl = 600
+dns-packet-size = 4096
+dns-read-timeout = 5
+dns-write-timeout = 5
+tcp-listen-port = 82
+tcp-nat-port-start = 10000
+tcp-nat-port-end = 60000 # exclusive
+udp-listen-port = 82
+udp-nat-port-start = 10000
+udp-nat-port-end = 60000 # exclusive
+dns-listen-port = 53
+
+[proxies]
+Proxy1 = "http://127.0.0.1:8080"
+# Proxy2 = "socks5://127.0.0.1:1080"
+# Secure = "https://username:password@example.com:443"
+
+# Rules are evaluated in order. FINAL is optional and must be last.
+[[rules]]
+type = "IP-CIDR"
+pattern = "192.168.0.0/16"
+proxy = "DIRECT"
+
+[[rules]]
+type = "DOMAIN-SUFFIX"
+pattern = "example.com"
+proxy = "Proxy1"
+
+[[rules]]
+type = "FINAL"
+proxy = "DIRECT"
