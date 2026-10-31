@@ -18,7 +18,7 @@ func TestSystemDNSOptInAndPlatformBoundary(t *testing.T) {
 		return
 	}
 	require.False(t, SupportsSystemDNS())
-	require.ErrorContains(t, CheckSystemDNS(context.Background(), DNSConfig{System: true}), "Linux")
+	require.ErrorContains(t, CheckSystemDNS(context.Background(), DNSConfig{System: true}), "dns.system")
 	cleanup, err = (systemNetwork{}).ConfigureSystemDNS(context.Background(), nil, CoreConfig{}, DNSConfig{System: true})
 	require.Error(t, err)
 	require.Nil(t, cleanup)

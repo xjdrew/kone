@@ -8,6 +8,7 @@ import {
   setSession,
   targetWithPort,
   flowQueryChunks,
+  exactRuleTarget,
 } from "./api.js";
 import { aggregatePaths, bytes, nativePaths, renderSankey } from "./graph.js";
 
@@ -1547,7 +1548,7 @@ function showFlow(flow) {
         "为此目标建规则",
         () => {
           closeDialog();
-          addExactRule(frozen.domain || frozen.destination || frozen.target);
+          addExactRule(frozen.target, frozen.protocol);
         },
         "primary",
         !canManage(),
@@ -1935,39 +1936,37 @@ function renderOutbounds() {
   ];
 }
 
-function addExactRule(target) {
+function addExactRule(target, protocol = "") {
   if (!canManage() || !model.draft) return;
-  let value = String(target);
-  const bracketed = value.match(/^\[([^\]]+)\](?::\d+)?$/);
-  const hostPort = value.match(/^([^:]+):\d+$/);
-  if (bracketed) value = bracketed[1];
-  else if (hostPort) value = hostPort[1];
-  const ip = /^\d{1,3}(\.\d{1,3}){3}$/.test(value);
-  const ip6 = value.includes(":");
-  if (ip6 && !model.draft.core?.["ipv6-network"]) {
+  const exact = exactRuleTarget(target, protocol);
+  if (exact.type === "IP-CIDR6" && !model.draft.core?.["ipv6-network"]) {
     notice("先在入站配置可用的 IPv6 网段，再创建 IPv6 地址规则。", "warning");
     return;
   }
   const rule = {
-    type: ip ? "IP-CIDR" : ip6 ? "IP-CIDR6" : "DOMAIN",
-    pattern: ip ? `${value}/32` : ip6 ? `${value}/128` : value,
-    outbound: model.draft.outbounds?.[0]?.name || "direct",
+    ...exact,
+    outbound: model.draft.outbounds?.find((outbound) => outbound.enabled !== false)?.name || "direct",
   };
-  const final =
-    model.draft.rules?.findIndex((item) => item.type === "FINAL") ?? -1;
   model.draft.rules ||= [];
-  model.draft.rules.splice(
-    final < 0 ? model.draft.rules.length : final,
-    0,
-    rule,
+  const duplicate = model.draft.rules.find((existing) =>
+    existing.type === rule.type &&
+    existing.pattern?.toLowerCase() === rule.pattern.toLowerCase() &&
+    (existing.protocol || "") === (rule.protocol || "") &&
+    JSON.stringify([...(existing.ports || [])].sort()) === JSON.stringify([...(rule.ports || [])].sort()),
   );
+  if (duplicate) {
+    navigate("rules", {
+      message: "已有相同精确范围的规则，请检查或编辑现有规则；没有重复添加。",
+      kind: "warning",
+    });
+    return;
+  }
+  model.draft.rules.unshift(rule);
   markDirty();
-  navigate("rules");
-  notice(
-    "已建立精确目标规则草稿，尚未保存或应用。请核对目标与出站。",
-    "warning",
-  );
-  render();
+  navigate("rules", {
+    message: `已在用户规则首位建立精确草稿${rule.protocol ? ` · ${rule.protocol.toUpperCase()}` : ""}${rule.ports?.length ? ` · 端口 ${rule.ports.join(",")}` : ""}，尚未保存或应用。请核对目标与出站。`,
+    kind: "warning",
+  });
 }
 function renderRules() {
   if (!model.draft) return [empty("配置尚未加载", "连接恢复后可编辑规则。")];
@@ -2107,7 +2106,7 @@ function renderRules() {
           {
             id: `rule-ports-${index}`,
             placeholder: "留空匹配所有端口",
-            hint: "逗号分隔，例如 443, 8443。后端校验范围和重复。",
+            hint: "逗号分隔，例如 443, 8443；留空匹配全部端口。",
           },
         ),
       ),
@@ -2180,11 +2179,11 @@ function renderRules() {
   return [
     readonlyNote(),
     note(
-      "规则按顺序首个匹配生效，FINAL 必须在末尾。安全绕过优先于普通规则；应用新策略不会重写旧连接的历史。",
+      "规则按顺序首个匹配生效，FINAL 必须在末尾。安全绕过优先于普通规则；应用新策略不会重写旧连接的历史。协议和端口限制控制出站选择；域名使用虚拟 IP 后，同域名其他连接也可能进入 KONE，仍按各自规则匹配。",
     ),
     card(
       "路由规则",
-      "默认精确匹配。配置变更的热更新或重启要求由后端校验。",
+      "默认精确匹配。保存后检查是否需要重启，再明确应用到新连接。",
       h(
         "div",
         { class: "editor-list" },
@@ -2231,7 +2230,7 @@ function renderRules() {
             const data = new FormData(event.target);
             await action(async () => {
               const result = await endpoints.simulate({
-                target: data.get("target"),
+                target: targetWithPort(data.get("target"), data.get("port")),
                 protocol: data.get("protocol"),
               });
               showResult("规则模拟", result);
@@ -2247,6 +2246,17 @@ function renderRules() {
             placeholder: "example.com",
             required: true,
             "aria-label": "模拟目标",
+            disabled: !canManage(),
+          }),
+          h("input", {
+            name: "port",
+            id: "simulate-port",
+            type: "number",
+            min: 1,
+            max: 65535,
+            value: 443,
+            required: true,
+            "aria-label": "模拟目标端口",
             disabled: !canManage(),
           }),
           h(
@@ -2359,7 +2369,7 @@ function renderDNS() {
           "引导本机系统 DNS",
           Boolean(dns.system),
           (value) => configSet("dns", "system", value),
-          "仅 Linux systemd-resolved：监听就绪后设置自有 TUN link DNS，停止先恢复。不会改 resolv.conf、HTTP 代理或其他接口；现有 VPN 的更具体 DNS 域仍优先。",
+          "在支持的平台使用本次接管专属的 DNS 引导，监听就绪后启用，停止先恢复；保留更具体的内网/VPN 解析域，不修改 HTTP 代理或其他设备 DNS。",
           "dns-system",
           !canManage() ||
             (!model.state.capabilities?.system_dns && !dns.system),
@@ -2893,7 +2903,7 @@ function showTask(task) {
           "建立精确规则草稿",
           () => {
             closeDialog();
-            addExactRule(target);
+            addExactRule(target, "tcp");
           },
           "primary",
           !canManage(),
@@ -3750,9 +3760,14 @@ function renderPreserving() {
   }
   if (scroll) document.querySelector("#sankey")?.scrollTo({ left: scroll });
 }
-function navigate(page) {
-  if (location.hash !== `#${page}`) location.hash = page;
-  else render();
+function navigate(page, nextNotice = null) {
+  if (location.hash !== `#${page}`) {
+    model.navigationNotice = nextNotice && { ...nextNotice, page };
+    location.hash = page;
+  } else {
+    if (nextNotice) model.notice = nextNotice;
+    render();
+  }
 }
 async function loadPageData() {
   if (model.page === "dns") model.dns = await endpoints.dns();
@@ -3822,7 +3837,8 @@ window.addEventListener("hashchange", async () => {
   const destination = location.hash.slice(1);
   if (!pages.some((page) => page[0] === destination)) return;
   model.page = destination;
-  model.notice = null;
+  model.notice = model.navigationNotice?.page === destination ? model.navigationNotice : null;
+  model.navigationNotice = null;
   menu(false);
   render();
   if (model.online) {

@@ -20,9 +20,19 @@ KONE 在创建独占 TUN、配置路由并确认所有 IPv4/IPv6 UDP/TCP DNS 监
 
 退出或启动后段失败时，先恢复 DNS 引导，再关闭 DNS 监听。清理前检查 open TUN 的身份、接口 index、resolver 的唯一 owner/PID，以及自己管理的 link 配置快照。只逐项恢复修改过的 DNS、域、默认路由和本地安全模式，保留既有 LLMNR/mDNS/NTA；不使用会重置所有 link 属性的无条件 `revert`。其他程序已经改写或替换对象时保留其新状态并报告。TUN link 被移除后，resolved 的相应临时 link 配置也随之消失；这不需要清空全机 DNS 缓存。[官方说明](https://www.freedesktop.org/software/systemd/man/latest/resolvectl.html)
 
-## Windows 与 macOS
+## macOS：自有临时解析服务（原生验收构建）
 
-当前 `system = true` 在 Windows/macOS 明确拒绝，界面不会提供可启用的系统引导开关。Windows 仍保留原有的自有 Wintun 适配器 DNS/metric 配置与恢复；这不等同覆盖 NRPT、所有 VPN、应用自带解析器或全部系统 DNS。macOS 可以配置 KONE 入站/上游并手动选择 DNS；尚未提供可验证所有权的系统 DNS 写入方案。
+macOS 实现使用独立 `scutil` 会话，以随机 UUID 创建 `State:/Network/Service/<UUID>/DNS` 临时值。它使用 `add key temporary`，键已存在就失败；不覆盖物理/VPN 服务、不调用 `networksetup`，也不持久改写全机 DNS。空的 `SupplementalMatchDomains` 配合优先级表示默认解析范围，更具体的原生 VPN/内网域仍优先。`ServerPort` 支持独立监听端口，相关字段见 [Apple DNS schema](https://developer.apple.com/documentation/systemconfiguration/dns-entity-keys)。
+
+Darwin utun 是点对点设备，自有 DNS 的系统入口使用已独占监听的 `127.0.0.1:<端口>`；不会把系统查询重新发进虚拟地址路由。上游必须在引导前读取，不能把同端口的自身 loopback 服务当作上游。创建后还要确认系统解析配置已选中该服务，才能报告接管就绪；无法保留的特殊应用/VPN 解析语义不被宣称透明兼容。
+
+临时值的所有权属于 configd 会话。正常停止先关闭该会话并确认键已移除，再关闭 DNS；scutil 崩溃或持有 stdin 的父进程退出，也会使会话结束并自动撤销其临时值。其他会话接管该键后，configd 不再由旧会话删除它，KONE 保留外部值并报告。原生实现依据 [scutil add temporary](https://github.com/apple-oss-distributions/configd/blob/main/scutil.tproj/cache.c)、[configd 会话关闭](https://github.com/apple-oss-distributions/configd/blob/main/configd.tproj/_configclose.c) 与 [跨会话替换](https://github.com/apple-oss-distributions/configd/blob/main/configd.tproj/_configset.c) 的所有权检查。
+
+生命周期同时监测会话死亡、自有键变化与 utun 身份变化；异常会触发统一停止，避免系统引导已消失而界面继续表示正常。原生验收只在一次性 macOS runner 开启，使用临时原始解析器、真实系统查询、system/mixed、晚启动故障以及精确子进程句柄终止；物理 DNS/默认路由必须恢复。验收标签通过前产品构建仍拒绝启用，不能用跨编译或 mock 代替系统行为证明。
+
+## Windows
+
+当前 `system = true` 在 Windows 明确拒绝，界面不会提供可启用的系统引导开关。Windows 保留自有 Wintun 适配器 DNS/metric 配置与恢复；这不等同覆盖 NRPT、所有 VPN、应用自带解析器或全部系统 DNS。
 
 应用内部缓存、已缓存 Fake-IP、DoH/DoT 或其他旁路解析有各自的生存期。暂停接管与恢复系统 DNS 不会神奇地清除所有应用缓存，也不声称观察到绕开 KONE 的查询。
 

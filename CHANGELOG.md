@@ -31,6 +31,7 @@
 - Honor explicit direct domain rules before later default policies.
 - Preserve existing macOS routes when capture startup fails.
 - Mark retained traffic as historical after capture stops.
+- Preserve the observed protocol and port when drafting a precise rule.
 
 # 2026/10/31
 

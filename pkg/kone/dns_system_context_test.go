@@ -181,7 +181,7 @@ func TestDNSSystemContextPlatformDispatchIsReadOnlyAndDeterministic(t *testing.T
 					}
 					return nil, errors.New("unexpected discovery command")
 				}
-				observed, err := readDNSSystemContextFor(platform, &dnsconfig.DnsConfig{Servers: []string{"127.0.0.53:53"}, Search: []string{"home.test"}, UseTCP: true}, read)
+				observed, err := readDNSSystemContextFor(platform, &dnsconfig.DnsConfig{Servers: []string{"127.0.0.53:53"}, Search: []string{"home.test"}, UseTCP: true}, read, nil)
 				if failure || platform == "unsupported" {
 					require.Error(t, err)
 				} else {

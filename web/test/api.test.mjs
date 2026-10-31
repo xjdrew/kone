@@ -7,8 +7,26 @@ import {
   targetWithPort,
   flowQueryChunks,
   normalizeTraffic,
+  exactRuleTarget,
 } from "../src/api.js";
 const originalFetch = globalThis.fetch;
+
+test("rule shortcuts retain exact domain, address, port and known transport scope", () => {
+  assert.deepEqual(exactRuleTarget("Example.COM.:443", "udp"), {
+    type: "DOMAIN", pattern: "example.com", protocol: "udp", ports: [443], source: "one-click",
+  });
+  assert.deepEqual(exactRuleTarget("192.0.2.9:8443", "tcp"), {
+    type: "IP-CIDR", pattern: "192.0.2.9/32", protocol: "tcp", ports: [8443], source: "one-click",
+  });
+  assert.deepEqual(exactRuleTarget("[fd7a:203::2]:53", "udp"), {
+    type: "IP-CIDR6", pattern: "fd7a:203::2/128", protocol: "udp", ports: [53], source: "one-click",
+  });
+  assert.deepEqual(exactRuleTarget("fd7a:203::2"), {
+    type: "IP-CIDR6", pattern: "fd7a:203::2/128", source: "one-click",
+  });
+  assert.equal(exactRuleTarget("example.com", "unknown").protocol, undefined);
+  assert.equal(exactRuleTarget("example.com").ports, undefined);
+});
 
 test("retained traffic preserves its actual observation time without inventing freshness", () => {
   const timestamp = "2026-11-01T00:00:01Z";

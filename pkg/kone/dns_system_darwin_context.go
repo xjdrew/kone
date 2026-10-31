@@ -8,6 +8,10 @@ import (
 )
 
 func parseDarwinDNSContext(data []byte) (DNSSystemContext, error) {
+	return parseDarwinDNSContextExcluding(data, nil)
+}
+
+func parseDarwinDNSContextExcluding(data []byte, excluded map[string]bool) (DNSSystemContext, error) {
 	context := DNSSystemContext{Source: "macos-scutil", SearchDomains: []string{}, Scopes: []DNSSystemScope{}, Warnings: []string{}}
 	if len(data) > 1<<20 {
 		return context, errors.New("macOS DNS context exceeds output limit")
@@ -85,6 +89,13 @@ func parseDarwinDNSContext(data []byte) (DNSSystemContext, error) {
 			}
 		}
 		servers, valid := normalizedSystemServers(resolver.servers)
+		owned := len(servers) > 0 && valid && portValid
+		for _, server := range servers {
+			owned = owned && excluded[server]
+		}
+		if owned {
+			continue
+		}
 		for _, suffix := range resolver.search {
 			if validDNSSuffix(suffix) && !containsDNSValue(context.SearchDomains, suffix) && len(context.SearchDomains) < 32 {
 				context.SearchDomains = append(context.SearchDomains, suffix)

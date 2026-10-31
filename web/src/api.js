@@ -244,6 +244,26 @@ export function normalizeFlow(item = {}) {
   };
 }
 
+// A shortcut inherits only the exact observed endpoint and known protocol.
+// Hostname and address validation remains shared with the configuration API.
+export function exactRuleTarget(target, protocol = "") {
+  let value = String(target).trim();
+  const bracketed = value.match(/^\[([^\]]+)\](?::(\d+))?$/);
+  const hostPort = value.match(/^([^:]+):(\d+)$/);
+  const match = bracketed || hostPort;
+  const port = Number(match?.[2]);
+  if (match) value = match[1];
+  const ipv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(value);
+  const ipv6 = value.includes(":");
+  return {
+    type: ipv4 ? "IP-CIDR" : ipv6 ? "IP-CIDR6" : "DOMAIN",
+    pattern: ipv4 ? `${value}/32` : ipv6 ? `${value}/128` : value.toLowerCase().replace(/\.$/, ""),
+    source: "one-click",
+    ...(["tcp", "udp"].includes(protocol) ? { protocol } : {}),
+    ...(Number.isInteger(port) && port >= 1 && port <= 65535 ? { ports: [port] } : {}),
+  };
+}
+
 export function normalizeTraffic(data = {}) {
   if (data.traffic) data = { ...data.traffic, sankey: data.sankey };
   const rawFlows =

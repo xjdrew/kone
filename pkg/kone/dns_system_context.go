@@ -28,14 +28,15 @@ type DNSSystemScope struct {
 // DNSSystemContext is an observed, read-only startup snapshot. It is never
 // persisted as user configuration and does not claim complete VPN semantics.
 type DNSSystemContext struct {
-	Source         string           `json:"source"`
-	DefaultServers []string         `json:"default_servers"`
-	StubServers    []string         `json:"stub_servers,omitempty"`
-	SearchDomains  []string         `json:"search_domains"`
-	Scopes         []DNSSystemScope `json:"scopes"`
-	Warnings       []string         `json:"warnings"`
-	UseTCP         bool             `json:"use_tcp"`
-	RequireManual  bool             `json:"require_manual"`
+	Source               string           `json:"source"`
+	DefaultServers       []string         `json:"default_servers"`
+	StubServers          []string         `json:"stub_servers,omitempty"`
+	SearchDomains        []string         `json:"search_domains"`
+	Scopes               []DNSSystemScope `json:"scopes"`
+	Warnings             []string         `json:"warnings"`
+	UseTCP               bool             `json:"use_tcp"`
+	RequireManual        bool             `json:"require_manual"`
+	ownedDefaultExcluded bool
 }
 
 func dnsRouteKey(route DNSRouteConfig) string {
@@ -63,6 +64,12 @@ func cloneDNSSystemContext(value DNSSystemContext) DNSSystemContext {
 
 func mergeSystemDNSContext(cfg DNSConfig, observed DNSSystemContext, discoveryErr error) DNSConfig {
 	observed = cloneDNSSystemContext(observed)
+	if observed.ownedDefaultExcluded {
+		cfg.Servers = append([]string(nil), observed.DefaultServers...)
+		if len(cfg.Servers) == 0 {
+			observed.RequireManual = true
+		}
+	}
 	if !cfg.System && len(observed.StubServers) > 0 {
 		observed.RequireManual = false
 	}
@@ -165,7 +172,14 @@ func (b *dnsLimitedOutput) Write(data []byte) (int, error) {
 }
 
 func readDNSCommand(ctx context.Context, name string, arguments ...string) ([]byte, error) {
+	return readDNSCommandInput(ctx, "", name, arguments...)
+}
+
+func readDNSCommandInput(ctx context.Context, input, name string, arguments ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, name, arguments...)
+	if input != "" {
+		command.Stdin = strings.NewReader(input)
+	}
 	command.WaitDelay = time.Second
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "LC_ALL=") && !strings.HasPrefix(entry, "LANG=") {
@@ -183,10 +197,10 @@ func readDNSCommand(ctx context.Context, name string, arguments ...string) ([]by
 }
 
 func readDNSSystemContext() (DNSSystemContext, error) {
-	return readDNSSystemContextFor(runtime.GOOS, dnsconfig.ReadDnsConfig(), readDNSCommand)
+	return readDNSSystemContextFor(runtime.GOOS, dnsconfig.ReadDnsConfig(), readDNSCommand, readDarwinDNSStore)
 }
 
-func readDNSSystemContextFor(platform string, base *dnsconfig.DnsConfig, read func(context.Context, string, ...string) ([]byte, error)) (DNSSystemContext, error) {
+func readDNSSystemContextFor(platform string, base *dnsconfig.DnsConfig, read func(context.Context, string, ...string) ([]byte, error), readStore func(context.Context, string) ([]byte, error)) (DNSSystemContext, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 	if base == nil {
@@ -223,7 +237,7 @@ func readDNSSystemContextFor(platform string, base *dnsconfig.DnsConfig, read fu
 		if err != nil {
 			return observed, err
 		}
-		return parseDarwinDNSContext(data)
+		return discoverDarwinDNSContext(ctx, data, readStore)
 	}
 	return observed, errors.New("system DNS context discovery is unavailable on this platform")
 }

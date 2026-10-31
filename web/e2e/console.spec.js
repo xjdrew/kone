@@ -1043,3 +1043,36 @@ test("@compat retained capture observations never claim live sampling after repe
   await expect(page.locator(".metric-label").filter({ hasText: "实时上传 / 下载" })).toHaveCount(0);
   await expect(page.getByRole("button", {name: "实时速率", exact: true})).toHaveCount(0);
 });
+
+test("observed UDP shortcuts retain transport and port, precede broad rules and never silently save", async ({ page }) => {
+  const data = await mount(page);
+  await page.getByRole("button", { name: "详情", exact: true }).first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "为此目标建规则" }).click();
+  await expect(page.locator("#rule-pattern-0")).toHaveValue("unsupported.example");
+  await expect(page.locator("#rule-protocol-0")).toHaveValue("udp");
+  await expect(page.locator("#rule-ports-0")).toHaveValue("443");
+  await expect(page.locator("#rule-pattern-1")).toHaveValue("example.com");
+  expect(data.writes.some((write) => write.path === "/config")).toBe(false);
+  await page.getByRole("button", { name: "保存", exact: true }).first().click();
+  await expect.poll(() => data.writes.find((write) => write.path === "/config")?.body.config.rules[0]).toMatchObject({
+    type: "DOMAIN", pattern: "unsupported.example", protocol: "udp", ports: [443], source: "one-click",
+  });
+  await page.locator(".nav-link[data-page=home]").click();
+  await page.getByRole("button", { name: "详情", exact: true }).first().click();
+  await page.getByRole("dialog").getByRole("button", { name: "为此目标建规则" }).click();
+  await expect(page.locator(".editor-item")).toHaveCount(3);
+  await expect(page.getByText(/没有重复添加/)).toBeVisible();
+  expect(data.writes.filter((write) => write.path === "/config")).toHaveLength(1);
+  expect(data.writes.some((write) => write.path.startsWith("/lifecycle/") || write.path === "/config/apply")).toBe(false);
+});
+
+test("routing simulation sends the selected protocol and destination port without probing", async ({ page }) => {
+  const data = await mount(page);
+  await page.locator(".nav-link[data-page=rules]").click();
+  await page.locator("#simulate-target").fill("example.com");
+  await page.locator("#simulate-port").fill("8443");
+  await page.getByRole("combobox", { name: "模拟协议" }).selectOption("udp");
+  await page.getByRole("button", { name: "模拟匹配" }).click();
+  await expect.poll(() => data.requests.find((request) => request.path === "/rules/simulate")?.body).toEqual({ target: "example.com:8443", protocol: "udp" });
+  expect(data.writes.some((write) => write.path === "/diagnostics" || write.path === "/config")).toBe(false);
+});
