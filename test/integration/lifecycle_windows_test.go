@@ -82,12 +82,7 @@ func TestSystemWindowsWintun(t *testing.T) {
 	for _, stack := range []string{"system", "mixed"} {
 		for _, fail := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/occupied=%t", stack, fail), func(t *testing.T) {
-				port, err := net.ListenPacket("udp4", "0.0.0.0:0")
-				if err != nil {
-					t.Fatal(err)
-				}
-				dnsPort := port.LocalAddr().(*net.UDPAddr).Port
-				port.Close()
+				dnsPort := availableWindowsDNSFixturePort(t, false)
 				name := fmt.Sprintf("kone-ci-%d", os.Getpid())
 				cfg, err := kone.ParseConfig([]byte(fmt.Sprintf(`[general]
 manager-addr=""

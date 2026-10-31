@@ -177,10 +177,7 @@ func windowsIPv6Config(t *testing.T, stack, suffix string) *kone.KoneConfig {
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "SOCKS_PROXY", "http_proxy", "https_proxy", "socks_proxy"} {
 		t.Setenv(key, "")
 	}
-	port, err := net.ListenPacket("udp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	dnsPort := port.LocalAddr().(*net.UDPAddr).Port
-	port.Close()
+	dnsPort := availableWindowsDNSFixturePort(t, true)
 	configuration, err := kone.ParseConfig([]byte(fmt.Sprintf(`[general]
 manager-addr=""
 [core]
