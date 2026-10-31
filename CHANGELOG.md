@@ -12,7 +12,7 @@
 - Enumerate all KONE module packages explicitly for head/base coverage so the in-tree third-party module keeps the same dependency treatment; verify local upstream patches separately with race tests.
 - Inject Windows DNS port conflicts on the exact new TUN address rather than relying on wildcard UDP binding behavior.
 - Configure owned Wintun L3 forwarding/DAD prerequisites and restore automatic metric mode without applying an invalid manual metric value; cover rollback only for stages actually attempted.
-- Add payload-free TUN header diagnostics and document the current TCP-only management traffic accounting boundary.
+- Add payload-free TUN header/checksum diagnostics and document the current TCP-only management traffic accounting boundary; retain owned-interface/firewall diagnostics on native acceptance failures.
 
 # 2026/10/31 — runtime reliability
 - Add context-owned startup, cancellation, idempotent close and reverse-order network rollback; propagate component and cleanup failures.

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	singtun "github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing-tun/gtcpip/checksum"
+	IP "github.com/sagernet/sing-tun/gtcpip/header"
 )
 
 type packetStack interface {
@@ -95,6 +97,11 @@ func tracePacket(ctx context.Context, direction string, packet []byte) {
 		header := int(packet[0]&15) * 4
 		if header >= 20 && len(packet) >= header+20 && packet[9] == 6 {
 			fields = append(fields, "source_port", binary.BigEndian.Uint16(packet[header:]), "destination_port", binary.BigEndian.Uint16(packet[header+2:]), "tcp_flags", packet[header+13])
+			total := int(binary.BigEndian.Uint16(packet[2:4]))
+			if total >= header+20 && total <= len(packet) {
+				partial := IP.PseudoHeaderChecksum(IP.TCPProtocolNumber, packet[12:16], packet[16:20], uint16(total-header))
+				fields = append(fields, "ip_checksum_valid", checksum.Checksum(packet[:header], 0) == 0xffff, "tcp_checksum_valid", checksum.Checksum(packet[header:total], partial) == 0xffff)
+			}
 		}
 	}
 	slog.DebugContext(ctx, "TUN packet", fields...)

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +132,10 @@ proxy="Win"
 					client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 5 * time.Second}
 					response, err := client.Get("http://" + answer.Answer[0].(*dns.A).A.String() + "/")
 					if err != nil {
+						// The name is generated above from a numeric PID, never user input.
+						script := fmt.Sprintf(`Get-NetIPInterface -InterfaceAlias '%s' | Format-List AddressFamily,Forwarding,WeakHostSend,WeakHostReceive,DadTransmits,InterfaceMetric; Get-NetIPAddress -InterfaceAlias '%s' | Format-List IPAddress,PrefixLength,AddressState,SkipAsSource; Get-NetRoute -InterfaceAlias '%s' | Format-Table DestinationPrefix,NextHop,InterfaceIndex; $r=Get-NetFirewallRule | Where-Object { $_.DisplayName -like 'sing-tun (*)' }; $r | Format-List DisplayName,Enabled,Direction,Action,Profile; $r | Get-NetFirewallApplicationFilter | Format-List Program`, name, name, name)
+						out, _ := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+						t.Logf("owned Wintun diagnostics:\n%s", out)
 						t.Fatal(err)
 					}
 					body, err := io.ReadAll(response.Body)
