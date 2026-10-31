@@ -40,7 +40,16 @@ type resolvedDNS struct {
 func SupportsSystemDNS() bool { return true }
 
 func newResolvedDNS(run commandRunner) *resolvedDNS {
-	return &resolvedDNS{run: run, lookup: net.InterfaceByName, interfaces: net.Interfaces, readFile: os.ReadFile, verifyNamespace: verifyResolvedNamespace}
+	return &resolvedDNS{run: run, lookup: net.InterfaceByName, interfaces: net.Interfaces, readFile: readSystemResolverFile, verifyNamespace: verifyResolvedNamespace}
+}
+
+func readSystemResolverFile(path string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, 1<<20+1))
 }
 
 func CheckSystemDNS(ctx context.Context, cfg DNSConfig) error {
@@ -95,6 +104,47 @@ func busJSON(data []byte, signature string, call bool) (json.RawMessage, error) 
 func (d *resolvedDNS) bus(ctx context.Context, args ...string) ([]byte, error) {
 	base := []string{"--system", "--no-pager", "--auto-start=no", "--allow-interactive-authorization=no", "--json=short"}
 	return d.run(ctx, "busctl", append(base, args...)...)
+}
+
+func (d *resolvedDNS) set(ctx context.Context, index int, command, argument string) error {
+	idx := strconv.Itoa(index)
+	var method, signature string
+	var values []string
+	switch command {
+	case "dnssec":
+		method, signature, values = "SetLinkDNSSEC", "is", []string{idx, argument}
+	case "dnsovertls":
+		method, signature, values = "SetLinkDNSOverTLS", "is", []string{idx, argument}
+	case "default-route":
+		method, signature, values = "SetLinkDefaultRoute", "ib", []string{idx, argument}
+	case "domain":
+		method, signature = "SetLinkDomains", "ia(sb)"
+		values = []string{idx, "0"}
+		if argument != "" {
+			if argument != "~." {
+				return errors.New("unsupported owned DNS routing domain")
+			}
+			values = []string{idx, "1", ".", "true"}
+		}
+	case "dns":
+		method, signature = "SetLinkDNSEx", "ia(iayqs)"
+		values = []string{idx, "0"}
+		if argument != "" {
+			address, err := netip.ParseAddrPort(argument)
+			if err != nil || !address.Addr().Is4() {
+				return errors.New("invalid owned DNS endpoint")
+			}
+			values = []string{idx, "1", "2", "4"}
+			for _, value := range address.Addr().AsSlice() {
+				values = append(values, strconv.Itoa(int(value)))
+			}
+			values = append(values, strconv.Itoa(int(address.Port())), "")
+		}
+	default:
+		return errors.New("unsupported resolver setter")
+	}
+	_, err := d.bus(ctx, append([]string{"call", resolvedService, resolvedManager, "org.freedesktop.resolve1.Manager", method, signature}, values...)...)
+	return err
 }
 
 func (d *resolvedDNS) realm(ctx context.Context) (string, error) {
@@ -313,7 +363,7 @@ func (d *resolvedDNS) configure(ctx context.Context, name string, core CoreConfi
 			expected := cloneResolvedProfile(current)
 			expected[restore.property] = initial[restore.property]
 			allowed = append(allowed, expected)
-			if _, e = d.run(ctx, "resolvectl", "--no-pager", "--no-ask-password", restore.command, strconv.Itoa(index), restore.argument); e != nil {
+			if e = d.set(ctx, index, restore.command, restore.argument); e != nil {
 				return e
 			}
 			current = expected
@@ -336,7 +386,7 @@ func (d *resolvedDNS) configure(ctx context.Context, name string, core CoreConfi
 		expected = cloneResolvedProfile(expected)
 		expected[step.property] = step.value
 		allowed = append(allowed, expected) // A setter can complete before its timeout is reported.
-		if _, err := d.run(ctx, "resolvectl", "--no-pager", "--no-ask-password", step.command, strconv.Itoa(index), step.argument); err != nil {
+		if err := d.set(ctx, index, step.command, step.argument); err != nil {
 			return cleanup, fmt.Errorf("configure owned resolver %s: %w", step.command, err)
 		}
 	}

@@ -7,3 +7,7 @@ import "context"
 type SystemDNSConfigurer interface {
 	ConfigureSystemDNS(context.Context, Device, CoreConfig, DNSConfig) (Cleanup, error)
 }
+
+func (systemNetwork) CheckSystemDNS(ctx context.Context, cfg DNSConfig) error {
+	return CheckSystemDNS(ctx, cfg)
+}

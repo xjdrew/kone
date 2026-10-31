@@ -170,7 +170,7 @@ func rejectDuplicateKeys(data []byte) error {
 					return err
 				}
 				key, ok := token.(string)
-				if !ok || keys[key] {
+				if !ok || key != strings.ToLower(key) || keys[key] {
 					return errors.New("GeoIP JSON contains a duplicate object key")
 				}
 				keys[key] = true

@@ -140,4 +140,8 @@ func TestDiagnosticUsesPinnedDNSAndRejectsUnappliedVersionsBeforeDialing(t *test
 	require.Equal(t, "not_applied", result.Status)
 	require.Equal(t, "configuration", result.Stage)
 	require.Equal(t, int32(1), queries.Load())
+	result, err = one.ProbeDiagnostic(context.Background(), BuiltinDirect, "10.192.0.8:443", false)
+	require.NoError(t, err)
+	require.Equal(t, "unsupported", result.Status)
+	require.Equal(t, "virtual_destination", result.Stage)
 }

@@ -119,6 +119,11 @@ func (rule *Rule) Decide(val any, protocol string, port uint16) (decision Routin
 		if !entry.pattern.Match(val) {
 			continue
 		}
+		if protocol == "" && entry.config.ExpiresAt != "" {
+			decision := entry.decision(protocol, port)
+			decision.Outbound, decision.CaptureOnly, decision.Reason = CaptureOutbound, true, "temporary rule retains Fake-IP interception across expiry"
+			return decision
+		}
 		conditional := entry.config.Protocol != "" || len(entry.config.Ports) > 0
 		if protocol == "" && conditional {
 			if rule.OutboundType(entry.config.Outbound) == OutboundDirect {

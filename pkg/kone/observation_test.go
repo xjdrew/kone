@@ -312,3 +312,29 @@ func TestClearingActiveHistoryPreservesIndependentAggregateTotals(t *testing.T) 
 	require.True(t, graph.Paths[0].Other)
 	require.NotContains(t, graph.Paths[0].Target, "private.example")
 }
+
+func TestSankeyGroupsClientPortsAndExpiresSensitiveAggregateDetails(t *testing.T) {
+	clock := newObservationClock()
+	observer := NewTrafficObserver(ObservationOptions{Now: clock.now, Retention: time.Minute, PathCapacity: 2})
+	for _, port := range []int{1234, 4321} {
+		flow := observer.Begin(FlowRecord{Protocol: "tcp", Source: fmt.Sprintf("192.0.2.1:%d", port), Target: "private.example:443"})
+		flow.Decision(RoutingDecision{RuleID: "r1", Outbound: BuiltinDirect}, BuiltinDirect, "", true)
+		flow.AddUpload(10, 0)
+		flow.Finish(nil, false)
+	}
+	graph := observer.Sankey(TrafficQuery{}, SankeyOptions{Metric: "cumulative"})
+	require.Len(t, graph.Paths, 1, "ephemeral client ports cannot exhaust the path cardinality budget")
+	require.Equal(t, "192.0.2.1", graph.Paths[0].Source)
+	require.Equal(t, float64(20), graph.Total)
+	selected := observer.Sankey(TrafficQuery{Source: "192.0.2.1:1234"}, SankeyOptions{Metric: "cumulative"})
+	require.Equal(t, float64(10), selected.Total, "endpoint filters use actual flow evidence, not host-only aggregates")
+	clock.advance(2 * time.Minute)
+	traffic, graph := observer.Data(TrafficQuery{}, SankeyOptions{Metric: "cumulative"})
+	require.Empty(t, traffic.Records)
+	require.Equal(t, float64(20), graph.Total)
+	require.Len(t, graph.Paths, 1)
+	require.True(t, graph.Paths[0].Other)
+	require.NotContains(t, graph.Paths[0].Target, "private.example")
+	require.NotContains(t, graph.Paths[0].Source, "192.0.2.1")
+	require.True(t, graph.Truncated, "expired domain/client metadata must be explicit instead of retained indefinitely")
+}

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ type SankeyPath struct {
 	Failures          uint64       `json:"failures"`
 	Other             bool         `json:"other"`
 	Filter            TrafficQuery `json:"filter"`
+	lastSeen          time.Time
 }
 
 type SankeySnapshot struct {
@@ -90,12 +92,16 @@ func (o *TrafficObserver) path(record *FlowRecord) string {
 			outbound = "not-connected"
 		}
 	}
-	id := stableTrafficID("path-", record.Inbound, record.Source, record.RuleID, fmt.Sprint(record.ConfigVersion), record.Protocol, record.ExpectedOutbound, outbound, record.Target)
+	source := record.Source
+	if host, _, err := net.SplitHostPort(source); err == nil {
+		source = host
+	}
+	id := stableTrafficID("path-", record.Inbound, source, record.RuleID, fmt.Sprint(record.ConfigVersion), record.Protocol, record.ExpectedOutbound, outbound, record.Target)
 	if _, ok := o.paths[id]; !ok {
 		if len(o.paths) >= o.pathCapacity {
 			id = "other"
 		} else {
-			o.paths[id] = &SankeyPath{ID: id, Inbound: record.Inbound, Source: record.Source, RuleID: record.RuleID, RuleName: record.RuleName, ConfigVersion: record.ConfigVersion, Protocol: record.Protocol, ExpectedOutbound: record.ExpectedOutbound, EffectiveOutbound: outbound, Target: record.Target}
+			o.paths[id] = &SankeyPath{ID: id, Inbound: record.Inbound, Source: source, RuleID: record.RuleID, RuleName: record.RuleName, ConfigVersion: record.ConfigVersion, Protocol: record.Protocol, ExpectedOutbound: record.ExpectedOutbound, EffectiveOutbound: outbound, Target: record.Target}
 		}
 	}
 	record.pathID = id
@@ -116,6 +122,7 @@ func (o *TrafficObserver) countPath(flowID, pathID string, upload, download, con
 	addCounter(&path.Download, download)
 	addCounter(&path.Connections, connections)
 	addCounter(&path.Failures, failures)
+	path.lastSeen = o.now()
 	second := o.now().Unix()
 	index := (second%61 + 61) % 61
 	bucket := &o.buckets[index]
@@ -184,7 +191,7 @@ func (o *TrafficObserver) sankeyLocked(query TrafficQuery, options SankeyOptions
 	if options.Metric == "cumulative" {
 		start, end = o.started, now
 	}
-	result := SankeySnapshot{SessionID: o.session, Timestamp: now, Scope: TrafficScope, Metric: options.Metric, Unit: "bytes/s", WindowStart: start, WindowEnd: end, Nodes: []SankeyNode{}, Links: []SankeyLink{}, Paths: []SankeyPath{}, Anchor: fmt.Sprintf("%s-%020d", o.session, o.sequence), Truncated: o.dropped > 0}
+	result := SankeySnapshot{SessionID: o.session, Timestamp: now, Scope: TrafficScope, Metric: options.Metric, Unit: "bytes/s", WindowStart: start, WindowEnd: end, Nodes: []SankeyNode{}, Links: []SankeyLink{}, Paths: []SankeyPath{}, Anchor: fmt.Sprintf("%s-%020d", o.session, o.sequence), Truncated: o.dropped > 0 || !o.recording || o.paths["other"] != nil}
 	if options.Metric == "cumulative" {
 		result.Unit = "bytes"
 	}
@@ -201,7 +208,7 @@ func (o *TrafficObserver) sankeyLocked(query TrafficQuery, options SankeyOptions
 	}
 	counts := map[string]pathCounts{}
 	pathFlowIDs := map[string][]string{}
-	if options.Metric == "cumulative" && query.Status == "" && len(query.FlowIDs) == 0 && query.Anchor == "" && query.Since.IsZero() && query.Until.IsZero() {
+	if options.Metric == "cumulative" && query.Status == "" && query.Source == "" && len(query.FlowIDs) == 0 && query.Anchor == "" && query.Since.IsZero() && query.Until.IsZero() {
 		for id, path := range o.paths {
 			// These aggregates span the session. Apply categorical filters;
 			// a historical interval requires sampled flow evidence below.

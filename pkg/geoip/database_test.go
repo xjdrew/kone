@@ -78,6 +78,7 @@ func TestDatabaseRejectsMalformedImports(t *testing.T) {
 	valid, _ := fixtureBytes(t, fixtureFile("CN", "v1"))
 	for _, bad := range [][]byte{
 		[]byte(`{"format":1,"format":1}`), append(append([]byte(nil), valid...), []byte(` {}`)...),
+		[]byte(strings.Replace(string(valid), `"format":1`, `"FORMAT":1`, 1)),
 		[]byte(strings.Replace(string(valid), `"format":1`, `"format":1,"unknown":1`, 1)),
 		[]byte(`{"format":1,"ranges":[{"start":"192.0.2.0","start":"192.0.2.1"}]}`),
 	} {

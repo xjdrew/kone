@@ -24,6 +24,14 @@ func TestTemporaryRulesExpireOnlyForNewDecisions(t *testing.T) {
 	require.Equal(t, "reject", other.Decide("example.com", "udp", 53).Outbound)
 	zero := NewRule([]RuleConfig{{Schema: "DOMAIN", Pattern: "example.com", Outbound: "reject", ExpiresAt: "0001-01-01T00:00:00Z"}}, nil)
 	require.Equal(t, "direct", zero.Decide("example.com", "tcp", 443).Outbound, "an explicit zero-time deadline is expired, not permanent")
+	before := expires.Add(-time.Second)
+	transition := NewRule([]RuleConfig{{Schema: "DOMAIN", Pattern: "example.com", Outbound: "direct", ExpiresAt: expires.Format(time.RFC3339)}, {Schema: "DOMAIN", Pattern: "example.com", Outbound: "reject"}}, nil)
+	transition.now = func() time.Time { return before }
+	require.Equal(t, CaptureOutbound, transition.ProxyDNS("example.com", nil), "temporary direct must not cache a real address that bypasses its post-expiry policy")
+	require.Equal(t, "direct", transition.Decide("example.com", "tcp", 443).Outbound)
+	before = expires
+	require.Equal(t, "reject", transition.ProxyDNS("example.com", nil))
+	require.Equal(t, "reject", transition.Decide("example.com", "tcp", 443).Outbound)
 }
 
 func TestTemporaryConfigurationRejectsAmbiguousCaptureLifetimes(t *testing.T) {

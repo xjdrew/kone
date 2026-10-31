@@ -27,7 +27,7 @@ func privateResolvedCommand(t *testing.T, args ...string) string {
 			t.Fatal("refusing DNS test in runner host namespace")
 		}
 	}
-	out, err := exec.Command("resolvectl", append([]string{"--no-pager", "--no-ask-password"}, args...)...).CombinedOutput()
+	out, err := exec.Command("resolvectl", append([]string{"--no-pager"}, args...)...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("private resolvectl %v: %v %s", args, err, out)
 	}
@@ -67,10 +67,11 @@ func privateResolvedFixture(t *testing.T) (string, string) {
 }
 
 func TestSystemDNSOwnedLinkGuidanceAndRestore(t *testing.T) {
-	upstream, before := privateResolvedFixture(t)
+	_, before := privateResolvedFixture(t)
 	cfg := systemConfig(t)
 	cfg.DNS.System = true
-	cfg.DNS.Servers = []string{upstream}
+	// Read the real original link resolver before changing the OS stub route.
+	cfg.DNS.Servers = nil
 	cfg.Outbounds = []kone.OutboundConfig{{Name: "offline-proxy", URL: "http://127.0.0.1:1"}}
 	cfg.Rule = []kone.RuleConfig{{Schema: "DOMAIN", Pattern: "virtual.example.test", Outbound: "offline-proxy"}, {Schema: "FINAL", Outbound: kone.BuiltinDirect}}
 	if err := kone.CheckSystemDNS(context.Background(), cfg.DNS); err != nil {
@@ -82,6 +83,10 @@ func TestSystemDNSOwnedLinkGuidanceAndRestore(t *testing.T) {
 	addresses, err := (&net.Resolver{PreferGo: true}).LookupIP(ctx, "ip4", "virtual.example.test")
 	if err != nil || len(addresses) != 1 || !strings.HasPrefix(addresses[0].String(), "10.203.0.") {
 		t.Fatalf("OS stub did not use KONE Fake-IP: %v %v", addresses, err)
+	}
+	addresses, err = (&net.Resolver{PreferGo: true}).LookupIP(ctx, "ip4", "active-direct.example.test")
+	if err != nil || len(addresses) != 1 || addresses[0].String() != "192.0.2.9" {
+		t.Fatalf("KONE did not use the original real upstream (possible stub recursion): %v %v", addresses, err)
 	}
 	if after := privateResolvedCommand(t, "dns", "upstream-test"); after != before {
 		t.Fatalf("physical DNS changed: %s -> %s", before, after)

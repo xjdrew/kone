@@ -36,6 +36,19 @@ func (one *One) dialDiagnosticSnapshot(ctx context.Context, s *runtimeSnapshot, 
 	if s == nil {
 		return nil, diagnosticError("configuration", errors.New("engine policy is not initialized"))
 	}
+	if err := s.outbounds.CheckEnabled(outbound); err != nil {
+		stage := "policy"
+		if s.rule.OutboundType(outbound) == "" {
+			stage = "configuration"
+		}
+		return nil, diagnosticError(stage, err)
+	}
+	if s.rule.OutboundType(outbound) == OutboundReject {
+		return nil, diagnosticError("policy", ErrRejected)
+	}
+	if address, err := netip.ParseAddr(host); err == nil && diagnosticVirtualAddress(s, address) {
+		return nil, diagnosticError("virtual_destination", errors.New("KONE virtual addresses cannot prove target reachability; diagnose the original domain instead"))
+	}
 	if s.rule.OutboundType(outbound) == OutboundDirect {
 		if _, err := netip.ParseAddr(host); err != nil {
 			response, err := one.dns.ResolveContext(ctx, host)
@@ -48,6 +61,9 @@ func (one *One) dialDiagnosticSnapshot(ctx context.Context, s *runtimeSnapshot, 
 				return nil, diagnosticError("dns", errors.New("domain has no IPv4 address"))
 			}
 			target = net.JoinHostPort(record.RealIP.String(), port)
+			if address, err := netip.ParseAddr(record.RealIP.String()); err == nil && diagnosticVirtualAddress(s, address) {
+				return nil, diagnosticError("virtual_destination", errors.New("DNS returned a KONE virtual address; target reachability cannot be inferred"))
+			}
 		}
 	}
 	conn, err := s.outbounds.DialContext(ctx, outbound, target)

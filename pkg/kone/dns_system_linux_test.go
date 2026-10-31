@@ -48,6 +48,26 @@ func newResolvedFixture() *resolvedFixture {
 func (f *resolvedFixture) run(_ context.Context, tool string, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, tool+" "+strings.Join(args, " "))
 	if tool == "busctl" {
+		methods := map[string]string{"SetLinkDNSSEC": "dnssec", "SetLinkDNSOverTLS": "dnsovertls", "SetLinkDefaultRoute": "default-route", "SetLinkDomains": "domain", "SetLinkDNSEx": "dns"}
+		for i, arg := range args {
+			if command, ok := methods[arg]; ok {
+				value := args[len(args)-1]
+				if command == "domain" || command == "dns" {
+					if args[i+3] == "0" {
+						value = ""
+					} else if command == "domain" {
+						value = "~."
+					} else {
+						value = "configured"
+					}
+				}
+				args = []string{"", "", command, args[i+2], value}
+				tool = "setter"
+				break
+			}
+		}
+	}
+	if tool == "busctl" {
 		for _, arg := range args {
 			if arg == "GetNameOwner" {
 				return resolvedEnvelope("s", []string{f.owner}), nil
@@ -68,7 +88,7 @@ func (f *resolvedFixture) run(_ context.Context, tool string, args ...string) ([
 		}
 		return resolvedEnvelope("s", f.security[args[len(args)-1]]), nil
 	}
-	if tool != "resolvectl" {
+	if tool != "setter" {
 		return nil, errors.New("unexpected tool")
 	}
 	command := args[2]
@@ -126,8 +146,9 @@ func TestSystemDNSGuidanceRestoresOnlyOwnedLink(t *testing.T) {
 	require.Equal(t, f.initial, f.state)
 	for _, call := range f.calls {
 		require.NotContains(t, call, "resolv.conf")
-		if strings.HasPrefix(call, "resolvectl ") {
-			require.Contains(t, call, " 17")
+		if strings.Contains(call, " SetLink") {
+			require.Contains(t, call, "--allow-interactive-authorization=no")
+			require.Contains(t, call, " 17 ")
 		}
 	}
 }
@@ -146,7 +167,7 @@ func TestSystemDNSRestoresOnlyChangedPropertiesWithoutResettingOtherLinkPolicy(t
 	require.NoError(t, cleanup(context.Background()))
 	require.Equal(t, f.initial, f.state)
 	for _, call := range f.calls {
-		require.NotContains(t, call, " revert ")
+		require.NotContains(t, call, " Revert")
 	}
 }
 
@@ -203,6 +224,7 @@ func TestSystemDNSPreflightIsReadOnlyAndRejectsUnsafeResolverContext(t *testing.
 	require.NoError(t, f.dns.check(context.Background()))
 	for _, call := range f.calls {
 		require.True(t, strings.HasPrefix(call, "busctl "))
+		require.NotContains(t, call, "SetLink")
 	}
 	f = newResolvedFixture()
 	f.dns.readFile = func(string) ([]byte, error) { return []byte("nameserver 192.0.2.1\n"), nil }

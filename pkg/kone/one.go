@@ -145,6 +145,9 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	if err := validateIPv6Platform(cfg.Core); err != nil {
 		return nil, err
 	}
+	if cfg.DNS.System && !SupportsSystemDNS() {
+		return nil, CheckSystemDNS(context.Background(), cfg.DNS)
+	}
 	cfg = cloneConfig(cfg)
 	ip, subnet, _ := net.ParseCIDR(cfg.Core.Network)
 	one := &One{ip: ip.To4(), subnet: subnet, network: systemNetwork{run: runCommand, gateway: "0.0.0.0"}, sockets: &net.ListenConfig{}, stackFactory: newSingStack, shutdownTimeout: 15 * time.Second, readSystemDNS: systemDNSServers, done: make(chan struct{}), ready: make(chan struct{})}
@@ -360,6 +363,18 @@ func (one *One) Run(parent context.Context) (result error) {
 		return nil
 	}
 	cfg := one.policy.Load().cfg
+	if cfg.DNS.System {
+		if _, ok := one.network.(SystemDNSConfigurer); !ok {
+			return errors.New("network backend cannot configure system DNS")
+		}
+		if checker, ok := one.network.(interface {
+			CheckSystemDNS(context.Context, DNSConfig) error
+		}); ok {
+			if err := checker.CheckSystemDNS(ctx, cfg.DNS); err != nil {
+				return fmt.Errorf("system DNS preflight: %w", err)
+			}
+		}
+	}
 	var err error
 	opened, err := one.network.Open(ctx, cfg.Core)
 	if !isNilInterface(opened) {

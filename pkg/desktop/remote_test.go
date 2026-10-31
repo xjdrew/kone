@@ -311,3 +311,19 @@ func TestHelperRemembersCancellationBeforeProbeRegistration(t *testing.T) {
 	err = service.Probe(ProbeRequest{ID: "expired", Target: "127.0.0.1:443", TimeoutMS: 1000, Deadline: time.Now().Add(-time.Second)}, &reply)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
+
+func TestRemoteCleanupFailureCannotProduceAConfirmedFinalArchive(t *testing.T) {
+	remote, fake, helperDone := helperHarness(t, false)
+	fake.closeError = errors.New("owned route changed externally; restoration was not confirmed")
+	done := startRemote(t, remote)
+	require.ErrorContains(t, remote.Close(), "restoration was not confirmed")
+	require.Error(t, <-done)
+	_, _, err := remote.TrafficData(kone.TrafficQuery{}, kone.SankeyOptions{})
+	require.Error(t, err, "failed cleanup cannot be represented as a clean frozen snapshot")
+	select {
+	case err := <-helperDone:
+		require.ErrorContains(t, err, "restoration was not confirmed")
+	case <-time.After(time.Second):
+		t.Fatal("helper failed to exit after reporting an unconfirmed cleanup")
+	}
+}

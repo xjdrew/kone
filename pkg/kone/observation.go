@@ -498,13 +498,33 @@ func (o *TrafficObserver) Clear() {
 
 func (o *TrafficObserver) prune(now time.Time) {
 	kept := o.order[:0]
+	activePaths := map[string]bool{}
 	for _, id := range o.order {
 		record := o.records[id]
 		if record != nil && record.EndedAt != nil && now.Sub(*record.EndedAt) > o.retention {
 			delete(o.records, id)
+			addCounter(&o.dropped, 1)
 		} else if record != nil {
 			kept = append(kept, id)
+			if record.EndedAt == nil && record.pathID != "" {
+				activePaths[record.pathID] = true
+			}
 		}
 	}
 	o.order = kept
+	for id, path := range o.paths {
+		if id == "other" || activePaths[id] || path.lastSeen.IsZero() || now.Sub(path.lastSeen) <= o.retention {
+			continue
+		}
+		other := o.paths["other"]
+		if other == nil {
+			other = &SankeyPath{ID: "other", Inbound: "other", RuleID: "other", RuleName: "Expired aggregate details", EffectiveOutbound: "other", Target: "other", Other: true}
+			o.paths["other"] = other
+		}
+		addCounter(&other.Upload, path.Upload)
+		addCounter(&other.Download, path.Download)
+		addCounter(&other.Connections, path.Connections)
+		addCounter(&other.Failures, path.Failures)
+		delete(o.paths, id)
+	}
 }

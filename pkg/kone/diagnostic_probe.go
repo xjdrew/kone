@@ -76,6 +76,16 @@ func diagnosticMessage(err error, cfg *KoneConfig) string {
 	return message
 }
 
+func diagnosticVirtualAddress(snapshot *runtimeSnapshot, address netip.Addr) bool {
+	address = address.Unmap()
+	for _, network := range []string{snapshot.cfg.Core.Network, snapshot.cfg.Core.IPv6Network} {
+		if prefix, err := netip.ParsePrefix(network); err == nil && prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
+}
+
 // ProbeDiagnostic reuses the running engine's pinned resolver and outbound
 // binding. It never creates an engine or re-reads a DNS environment that KONE
 // may currently be guiding, and sends no HTTP/application request.
@@ -144,6 +154,8 @@ func (one *One) ProbeDiagnosticVersion(parent context.Context, outbound, target 
 		result.Message = diagnosticMessage(dialErr, snapshot.cfg)
 		if errors.Is(dialErr, context.Canceled) {
 			result.Status = "canceled"
+		} else if result.Stage == "virtual_destination" {
+			result.Status = "unsupported"
 		}
 		return result, nil
 	}

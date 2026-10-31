@@ -94,7 +94,9 @@ func mergeSystemDNSContext(cfg DNSConfig, observed DNSSystemContext, discoveryEr
 		}
 		if len(route.Servers) == 0 {
 			route.Unavailable = true
-			route.Reason = "system DNS scope has no usable upstream"
+			if route.Reason == "" {
+				route.Reason = "system DNS scope has no usable upstream"
+			}
 		}
 		if cfg.System {
 			for _, server := range route.Servers {

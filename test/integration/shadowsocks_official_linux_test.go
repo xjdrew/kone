@@ -94,7 +94,7 @@ func officialSSDNS(t *testing.T) *sync.Map {
 		if len(r.Question) == 1 {
 			name := strings.ToLower(r.Question[0].Name)
 			queries.Store(name, true)
-			if !strings.HasSuffix(name, ".kone.invalid.") {
+			if !strings.HasSuffix(name, ".kone-interop.example.com.") {
 				response.SetRcode(r, dns.RcodeNameError)
 			} else if r.Question[0].Qtype == dns.TypeA {
 				response.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0}, A: net.IPv4(127, 0, 0, 1)}}
@@ -159,7 +159,7 @@ func TestOfficialShadowsocksRustInterop(t *testing.T) {
 				return proxy.Direct.DialContext(ctx, network, address)
 			}
 			for _, network := range []string{"tcp", "udp"} {
-				name := network + "-" + method + ".kone.invalid"
+				name := network + "-" + method + ".kone-interop.example.com"
 				target := net.JoinHostPort(name, port)
 				var conn net.Conn
 				if network == "tcp" {

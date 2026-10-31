@@ -50,6 +50,7 @@ func TestGeoIPManagementPersistsAndRequiresExplicitPausedUpdate(t *testing.T) {
 	require.ErrorContains(t, err, "pause")
 	require.NoError(t, c.Pause(t.Context()))
 	r := httptest.NewRequest("PUT", "http://127.0.0.1:9200/api/v1/geoip", strings.NewReader(string(data)))
+	r.RemoteAddr = "127.0.0.1:50000"
 	r.Header.Set("Authorization", "Bearer "+token)
 	r.Header.Set("If-Match", "2")
 	r.Header.Set("X-Content-SHA256", digest)
