@@ -139,7 +139,7 @@ func gatewayUpstream(t *testing.T) {
 		t.Fatal(err)
 	}
 	go http.Serve(web, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "gateway-upstream") }))
-	proxy, err := net.Listen("tcp4", "0.0.0.0:0")
+	proxy, err := net.Listen("tcp4", "203.0.113.2:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func gatewayUpstream(t *testing.T) {
 		client.Close()
 		<-done
 	}))
-	dnsConn, err := net.ListenPacket("udp4", "0.0.0.0:0")
+	dnsConn, err := net.ListenPacket("udp4", "203.0.113.53:0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func gatewayUpstream(t *testing.T) {
 		w.WriteMsg(reply)
 	})}
 	go dnsServer.ActivateAndServe()
-	udp, err := net.ListenPacket("udp4", "0.0.0.0:0")
+	udp, err := net.ListenPacket("udp4", "203.0.113.9:0")
 	if err != nil {
 		t.Fatal(err)
 	}

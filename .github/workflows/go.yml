@@ -184,3 +184,6 @@ jobs:
           cache: true
       - name: Test embedded Wintun without TAP installation
         run: go test -tags with_gvisor -race -count=1 -timeout 12m -run '^TestSystemWindowsWintun$' -v ./test/integration
+      - name: Regress upstream PE loader pointer bounds
+        working-directory: pkg/singtun
+        run: go test -race -count=1 ./internal/wintun/memmod

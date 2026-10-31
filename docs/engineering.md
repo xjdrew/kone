@@ -3,6 +3,7 @@
 ## 后续决策：sing-tun 迁移（2026-10-31）
 
 维护者已接受 GPL-3.0-or-later。当前采用 SagerNet/sing-tun `v0.9.7-0.20261023115432-040db71fcd33`，对应 sing-box v1.14.4 使用的固定版本；移除 water。下文第一轮保留 water、维持 MIT 的决定为历史记录，不再代表现状。
+真实 Windows race 验收复现上游 DLL 加载器的越界巨型数组转换，故在 `pkg/singtun` 保留该固定版本源码，通过本地模块替换加入精确边界切片和 session 创建失败立即关闭 adapter 两项补丁。原源码/测试/许可均保留，来源、补丁与升级移除条件见 [UPSTREAM.md](../pkg/singtun/UPSTREAM.md)。指针检查和真实 Wintun/race 验收继续启用。
 设备、system/mixed 数据面由 sing-tun 提供；网络变更仍通过 KONE 的 Network 边界执行可回滚操作，使用 external configuration 模式避免双重配置。旧报文/NAT 类型暂留以兼容嵌入 API，生产 Run 不再使用它们。
 普通构建默认 system，`with_gvisor` 构建可显式选择 mixed；CI 测试两种构建。网关保留 LAN 转发能力，新增全局 IPv4 捕获与代理/DNS 真实出口绑定，同时补 ARMv7 构建和独立 LAN 客户端验收。IPv6、UDP 代理出站、网络切换和崩溃恢复继续独立迭代。
 

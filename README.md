@@ -61,6 +61,8 @@ Reload atomically publishes domain/GeoIP/default rules and proxy definitions, pr
 
 ## Development
 
+Read [the architecture and core traffic paths](docs/architecture.md) for DNS/Fake-IP, TUN interception, gateway forwarding, sing-tun and gVisor's roles.
+
 ```sh
 go test ./...
 go vet ./...
