@@ -44,19 +44,28 @@ network = "10.192.0.1/16"
 stack = "system"
 auto-route = true
 outbound-interface = "eth0" # 真实上游接口，按设备修改；可与 LAN 接口相同
-dns-server = ["1.1.1.1", "8.8.8.8"]
 
-[proxies]
-Gateway = "http://your-proxy.example:8080"
+# [dns] 可省略以使用系统 DNS；需要指定上游时取消下面两行注释。
+# [dns]
+# servers = ["1.1.1.1", "8.8.8.8"]
+
+[[outbounds]]
+name = "gateway"
+type = "proxy"
+url = "http://your-proxy.example:8080"
+
+[[outbounds]]
+name = "local"
+type = "direct"
 
 [[rules]]
 type = "IP-CIDR"
 pattern = "192.168.0.0/16"
-proxy = "DIRECT"
+outbound = "local"
 
 [[rules]]
 type = "FINAL"
-proxy = "Gateway"
+outbound = "gateway"
 ```
 
 KONE 添加两条半网默认路由捕获 IPv4，退出时删除它们并保留原来的真实默认路由。更具体的 LAN/VPN 路由仍按内核优先级工作；进入 TUN 的流量按 KONE 规则选择直连、代理或拒绝。

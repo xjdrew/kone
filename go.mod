@@ -32,4 +32,4 @@ require (
 	golang.org/x/time v0.15.0 // indirect
 )
 
-replace github.com/sagernet/sing-tun => ./pkg/singtun
+replace github.com/sagernet/sing-tun => github.com/xjdrew/sing-tun v0.0.0-20261031123429-1b310d793707

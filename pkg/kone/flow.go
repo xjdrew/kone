@@ -85,7 +85,7 @@ func (h *flowHandler) destination(ctx context.Context, s *runtimeSnapshot, desti
 		}
 		host = record.Hostname
 		policy = s.rule.ProxyDNS(host, record.resolved)
-		if policy != "REJECT" && (policy == "DIRECT" || udp) {
+		if s.rule.OutboundType(policy) != OutboundReject && (s.rule.OutboundType(policy) == OutboundDirect || udp) {
 			if record.RealIP == nil {
 				msg, err := h.one.dns.ResolveContext(ctx, host)
 				if err != nil {
@@ -100,7 +100,7 @@ func (h *flowHandler) destination(ctx context.Context, s *runtimeSnapshot, desti
 			host = record.RealIP.String()
 		}
 	}
-	if policy == "REJECT" {
+	if s.rule.OutboundType(policy) == OutboundReject {
 		return "", policy, errors.New("connection rejected by routing policy")
 	}
 	return net.JoinHostPort(host, strconv.Itoa(int(destination.Port))), policy, nil
@@ -129,7 +129,7 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 		return
 	}
 	slog.Debug("TCP flow selected", "source", source, "destination", addr, "proxy", policy, "version", s.version)
-	remote, err := s.proxies.DialContext(ctx, policy, addr)
+	remote, err := s.outbounds.DialContext(ctx, policy, addr)
 	if err != nil {
 		result = err
 		return

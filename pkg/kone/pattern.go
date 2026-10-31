@@ -174,7 +174,7 @@ func NewFinalPattern(proxy string) FinalPattern {
 }
 
 func CreatePattern(rc RuleConfig) Pattern {
-	proxy := rc.Proxy
+	proxy := rc.Outbound
 	pattern := rc.Pattern
 	schema := strings.ToUpper(rc.Schema)
 
@@ -197,6 +197,6 @@ func CreatePattern(rc RuleConfig) Pattern {
 	case "FINAL":
 		return NewFinalPattern(proxy)
 	}
-	slog.Error("Invalid rule", "rule_type", rc.Schema, "pattern", rc.Pattern, "proxy", rc.Proxy)
+	slog.Error("Invalid rule", "rule_type", rc.Schema, "pattern", rc.Pattern, "outbound", rc.Outbound)
 	return nil
 }

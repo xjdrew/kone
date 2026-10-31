@@ -1,3 +1,11 @@
+# 2026/10/31 — forked TUN fixes and explicit configuration model
+- Move sing-tun fixes to a reviewable PR in xjdrew/sing-tun; pin its commit through a remote module replacement and remove the in-tree source copy.
+- Normalize Wintun HRESULT adapter errors so standard Go error matching recognizes duplicate devices; retain PE/session/exclusive-creation race and native regressions in fork CI.
+- Replace the proxies dictionary and magic rule actions with named outbounds arrays carrying explicit proxy/direct/reject types; rules reference outbound names, with duplicate/type/URL/reference validation and atomic reload.
+- Move DNS settings from core into an optional dns section. Resolve omitted upstreams from system settings once before startup, preserve automatic configuration through reload, and reject invalid/self-routed upstreams.
+- Keep loopback proxies and local DNS stubs on the loopback path when a physical outbound interface is selected.
+- Document every supported configuration key and its default in the example, comment optional defaults, and add schema-completeness, DNS-default, outbound-policy and migration regressions.
+
 # 2026/10/31 — sing-tun migration and gateway compatibility
 - Replace water with pinned SagerNet/sing-tun; use embedded Wintun on Windows without a preinstalled TAP adapter.
 - Move production transparent TCP/UDP handling to system/mixed stacks while retaining rule/proxy snapshots, Fake-IP stability and connection shutdown behavior.
@@ -6,10 +14,10 @@
 - Track owned Windows firewall rules and on-link routes; extend failure, flow, gateway and Wintun acceptance tests, mixed-stack race checks and ARMv7 builds.
 - Adopt GPL-3.0-or-later with original MIT/component notices preserved; reorganize README around stable product capabilities and refresh configuration/deployment documentation.
 - Add a developer architecture guide explaining DNS/Fake-IP, transparent TCP/UDP, gateway capture, sing-tun/gVisor boundaries, lifecycle and future optimization points.
-- Retain the pinned sing-tun source with bounded PE section slices for Windows race/checkptr and immediate adapter cleanup on session failure; record patch provenance and add the upstream regression to CI.
+- Maintain bounded PE section slices for Windows race/checkptr and immediate adapter cleanup on session failure in the pinned fork; record patch provenance and retain the dependency regression in CI.
 - Accept newly created Wintun adapters with no IPv4 address when taking the initial snapshot; preserve other snapshot errors and validate the exact occupied-listener failure in acceptance tests.
 - Enforce exclusive native device creation on Linux/Windows so a concurrent name-check race cannot attach an existing interface; verify the original engine remains usable after duplicate creation fails.
-- Enumerate all KONE module packages explicitly for head/base coverage so the in-tree third-party module keeps the same dependency treatment; verify local upstream patches separately with race tests.
+- Enumerate all KONE module packages explicitly for head/base coverage; verify the fork's dependency patches separately with race tests.
 - Inject Windows DNS port conflicts on the exact new TUN address rather than relying on wildcard UDP binding behavior.
 - Configure owned Wintun L3 forwarding/DAD prerequisites and restore automatic metric mode without applying an invalid manual metric value; cover rollback only for stages actually attempted.
 - Add payload-free TUN header/checksum diagnostics and document the current TCP-only management traffic accounting boundary; retain owned-interface/firewall diagnostics on native acceptance failures.

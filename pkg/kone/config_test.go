@@ -12,7 +12,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const baseConfig = "[core]\ndns-server = ['1.1.1.1', '2001:4860:4860::8888']\n"
+const testOutbounds = "[[outbounds]]\nname='DIRECT'\ntype='direct'\n[[outbounds]]\nname='REJECT'\ntype='reject'\n"
+const baseConfig = testOutbounds + "[dns]\nservers = ['1.1.1.1', '2001:4860:4860::8888']\n[core]\n"
+
+func outboundByName(cfg *KoneConfig, name string) *OutboundConfig {
+	for i := range cfg.Outbounds {
+		if cfg.Outbounds[i].Name == name {
+			return &cfg.Outbounds[i]
+		}
+	}
+	panic("missing test outbound: " + name)
+}
+
+func setTestOutbound(cfg *KoneConfig, name string, kind OutboundType, url string) {
+	for i := range cfg.Outbounds {
+		if cfg.Outbounds[i].Name == name {
+			cfg.Outbounds[i] = OutboundConfig{Name: name, Type: kind, URL: url}
+			return
+		}
+	}
+	cfg.Outbounds = append(cfg.Outbounds, OutboundConfig{Name: name, Type: kind, URL: url})
+}
 
 func cleanProxyEnv(t *testing.T) {
 	t.Helper()
@@ -33,22 +53,27 @@ func TestParseConfig(t *testing.T) {
 	cfg := parseTestConfig(t, `
 [general]
 log-format = 'json'
-[proxies]
-Proxy1 = 'http://proxy.example.com:8080'
-Proxy2 = 'socks5://127.0.0.1:1080'
+[[outbounds]]
+name='Proxy1'
+type='proxy'
+url='http://proxy.example.com:8080'
+[[outbounds]]
+name='Proxy2'
+type='proxy'
+url='socks5://127.0.0.1:1080'
 [[rules]]
 type = 'DOMAIN-SUFFIX'
 pattern = 'example.com'
-proxy = 'Proxy1'
+outbound = 'Proxy1'
 [[rules]]
 type = 'FINAL'
-proxy = 'DIRECT'
+outbound = 'DIRECT'
 `)
 	require.Equal(t, "127.0.0.1:9200", cfg.General.ManagerAddr)
 	require.Equal(t, "json", cfg.General.LogFormat)
 	require.Equal(t, uint16(82), cfg.Core.TcpListenPort)
 	require.Equal(t, uint16(60000), cfg.Core.UdpNatPortEnd)
-	require.Equal(t, []string{"1.1.1.1:53", "[2001:4860:4860::8888]:53"}, cfg.Core.DnsServer)
+	require.Equal(t, []string{"1.1.1.1:53", "[2001:4860:4860::8888]:53"}, cfg.DNS.Servers)
 	require.Len(t, cfg.Rule, 2)
 	require.Equal(t, "FINAL", cfg.Rule[1].Schema)
 }
@@ -57,14 +82,14 @@ func TestProxyEnvironmentWithoutSection(t *testing.T) {
 	cleanProxyEnv(t)
 	t.Setenv(HTTP_PROXY, "http://127.0.0.1:8080")
 	cfg := parseTestConfig(t, "")
-	require.Equal(t, "http://127.0.0.1:8080", cfg.Proxy[HTTP_PROXY])
+	require.Equal(t, "http://127.0.0.1:8080", outboundByName(cfg, HTTP_PROXY).URL)
 }
 
 func TestUppercaseProxyEnvironment(t *testing.T) {
 	cleanProxyEnv(t)
 	t.Setenv("SOCKS_PROXY", "socks5://127.0.0.1:1080")
 	cfg := parseTestConfig(t, "")
-	require.Equal(t, "socks5://127.0.0.1:1080", cfg.Proxy[SOCKS_PROXY])
+	require.Equal(t, "socks5://127.0.0.1:1080", outboundByName(cfg, SOCKS_PROXY).URL)
 }
 
 func TestConfigValidation(t *testing.T) {
@@ -84,26 +109,34 @@ func TestConfigValidation(t *testing.T) {
 		{"reversed range", baseConfig + "tcp-nat-port-start = 60000\ntcp-nat-port-end = 10000", "tcp-nat-port-start"},
 		{"zero range", baseConfig + "udp-nat-port-start = 0", "udp-nat-port-start"},
 		{"range collision", baseConfig + "tcp-listen-port = 10000", "overlaps"},
-		{"DNS port collision", baseConfig + "dns-listen-port = 82", "dns-listen-port"},
-		{"TTL", baseConfig + "dns-ttl = 0", "dns-ttl"},
-		{"packet size", baseConfig + "dns-packet-size = 100", "dns-packet-size"},
-		{"timeout", baseConfig + "dns-read-timeout = 301", "timeouts"},
+		{"DNS port collision", "[dns]\nlisten-port = 82", "dns.listen-port"},
+		{"TTL", "[dns]\nttl = 0", "dns.ttl"},
+		{"packet size", "[dns]\npacket-size = 100", "dns.packet-size"},
+		{"timeout", "[dns]\nread-timeout = 301", "timeouts"},
 		{"manager", baseConfig + "[general]\nmanager-addr = 'localhost:0'", "manager-addr"},
 		{"log level", baseConfig + "[general]\nlog-level = 'verbose'", "log-level"},
 		{"log format", baseConfig + "[general]\nlog-format = 'xml'", "log-format"},
-		{"bad DNS", "[core]\ndns-server=['not-an-ip']", "dns-server[1]"},
-		{"DNS loop", "[core]\ndns-server=['10.192.0.1']", "virtual network"},
-		{"DNS port", "[core]\ndns-server=['1.1.1.1:0']", "dns-server[1]"},
-		{"reserved proxy", baseConfig + "[proxies]\nDIRECT='http://127.0.0.1:8080'", "reserved proxy"},
-		{"bad proxy", baseConfig + "[proxies]\nA='ftp://127.0.0.1:8080'", "proxies.A"},
-		{"proxy no port", baseConfig + "[proxies]\nA='http://127.0.0.1'", "proxies.A"},
-		{"missing proxy", baseConfig + "[[rules]]\ntype='FINAL'\nproxy='Missing'", "undefined proxy"},
-		{"bad type", baseConfig + "[[rules]]\ntype='typo'\nproxy='DIRECT'", "unknown rule type"},
-		{"empty domain", baseConfig + "[[rules]]\ntype='DOMAIN'\nproxy='DIRECT'", "domain pattern"},
-		{"bad CIDR rule", baseConfig + "[[rules]]\ntype='IP-CIDR'\npattern='bad'\nproxy='DIRECT'", "IPv4 prefix"},
-		{"unsupported IPv6", baseConfig + "[[rules]]\ntype='IP-CIDR6'\npattern='::/0'\nproxy='DIRECT'", "IPv6 interception"},
-		{"country", baseConfig + "[[rules]]\ntype='GEOIP'\npattern='USA'\nproxy='DIRECT'", "country code"},
-		{"FINAL order", baseConfig + "[[rules]]\ntype='FINAL'\nproxy='DIRECT'\n[[rules]]\ntype='FINAL'\nproxy='REJECT'", "FINAL must be last"},
+		{"bad DNS", "[dns]\nservers=['not-an-ip']", "dns.servers[1]"},
+		{"DNS loop", "[dns]\nservers=['10.192.0.1']", "virtual network"},
+		{"DNS port", "[dns]\nservers=['1.1.1.1:0']", "dns.servers[1]"},
+		{"duplicate outbound", baseConfig + "[[outbounds]]\nname='DIRECT'\ntype='proxy'\nurl='http://127.0.0.1:8080'", "duplicate outbound name"},
+		{"bad proxy", baseConfig + "[[outbounds]]\nname='A'\ntype='proxy'\nurl='ftp://127.0.0.1:8080'", "outbounds[3]"},
+		{"proxy no port", baseConfig + "[[outbounds]]\nname='A'\ntype='proxy'\nurl='http://127.0.0.1'", "invalid proxy URL"},
+		{"empty outbound name", "[[outbounds]]\nname=''\ntype='direct'", "name must be nonempty"},
+		{"whitespace outbound name", "[[outbounds]]\nname=' bad'\ntype='direct'", "name must be nonempty"},
+		{"missing outbound type", "[[outbounds]]\nname='local'", "type must be"},
+		{"invalid outbound type", "[[outbounds]]\nname='local'\ntype='magic'", "type must be"},
+		{"direct with URL", "[[outbounds]]\nname='local'\ntype='direct'\nurl='http://127.0.0.1:8080'", "url is only valid"},
+		{"legacy proxies", "[proxies]\nSecret='https://alice:secret@example.com:443'", "unknown configuration key"},
+		{"legacy DNS", "[core]\ndns-server=['1.1.1.1']", "unknown configuration key"},
+		{"legacy rule", baseConfig + "[[rules]]\ntype='FINAL'\nproxy='DIRECT'", "unknown configuration key"},
+		{"missing outbound", baseConfig + "[[rules]]\ntype='FINAL'\noutbound='Missing'", "undefined outbound"},
+		{"bad type", baseConfig + "[[rules]]\ntype='typo'\noutbound='DIRECT'", "unknown rule type"},
+		{"empty domain", baseConfig + "[[rules]]\ntype='DOMAIN'\noutbound='DIRECT'", "domain pattern"},
+		{"bad CIDR rule", baseConfig + "[[rules]]\ntype='IP-CIDR'\npattern='bad'\noutbound='DIRECT'", "IPv4 prefix"},
+		{"unsupported IPv6", baseConfig + "[[rules]]\ntype='IP-CIDR6'\npattern='::/0'\noutbound='DIRECT'", "IPv6 interception"},
+		{"country", baseConfig + "[[rules]]\ntype='GEOIP'\npattern='USA'\noutbound='DIRECT'", "country code"},
+		{"FINAL order", baseConfig + "[[rules]]\ntype='FINAL'\noutbound='DIRECT'\n[[rules]]\ntype='FINAL'\noutbound='REJECT'", "FINAL must be last"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { _, err := ParseConfig([]byte(tc.document)); require.ErrorContains(t, err, tc.want) })
@@ -131,13 +164,13 @@ func TestConfigSourceOwnership(t *testing.T) {
 
 func TestConfigSecretsAreRedacted(t *testing.T) {
 	cleanProxyEnv(t)
-	cfg := parseTestConfig(t, "[proxies]\nSecret='https://alice:supersecret@example.com:443'\n")
+	cfg := parseTestConfig(t, "[[outbounds]]\nname='Secret'\ntype='proxy'\nurl='https://alice:supersecret@example.com:443'\n")
 	data, err := cfg.RedactedTOML()
 	require.NoError(t, err)
 	require.NotContains(t, string(data), "alice")
 	require.NotContains(t, string(data), "supersecret")
-	require.Contains(t, cfg.Proxy["Secret"], "supersecret")
-	_, err = ParseConfig([]byte(baseConfig + "[proxies]\nSecret='https://alice:supersecret@example.com:bad'\n"))
+	require.Contains(t, outboundByName(cfg, "Secret").URL, "supersecret")
+	_, err = ParseConfig([]byte(baseConfig + "[[outbounds]]\nname='Secret'\ntype='proxy'\nurl='https://alice:supersecret@example.com:bad'\n"))
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "supersecret")
 }

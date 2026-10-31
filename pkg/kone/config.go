@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -33,46 +34,64 @@ type GeneralConfig struct {
 }
 
 type CoreConfig struct {
-	Tun               string   `toml:"tun"`
-	Stack             string   `toml:"stack"`
-	AutoRoute         bool     `toml:"auto-route"`
-	OutboundInterface string   `toml:"outbound-interface"`
-	Network           string   `toml:"network"`
-	TcpListenPort     uint16   `toml:"tcp-listen-port"`
-	TcpNatPortStart   uint16   `toml:"tcp-nat-port-start"`
-	TcpNatPortEnd     uint16   `toml:"tcp-nat-port-end"`
-	UdpListenPort     uint16   `toml:"udp-listen-port"`
-	UdpNatPortStart   uint16   `toml:"udp-nat-port-start"`
-	UdpNatPortEnd     uint16   `toml:"udp-nat-port-end"`
-	DnsListenPort     uint16   `toml:"dns-listen-port"`
-	DnsTtl            uint     `toml:"dns-ttl"`
-	DnsPacketSize     uint16   `toml:"dns-packet-size"`
-	DnsReadTimeout    uint     `toml:"dns-read-timeout"`
-	DnsWriteTimeout   uint     `toml:"dns-write-timeout"`
-	DnsServer         []string `toml:"dns-server"`
+	Tun               string `toml:"tun"`
+	Stack             string `toml:"stack"`
+	AutoRoute         bool   `toml:"auto-route"`
+	OutboundInterface string `toml:"outbound-interface"`
+	Network           string `toml:"network"`
+	TcpListenPort     uint16 `toml:"tcp-listen-port"`
+	TcpNatPortStart   uint16 `toml:"tcp-nat-port-start"`
+	TcpNatPortEnd     uint16 `toml:"tcp-nat-port-end"`
+	UdpListenPort     uint16 `toml:"udp-listen-port"`
+	UdpNatPortStart   uint16 `toml:"udp-nat-port-start"`
+	UdpNatPortEnd     uint16 `toml:"udp-nat-port-end"`
+}
+
+type DNSConfig struct {
+	ListenPort   uint16   `toml:"listen-port"`
+	TTL          uint     `toml:"ttl"`
+	PacketSize   uint16   `toml:"packet-size"`
+	ReadTimeout  uint     `toml:"read-timeout"`
+	WriteTimeout uint     `toml:"write-timeout"`
+	Servers      []string `toml:"servers,omitempty"`
+}
+
+type OutboundType string
+
+const (
+	OutboundProxy  OutboundType = "proxy"
+	OutboundDirect OutboundType = "direct"
+	OutboundReject OutboundType = "reject"
+)
+
+type OutboundConfig struct {
+	Name string       `toml:"name"`
+	Type OutboundType `toml:"type"`
+	URL  string       `toml:"url,omitempty"`
 }
 
 type RuleConfig struct {
-	Schema  string `toml:"type"`
-	Pattern string `toml:"pattern,omitempty"`
-	Proxy   string `toml:"proxy"`
+	Schema   string `toml:"type"`
+	Pattern  string `toml:"pattern,omitempty"`
+	Outbound string `toml:"outbound"`
 }
 
 type KoneConfig struct {
-	source  any
-	General GeneralConfig     `toml:"general"`
-	Core    CoreConfig        `toml:"core"`
-	Proxy   map[string]string `toml:"proxies"`
-	Rule    []RuleConfig      `toml:"rules"`
+	source    any
+	General   GeneralConfig    `toml:"general"`
+	Core      CoreConfig       `toml:"core"`
+	DNS       DNSConfig        `toml:"dns"`
+	Outbounds []OutboundConfig `toml:"outbounds"`
+	Rule      []RuleConfig     `toml:"rules"`
 }
 
 func defaultConfig() *KoneConfig {
 	return &KoneConfig{
 		General: GeneralConfig{ManagerAddr: "127.0.0.1:9200", LogLevel: "info", LogFormat: "text"},
 		Core: CoreConfig{Network: "10.192.0.1/16", Stack: "system", TcpListenPort: 82, TcpNatPortStart: 10000, TcpNatPortEnd: 60000,
-			UdpListenPort: 82, UdpNatPortStart: 10000, UdpNatPortEnd: 60000, DnsListenPort: DnsDefaultPort,
-			DnsTtl: DnsDefaultTtl, DnsPacketSize: DnsDefaultPacketSize, DnsReadTimeout: DnsDefaultReadTimeout, DnsWriteTimeout: DnsDefaultWriteTimeout},
-		Proxy: make(map[string]string),
+			UdpListenPort: 82, UdpNatPortStart: 10000, UdpNatPortEnd: 60000},
+		DNS: DNSConfig{ListenPort: DnsDefaultPort, TTL: DnsDefaultTtl, PacketSize: DnsDefaultPacketSize,
+			ReadTimeout: DnsDefaultReadTimeout, WriteTimeout: DnsDefaultWriteTimeout},
 	}
 }
 
@@ -116,28 +135,40 @@ func ParseConfig(source any) (*KoneConfig, error) {
 	} else {
 		cfg.source = data
 	}
+	if _, err := validateOutbounds(cfg.Outbounds); err != nil {
+		return nil, err
+	}
 	for _, key := range []string{HTTP_PROXY, HTTPS_PROXY, SOCKS_PROXY} {
 		value := os.Getenv(key)
 		if value == "" {
 			value = os.Getenv(strings.ToUpper(key))
 		}
 		if value != "" {
-			cfg.Proxy[key] = value
+			found := false
+			for i := range cfg.Outbounds {
+				if cfg.Outbounds[i].Name == key {
+					if cfg.Outbounds[i].Type != OutboundProxy {
+						return nil, fmt.Errorf("environment proxy %s conflicts with a non-proxy outbound", key)
+					}
+					cfg.Outbounds[i].URL = value
+					found = true
+					break
+				}
+			}
+			if !found {
+				cfg.Outbounds = append(cfg.Outbounds, OutboundConfig{Name: key, Type: OutboundProxy, URL: value})
+			}
 		}
 	}
-	if len(cfg.Core.DnsServer) == 0 {
-		config := dnsconfig.ReadDnsConfig()
-		if config.Err != nil {
-			return nil, fmt.Errorf("read system DNS: %w (set core.dns-server explicitly)", config.Err)
-		}
-		cfg.Core.DnsServer = config.Servers
-	}
-	for i, addr := range cfg.Core.DnsServer {
+	for i, addr := range cfg.DNS.Servers {
 		normalized, err := normalizeDNSServer(addr)
 		if err != nil {
-			return nil, fmt.Errorf("core.dns-server[%d]: %w", i+1, err)
+			return nil, fmt.Errorf("dns.servers[%d]: %w", i+1, err)
 		}
-		cfg.Core.DnsServer[i] = normalized
+		cfg.DNS.Servers[i] = normalized
+	}
+	if len(cfg.DNS.Servers) == 0 {
+		cfg.DNS.Servers = nil // omitted and explicitly empty both mean automatic
 	}
 	for i := range cfg.Rule {
 		cfg.Rule[i].Schema = strings.ToUpper(cfg.Rule[i].Schema)
@@ -146,6 +177,62 @@ func ParseConfig(source any) (*KoneConfig, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func validateOutbounds(config []OutboundConfig) (map[string]OutboundType, error) {
+	types := make(map[string]OutboundType, len(config))
+	for i, o := range config {
+		fail := func(reason string) error { return fmt.Errorf("outbounds[%d]: %s", i+1, reason) }
+		if o.Name == "" || strings.TrimSpace(o.Name) != o.Name || strings.ContainsAny(o.Name, "\x00\r\n\t") {
+			return nil, fail("name must be nonempty with no surrounding whitespace or control characters")
+		}
+		if _, exists := types[o.Name]; exists {
+			return nil, fail("duplicate outbound name " + o.Name)
+		}
+		switch o.Type {
+		case OutboundProxy:
+			if _, err := proxy.FromUrl(o.URL); err != nil {
+				return nil, fail("invalid proxy URL (expected http, https or socks5 with host and port)")
+			}
+		case OutboundDirect, OutboundReject:
+			if o.URL != "" {
+				return nil, fail("url is only valid for type=proxy")
+			}
+		default:
+			return nil, fail("type must be proxy, direct or reject")
+		}
+		types[o.Name] = o.Type
+	}
+	return types, nil
+}
+
+// Resolve automatic upstreams before opening the TUN, while preserving the
+// empty configured list so reload cannot rediscover our own virtual DNS.
+func effectiveDNSConfig(cfg DNSConfig, read func() ([]string, error)) (DNSConfig, error) {
+	cfg.Servers = slices.Clone(cfg.Servers)
+	if len(cfg.Servers) == 0 {
+		servers, err := read()
+		if err != nil {
+			return cfg, fmt.Errorf("read system DNS: %w (set dns.servers explicitly)", err)
+		}
+		cfg.Servers = slices.Clone(servers)
+	}
+	if len(cfg.Servers) == 0 {
+		return cfg, errors.New("no system DNS servers found; set dns.servers explicitly")
+	}
+	for i, server := range cfg.Servers {
+		value, err := normalizeDNSServer(server)
+		if err != nil {
+			return cfg, fmt.Errorf("dns.servers[%d]: %w", i+1, err)
+		}
+		cfg.Servers[i] = value
+	}
+	return cfg, nil
+}
+
+func systemDNSServers() ([]string, error) {
+	config := dnsconfig.ReadDnsConfig()
+	return config.Servers, config.Err
 }
 
 func normalizeDNSServer(value string) (string, error) {
@@ -235,46 +322,37 @@ func (cfg *KoneConfig) Validate() error {
 			return fmt.Errorf("core.%s-listen-port overlaps NAT port range", item.name)
 		}
 	}
-	if cfg.Core.DnsListenPort == 0 || cfg.Core.DnsListenPort == cfg.Core.UdpListenPort {
-		return errors.New("core.dns-listen-port must be nonzero and different from udp-listen-port")
+	if cfg.DNS.ListenPort == 0 || cfg.DNS.ListenPort == cfg.Core.UdpListenPort {
+		return errors.New("dns.listen-port must be nonzero and different from core.udp-listen-port")
 	}
-	if cfg.Core.DnsTtl == 0 || cfg.Core.DnsTtl > math.MaxUint32 {
-		return errors.New("core.dns-ttl must be between 1 and 4294967295 seconds")
+	if cfg.DNS.TTL == 0 || cfg.DNS.TTL > math.MaxUint32 {
+		return errors.New("dns.ttl must be between 1 and 4294967295 seconds")
 	}
-	if cfg.Core.DnsPacketSize < 512 {
-		return errors.New("core.dns-packet-size must be at least 512 bytes")
+	if cfg.DNS.PacketSize < 512 {
+		return errors.New("dns.packet-size must be at least 512 bytes")
 	}
-	if cfg.Core.DnsReadTimeout == 0 || cfg.Core.DnsReadTimeout > 300 || cfg.Core.DnsWriteTimeout == 0 || cfg.Core.DnsWriteTimeout > 300 {
-		return errors.New("core DNS read/write timeouts must be between 1 and 300 seconds")
+	if cfg.DNS.ReadTimeout == 0 || cfg.DNS.ReadTimeout > 300 || cfg.DNS.WriteTimeout == 0 || cfg.DNS.WriteTimeout > 300 {
+		return errors.New("dns read/write timeouts must be between 1 and 300 seconds")
 	}
-	if len(cfg.Core.DnsServer) == 0 {
-		return errors.New("core.dns-server is empty; specify at least one upstream")
-	}
-	for i, server := range cfg.Core.DnsServer {
+	for i, server := range cfg.DNS.Servers {
 		normalized, err := normalizeDNSServer(server)
 		if err != nil {
-			return fmt.Errorf("core.dns-server[%d]: %w", i+1, err)
+			return fmt.Errorf("dns.servers[%d]: %w", i+1, err)
 		}
 		host, _, _ := net.SplitHostPort(normalized)
 		ip, _ := netip.ParseAddr(host)
 		if ip.IsUnspecified() || ip.IsMulticast() || prefix.Contains(ip) {
-			return fmt.Errorf("core.dns-server[%d] is invalid or routed into the virtual network", i+1)
+			return fmt.Errorf("dns.servers[%d] is invalid or routed into the virtual network", i+1)
 		}
 	}
-	for name, raw := range cfg.Proxy {
-		if name == "" || name == "DIRECT" || name == "REJECT" || strings.TrimSpace(name) != name {
-			return fmt.Errorf("invalid or reserved proxy name %q", name)
-		}
-		if _, err := proxy.FromUrl(raw); err != nil {
-			return fmt.Errorf("proxies.%s: invalid proxy URL (expected http, https or socks5 with host and port)", name)
-		}
+	types, err := validateOutbounds(cfg.Outbounds)
+	if err != nil {
+		return err
 	}
 	for i, r := range cfg.Rule {
 		fail := func(reason string) error { return fmt.Errorf("rules[%d]: %s", i+1, reason) }
-		if r.Proxy != "DIRECT" && r.Proxy != "REJECT" {
-			if _, ok := cfg.Proxy[r.Proxy]; !ok {
-				return fail("references undefined proxy " + r.Proxy)
-			}
+		if _, ok := types[r.Outbound]; !ok {
+			return fail("references undefined outbound " + r.Outbound)
 		}
 		switch strings.ToUpper(r.Schema) {
 		case "DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD":
@@ -286,7 +364,7 @@ func (cfg *KoneConfig) Validate() error {
 			if err != nil || !p.Addr().Is4() {
 				return fail("IP-CIDR requires an IPv4 prefix")
 			}
-			if p.Bits() == 0 && r.Proxy != "DIRECT" && cfg.Core.OutboundInterface == "" {
+			if p.Bits() == 0 && types[r.Outbound] != OutboundDirect && cfg.Core.OutboundInterface == "" {
 				return fail("a default capture route requires core.outbound-interface; prefer core.auto-route")
 			}
 		case "IP-CIDR6":
@@ -353,17 +431,20 @@ func ConfigureLogging(w io.Writer, cfg GeneralConfig, debug bool) error {
 // RedactedTOML returns the effective configuration without proxy credentials.
 func (cfg *KoneConfig) RedactedTOML() ([]byte, error) {
 	copy := *cfg
-	copy.Proxy = make(map[string]string, len(cfg.Proxy))
-	for name, raw := range cfg.Proxy {
-		u, err := url.Parse(raw)
+	copy.Outbounds = slices.Clone(cfg.Outbounds)
+	for i, outbound := range cfg.Outbounds {
+		if outbound.URL == "" {
+			continue
+		}
+		u, err := url.Parse(outbound.URL)
 		if err != nil {
-			copy.Proxy[name] = "REDACTED"
+			copy.Outbounds[i].URL = "REDACTED"
 			continue
 		}
 		if u.User != nil {
 			u.User = url.UserPassword("REDACTED", "REDACTED")
 		}
-		copy.Proxy[name] = u.String()
+		copy.Outbounds[i].URL = u.String()
 	}
 	return toml.Marshal(&copy)
 }

@@ -31,7 +31,7 @@ func TestFlowDestinationUsesSnapshotAndVirtualAddress(t *testing.T) {
 	require.Equal(t, "example.com:443", addr)
 	require.Equal(t, "A", policy)
 	updated := one.Snapshot().Config
-	updated.Rule[0].Proxy = "DIRECT"
+	updated.Rule[0].Outbound = "DIRECT"
 	require.NoError(t, one.Reload(updated))
 	addr, policy, err = h.destination(context.Background(), one.policy.Load(), destination, false)
 	require.NoError(t, err)
@@ -43,7 +43,7 @@ func TestFlowDestinationUsesSnapshotAndVirtualAddress(t *testing.T) {
 	addr, _, err = h.destination(context.Background(), old, destination, true)
 	require.NoError(t, err)
 	require.Equal(t, "192.0.2.10:443", addr)
-	updated.Rule[0].Proxy = "REJECT"
+	updated.Rule[0].Outbound = "REJECT"
 	require.NoError(t, one.Reload(updated))
 	_, _, err = h.destination(context.Background(), one.policy.Load(), destination, true)
 	require.ErrorContains(t, err, "rejected")
@@ -81,7 +81,7 @@ func TestTransparentTCPFlowRetainsPolicyAndDrains(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, message, string(data))
 		updated := one.Snapshot().Config
-		updated.Rule = []RuleConfig{{Schema: "FINAL", Proxy: "REJECT"}}
+		updated.Rule = []RuleConfig{{Schema: "FINAL", Outbound: "REJECT"}}
 		require.NoError(t, one.Reload(updated))
 	}
 	one.flows.close()
@@ -103,7 +103,7 @@ func TestTransparentTCPRejectAndDialFailure(t *testing.T) {
 	cancel()
 	for _, policy := range []string{"A", "REJECT"} {
 		cfg := one.Snapshot().Config
-		cfg.Rule[0].Proxy = policy
+		cfg.Rule[0].Outbound = policy
 		require.NoError(t, one.Reload(cfg))
 		left, right := net.Pipe()
 		called := false
@@ -207,11 +207,11 @@ func TestStackDNSCallbackPreservesFakeIP(t *testing.T) {
 func TestOutboundInterfaceAndResolver(t *testing.T) {
 	cleanProxyEnv(t)
 	cfg := parseTestConfig(t, "").Core
-	d, err := outboundDialer(cfg)
+	d, err := outboundDialer(cfg, []string{"1.1.1.1:53"})
 	require.NoError(t, err)
 	require.Nil(t, d.Control)
 	cfg.OutboundInterface = "kone-interface-that-does-not-exist"
-	_, err = outboundDialer(cfg)
+	_, err = outboundDialer(cfg, []string{"1.1.1.1:53"})
 	require.ErrorContains(t, err, "outbound interface")
 	interfaces, err := net.Interfaces()
 	require.NoError(t, err)
@@ -233,8 +233,7 @@ func TestOutboundInterfaceAndResolver(t *testing.T) {
 	})}
 	go server.ActivateAndServe()
 	defer server.Shutdown()
-	cfg.DnsServer = []string{upstream.LocalAddr().String()}
-	d, err = outboundDialer(cfg)
+	d, err = outboundDialer(cfg, []string{upstream.LocalAddr().String()})
 	require.NoError(t, err)
 	require.NotNil(t, d.Control)
 	require.NotNil(t, d.Resolver)
@@ -243,7 +242,6 @@ func TestOutboundInterfaceAndResolver(t *testing.T) {
 	addresses, err := d.Resolver.LookupHost(ctx, "gateway.example")
 	require.NoError(t, err)
 	require.Contains(t, addresses, "192.0.2.44")
-	cfg.DnsServer = []string{"bad"}
-	_, err = outboundDialer(cfg)
+	_, err = outboundDialer(cfg, []string{"bad"})
 	require.Error(t, err)
 }

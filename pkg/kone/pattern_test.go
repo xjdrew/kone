@@ -38,7 +38,7 @@ func TestDomainSuffixPattern(t *testing.T) {
 }
 
 func TestDirectCIDRRuleKeepsItsPriority(t *testing.T) {
-	rule := NewRule([]RuleConfig{{Schema: "IP-CIDR", Pattern: "10.1.0.0/16", Proxy: "DIRECT"}, {Schema: "IP-CIDR", Pattern: "10.0.0.0/8", Proxy: "A"}})
+	rule := NewRule([]RuleConfig{{Schema: "IP-CIDR", Pattern: "10.1.0.0/16", Outbound: "DIRECT"}, {Schema: "IP-CIDR", Pattern: "10.0.0.0/8", Outbound: "A"}}, []OutboundConfig{{Name: "DIRECT", Type: OutboundDirect}, {Name: "A", Type: OutboundProxy}})
 	assert.Equal(t, "DIRECT", rule.Proxy(net.ParseIP("10.1.2.3")))
 	assert.Equal(t, "A", rule.Proxy(net.ParseIP("10.2.2.3")))
 }

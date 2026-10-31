@@ -1,41 +1,93 @@
-# Copy to config.toml and replace the example proxy endpoint before running.
+# 复制为 config.toml，按需修改 office 出站的代理 URL。
+# 未启用的配置项展示默认值；通常只需配置出站和规则。
+# 配置检查：kone -check -config config.toml，不创建网卡或修改路由。
 [general]
-manager-addr = "127.0.0.1:9200" # empty string disables the manager
-log-level = "info" # debug, info, warn, error
-log-format = "text" # text or json; logs go to stderr
+# 管理页监听地址；空字符串关闭。没有认证，建议保持本机回环地址。
+# manager-addr = "127.0.0.1:9200"
+# 日志级别：debug、info、warn、error；命令行 -debug 优先。
+# log-level = "info"
+# 日志格式：text 或 json，均输出到 stderr。
+# log-format = "text"
 
 [core]
-network = "10.192.0.1/16"
-# tun = "kone0" # new device name; macOS requires utunN; never reuse an existing adapter
-stack = "system" # "mixed" needs a build with -tags with_gvisor
-auto-route = false # true captures IPv4 traffic; requires the physical outbound interface
-# outbound-interface = "eth0" # e.g. eth0 on Raspberry Pi or Ethernet on Windows
-# Explicit upstreams make this example reproducible. Omit to use system DNS.
-dns-server = ["1.1.1.1", "8.8.8.8:53"]
-dns-ttl = 600
-dns-packet-size = 4096
-dns-read-timeout = 5
-dns-write-timeout = 5
-# Old tcp/udp listener and NAT port options are accepted for config compatibility;
-# sing-tun now owns transparent listeners and session allocation.
-dns-listen-port = 53
+# 新建的 TUN 名称；空字符串自动分配。macOS 指定时必须使用 utunN。
+# 不得使用已有网卡名称；创建和修改网络需要管理员/root 权限。
+# tun = ""
+# TUN 的 IPv4 主机地址/前缀，也是 Fake-IP 地址池；避免与现有网络冲突。
+# 当前支持 /8.. /30，并为 TUN 地址后的协议栈地址保留空间。
+# network = "10.192.0.1/16"
+# system：系统 TCP + sing-tun UDP；mixed：系统 TCP + gVisor UDP。
+# mixed 需要以 -tags with_gvisor 构建；两者都只接管 IPv4。
+# stack = "system"
+# true 添加两条 /1 路由接管 IPv4；保留原默认路由，更具体路由仍优先。
+# 开启时必须设置 outbound-interface，网关还需自行配置 forwarding/DHCP/防火墙。
+# auto-route = false
+# 代理、直连和上游 DNS 使用的真实出口接口；空字符串使用普通系统路由。
+# 全局接管时请设置为实际接口，例如 eth0、en0 或 Ethernet，不能与 TUN 同名。
+# 本机回环代理/DNS stub 仍使用回环路径；改变出口接口需要重启。
+# outbound-interface = ""
 
-[proxies]
-Proxy1 = "http://127.0.0.1:8080"
-# Proxy2 = "socks5://127.0.0.1:1080"
-# Secure = "https://username:password@example.com:443"
+# 以下为旧 relay API 的兼容选项，仍校验合法性；sing-tun 生产数据面不使用它们。
+# TCP relay 监听端口；不得位于对应 NAT 端口范围内。
+# tcp-listen-port = 82
+# TCP NAT 端口范围，左闭右开：[start, end)。
+# tcp-nat-port-start = 10000
+# tcp-nat-port-end = 60000
+# UDP relay 监听端口；不得与 DNS 监听端口相同。
+# udp-listen-port = 82
+# UDP NAT 端口范围，左闭右开：[start, end)。
+# udp-nat-port-start = 10000
+# udp-nat-port-end = 60000
 
-# Rules are evaluated in order. FINAL is optional and must be last.
+# [dns] 整段可省略；默认在启动前读取当前系统 DNS，用于真实域名解析。
+# 系统上游会固定到本次运行，规则热更新不会重读已指向 KONE 的网卡 DNS。
+# [dns]
+# 上游 DNS 地址；省略或 [] 使用系统 DNS，不内置公共 DNS 作为回退。
+# 可指定 IPv4/IPv6 地址和端口，例如 ["1.1.1.1", "[2001:4860:4860::8888]:53"]。
+# 不得指向 KONE 虚拟网段；IPv6 上游地址不代表支持 IPv6 流量接管。
+# servers = []
+# KONE DNS 服务在 TUN 地址上的 UDP 监听端口；普通系统客户端使用 53。
+# listen-port = 53
+# Fake-IP DNS 响应 TTL，单位秒，范围 1..4294967295。
+# ttl = 600
+# DNS UDP 报文缓冲区大小，单位字节，范围 512..65535。
+# packet-size = 4096
+# 上游查询和 DNS 服务读/写超时，单位秒，范围 1..300；总查询超时为两者之和。
+# read-timeout = 5
+# write-timeout = 5
+
+# 出站数组：name 是规则引用的唯一名称，不具有特殊行为，支持自定义名字。
+# type 必填：proxy、direct、reject。只有 proxy 可以且必须填写 url。
+[[outbounds]]
+name = "office"
+type = "proxy"
+# 支持 http、https CONNECT 或 socks5，必须显式提供端口。
+# 也可填写 socks5://127.0.0.1:1080 或 https://username:password@example.com:443。
+# 当前代理出站仅转发 TCP；UDP 保持直连行为，未实现 SOCKS5 UDP ASSOCIATE。
+url = "http://127.0.0.1:8080"
+
+[[outbounds]]
+name = "local"
+type = "direct" # KONE 接收流量后直接连接目标，不使用上游代理。
+
+[[outbounds]]
+name = "blocked"
+type = "reject" # 拒绝连接；匹配的域名 DNS 查询返回 REFUSED。
+
+# 规则按顺序匹配，outbound 必须引用上面已定义的名字。
+# type：DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD、IP-CIDR、GEOIP、FINAL。
+# pattern：域名/后缀/关键词、IPv4 CIDR 或大写两字母国家代码；FINAL 不填。
+# FINAL 可省略，但写出时必须是最后一条；没有匹配规则时隐式直连。
 [[rules]]
 type = "IP-CIDR"
 pattern = "192.168.0.0/16"
-proxy = "DIRECT"
+outbound = "local"
 
 [[rules]]
 type = "DOMAIN-SUFFIX"
-pattern = "example.com"
-proxy = "Proxy1"
+pattern = "example.com" # 匹配自身及子域名，不匹配 1example.com。
+outbound = "office"
 
 [[rules]]
 type = "FINAL"
-proxy = "DIRECT"
+outbound = "local"

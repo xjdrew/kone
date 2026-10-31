@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -13,7 +14,7 @@ import (
 
 // Each engine owns its dialer. Both proxy transports and DNS must bypass the
 // capture routes, including connections established after a rule reload.
-func outboundDialer(cfg CoreConfig) (*net.Dialer, error) {
+func outboundDialer(cfg CoreConfig, dnsServers []string) (*net.Dialer, error) {
 	d := &net.Dialer{Timeout: 30 * time.Second}
 	if cfg.OutboundInterface == "" {
 		return d, nil
@@ -26,18 +27,27 @@ func outboundDialer(cfg CoreConfig) (*net.Dialer, error) {
 		return nil, fmt.Errorf("outbound interface %q is down", iif.Name)
 	}
 	d.Control = func(network, address string, conn syscall.RawConn) error {
+		host, _, _ := net.SplitHostPort(address)
+		if ip, err := netip.ParseAddr(host); err == nil && ip.IsLoopback() {
+			// Local proxies and system DNS stubs use the loopback route, which
+			// already bypasses capture. Binding them to a physical NIC breaks it.
+			return nil
+		}
 		return control.BindToInterface0(nil, conn, network, address, iif.Name, iif.Index, false)
 	}
 	// Resolve proxy hostnames through explicit upstreams using the same physical
 	// interface. The resolver dialer deliberately has no recursive Resolver.
 	resolverDialer := *d
-	servers := make([]string, 0, len(cfg.DnsServer))
-	for _, server := range cfg.DnsServer {
+	servers := make([]string, 0, len(dnsServers))
+	for _, server := range dnsServers {
 		normalized, err := normalizeDNSServer(server)
 		if err != nil {
 			return nil, err
 		}
 		servers = append(servers, normalized)
+	}
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("DNS servers must be resolved before binding the outbound interface")
 	}
 	var next atomic.Uint64
 	d.Resolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {

@@ -39,7 +39,7 @@ On Windows, build `dist/kone.exe` and run it from an administrator terminal. See
 
 ## Configuration and compatibility
 
-Configuration is **TOML**. Start with [the annotated example](configs/kone.example.toml) and [the migration guide](docs/configuration.md). For LAN traffic, follow [Raspberry Pi / Linux gateway setup](docs/guides/how-to-use-with-raspberry-pi.md).
+Configuration is **TOML**. Named `[[outbounds]]` entries explicitly select proxy, direct or reject behavior; rules reference them using `outbound`. The optional `[dns]` section uses system DNS upstreams by default. Start with [the complete annotated example](configs/kone.example.toml) and [the migration guide](docs/configuration.md). For LAN traffic, follow [Raspberry Pi / Linux gateway setup](docs/guides/how-to-use-with-raspberry-pi.md).
 
 The manager defaults to `http://127.0.0.1:9200/`. Set `general.manager-addr = ""` to disable it. Configuration pages redact proxy credentials. Rule reload uses:
 
@@ -47,7 +47,7 @@ The manager defaults to `http://127.0.0.1:9200/`. Set `general.manager-addr = ""
 curl -X POST http://127.0.0.1:9200/reload/
 ```
 
-Reload atomically publishes domain/GeoIP/default rules and proxy definitions, preserving virtual addresses. Established flows retain their original proxy. Changes to core settings, logging, manager address or CIDR routes require a restart and are rejected without modifying the active configuration.
+Reload atomically publishes domain/GeoIP/default rules and outbound definitions, preserving virtual addresses. Established flows retain their original outbound. Changes to core/DNS settings, logging, manager address or CIDR routes require a restart and are rejected without modifying the active configuration.
 
 ## Current boundaries
 

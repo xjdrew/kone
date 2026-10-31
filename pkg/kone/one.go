@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net"
 	"net/http"
 	"net/netip"
@@ -17,10 +16,10 @@ import (
 )
 
 type runtimeSnapshot struct {
-	version uint64
-	cfg     *KoneConfig
-	rule    *Rule
-	proxies *Proxies
+	version   uint64
+	cfg       *KoneConfig
+	rule      *Rule
+	outbounds *Outbounds
 }
 type ConfigSnapshot struct {
 	Version uint64
@@ -40,6 +39,7 @@ type One struct {
 	network         Network
 	sockets         Sockets
 	shutdownTimeout time.Duration
+	readSystemDNS   func() ([]string, error)
 	stackFactory    stackFactory
 	flows           *flowHandler
 	dnsTable        *DnsTable
@@ -82,9 +82,9 @@ func WithShutdownTimeout(timeout time.Duration) Option {
 
 func cloneConfig(cfg *KoneConfig) *KoneConfig {
 	copy := *cfg
-	copy.Proxy = maps.Clone(cfg.Proxy)
+	copy.Outbounds = slices.Clone(cfg.Outbounds)
 	copy.Rule = slices.Clone(cfg.Rule)
-	copy.Core.DnsServer = slices.Clone(cfg.Core.DnsServer)
+	copy.DNS.Servers = slices.Clone(cfg.DNS.Servers)
 	if data, ok := cfg.source.([]byte); ok {
 		copy.source = slices.Clone(data)
 	}
@@ -114,31 +114,40 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	}
 	cfg = cloneConfig(cfg)
 	ip, subnet, _ := net.ParseCIDR(cfg.Core.Network)
-	one := &One{ip: ip.To4(), subnet: subnet, network: systemNetwork{run: runCommand, gateway: "0.0.0.0"}, sockets: &net.ListenConfig{}, stackFactory: newSingStack, shutdownTimeout: 15 * time.Second, done: make(chan struct{}), ready: make(chan struct{})}
+	one := &One{ip: ip.To4(), subnet: subnet, network: systemNetwork{run: runCommand, gateway: "0.0.0.0"}, sockets: &net.ListenConfig{}, stackFactory: newSingStack, shutdownTimeout: 15 * time.Second, readSystemDNS: systemDNSServers, done: make(chan struct{}), ready: make(chan struct{})}
 	for _, option := range options {
 		if err := option(one); err != nil {
 			return nil, err
 		}
 	}
-	p, err := NewProxies(cfg.Proxy)
+	dnsCfg, err := effectiveDNSConfig(cfg.DNS, one.readSystemDNS)
 	if err != nil {
 		return nil, err
 	}
-	dialer, err := outboundDialer(cfg.Core)
+	effective := cloneConfig(cfg)
+	effective.DNS = dnsCfg
+	if err := effective.Validate(); err != nil {
+		return nil, err
+	}
+	p, err := NewOutbounds(cfg.Outbounds)
+	if err != nil {
+		return nil, err
+	}
+	dialer, err := outboundDialer(cfg.Core, dnsCfg.Servers)
 	if err != nil {
 		return nil, err
 	}
 	p.dial = dialer.DialContext
 	one.flows = &flowHandler{one: one, dialer: dialer}
-	rule := NewRule(cfg.Rule)
+	rule := NewRule(cfg.Rule, cfg.Outbounds)
 	p.bypassEndpoints(rule)
-	one.policy.Store(&runtimeSnapshot{version: 1, cfg: cfg, rule: rule, proxies: p})
+	one.policy.Store(&runtimeSnapshot{version: 1, cfg: cfg, rule: rule, outbounds: p})
 	one.dnsTable = NewDnsTable(ip, subnet)
 	// The system TCP forwarder uses the address after the TUN address.
 	next := netip.MustParseAddr(ip.String()).Next()
 	one.dnsTable.ipPool.reserve(net.IP(next.AsSlice()))
-	one.dnsTable.ttl = uint32(cfg.Core.DnsTtl)
-	if one.dns, err = NewDns(one, cfg.Core); err != nil {
+	one.dnsTable.ttl = uint32(cfg.DNS.TTL)
+	if one.dns, err = NewDns(one, dnsCfg); err != nil {
 		return nil, err
 	}
 	one.dns.client.Dialer = dialer
@@ -164,26 +173,31 @@ func (one *One) Reload(cfg *KoneConfig) error {
 		return errors.New("engine is closed")
 	}
 	old := one.policy.Load()
-	cidrs := func(rules []RuleConfig) []RuleConfig {
-		var result []RuleConfig
-		for _, r := range rules {
+	type routeRule struct {
+		RuleConfig
+		Kind OutboundType
+	}
+	cidrs := func(config *KoneConfig) []routeRule {
+		var result []routeRule
+		types, _ := validateOutbounds(config.Outbounds)
+		for _, r := range config.Rule {
 			if strings.EqualFold(r.Schema, "IP-CIDR") {
-				result = append(result, r)
+				result = append(result, routeRule{r, types[r.Outbound]})
 			}
 		}
 		return result
 	}
-	if !reflect.DeepEqual(cfg.Core, old.cfg.Core) || cfg.General != old.cfg.General || !slices.Equal(cidrs(cfg.Rule), cidrs(old.cfg.Rule)) {
-		return errors.New("changes to general/core or IP-CIDR routes require restart")
+	if !reflect.DeepEqual(cfg.Core, old.cfg.Core) || !reflect.DeepEqual(cfg.DNS, old.cfg.DNS) || cfg.General != old.cfg.General || !slices.Equal(cidrs(cfg), cidrs(old.cfg)) {
+		return errors.New("changes to general/core/dns or IP-CIDR routes require restart")
 	}
-	p, err := NewProxies(cfg.Proxy)
+	p, err := NewOutbounds(cfg.Outbounds)
 	if err != nil {
 		return err
 	}
-	p.dial = old.proxies.dial
-	rule := NewRule(cfg.Rule)
+	p.dial = old.outbounds.dial
+	rule := NewRule(cfg.Rule, cfg.Outbounds)
 	p.bypassEndpoints(rule)
-	one.policy.Store(&runtimeSnapshot{version: old.version + 1, cfg: cfg, rule: rule, proxies: p})
+	one.policy.Store(&runtimeSnapshot{version: old.version + 1, cfg: cfg, rule: rule, outbounds: p})
 	one.dnsTable.ClearNonProxyDomain()
 	return nil
 }
@@ -340,7 +354,7 @@ func (one *One) Run(parent context.Context) (result error) {
 		}
 	}
 	for _, pattern := range one.policy.Load().rule.patterns {
-		if p, ok := pattern.(IPCIDRPattern); ok && p.Proxy() != "DIRECT" && !seen[p.ipNet.String()] {
+		if p, ok := pattern.(IPCIDRPattern); ok && one.policy.Load().rule.OutboundType(p.Proxy()) != OutboundDirect && !seen[p.ipNet.String()] {
 			routes := []*net.IPNet{p.ipNet}
 			if p.ipNet.String() == "0.0.0.0/0" {
 				routes = nil

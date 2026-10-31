@@ -40,7 +40,7 @@ func (r *TCPRelay) remoteHost(ctx context.Context, s *runtimeSnapshot, conn net.
 		host = record.Hostname
 		data.Dst = host
 		policy = s.rule.ProxyDNS(host, record.resolved)
-		if policy == "DIRECT" {
+		if s.rule.OutboundType(policy) == OutboundDirect {
 			if record.RealIP == nil {
 				msg, err := r.one.dns.ResolveContext(ctx, host)
 				if err != nil {
@@ -102,7 +102,7 @@ func (r *TCPRelay) handleConn(ctx context.Context, s *runtimeSnapshot, conn net.
 	if addr == "" {
 		return
 	}
-	tunnel, err := s.proxies.DialContext(ctx, policy, addr)
+	tunnel, err := s.outbounds.DialContext(ctx, policy, addr)
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Debug("Proxy dial failed", "destination", addr, "proxy", policy, "error", err)

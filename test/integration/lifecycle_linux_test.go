@@ -56,14 +56,21 @@ manager-addr="127.0.0.1:%d"
 [core]
 tun="kone-e2e"
 network="10.203.0.1/24"
-dns-server=["127.0.0.1:5353"]
 tcp-listen-port=%d
 udp-listen-port=%d
-dns-listen-port=%d
 tcp-nat-port-start=10000
 tcp-nat-port-end=11000
 udp-nat-port-start=10000
 udp-nat-port-end=11000
+[dns]
+servers=["127.0.0.1:5353"]
+listen-port=%d
+[[outbounds]]
+name="local"
+type="direct"
+[[outbounds]]
+name="blocked"
+type="reject"
 `, port("tcp"), port("tcp"), udpPort, dnsPort)))
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +152,7 @@ func TestSystemLifecyclePortFailure(t *testing.T) {
 				if kind == "udp" {
 					cfg.Core.UdpListenPort = port
 				} else {
-					cfg.Core.DnsListenPort = port
+					cfg.DNS.ListenPort = port
 				}
 			}
 			defer occupied.Close()
@@ -170,7 +177,7 @@ func TestSystemLifecycleRouteFailure(t *testing.T) {
 	cfg := systemConfig(t)
 	systemCommand(t, "route", "add", "203.0.113.0/24", "dev", "lo")
 	defer systemCommand(t, "route", "del", "203.0.113.0/24", "dev", "lo")
-	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Proxy: "REJECT"}, {Schema: "IP-CIDR", Pattern: "203.0.113.0/24", Proxy: "REJECT"}}
+	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Outbound: "blocked"}, {Schema: "IP-CIDR", Pattern: "203.0.113.0/24", Outbound: "blocked"}}
 	one, err := kone.FromConfig(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +199,7 @@ func TestSystemLifecycleRouteFailure(t *testing.T) {
 
 func TestSystemLifecycleExclusiveDevice(t *testing.T) {
 	cfg := systemConfig(t)
-	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Proxy: "REJECT"}}
+	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Outbound: "blocked"}}
 	_, cancel, done := systemStart(t, cfg)
 	// Bypass KONE's friendly name precheck and exercise kernel-level exclusive
 	// creation, protecting against two processes racing that precheck.
@@ -203,7 +210,7 @@ func TestSystemLifecycleExclusiveDevice(t *testing.T) {
 	}
 	query := new(dns.Msg)
 	query.SetQuestion("ownership.example.", dns.TypeA)
-	answer, _, err := (&dns.Client{Timeout: time.Second}).Exchange(query, fmt.Sprintf("10.203.0.1:%d", cfg.Core.DnsListenPort))
+	answer, _, err := (&dns.Client{Timeout: time.Second}).Exchange(query, fmt.Sprintf("10.203.0.1:%d", cfg.DNS.ListenPort))
 	if err != nil || answer.Rcode != dns.RcodeRefused {
 		t.Fatalf("original engine damaged: %v %v", err, answer)
 	}
@@ -249,13 +256,13 @@ func localConnectProxy(t *testing.T, body string) *httptest.Server {
 func TestSystemLifecycleTrafficAndReload(t *testing.T) {
 	cfg := systemConfig(t)
 	oldProxy, newProxy := localConnectProxy(t, "old"), localConnectProxy(t, "new")
-	cfg.Proxy = map[string]string{"A": oldProxy.URL}
-	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Proxy: "A"}}
+	cfg.Outbounds = append(cfg.Outbounds, kone.OutboundConfig{Name: "A", Type: kone.OutboundProxy, URL: oldProxy.URL})
+	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Outbound: "A"}}
 	one, cancel, done := systemStart(t, cfg)
 	request := new(dns.Msg)
 	request.SetQuestion("example.com.", dns.TypeA)
 	dnsClient := &dns.Client{Timeout: time.Second}
-	answer, _, err := dnsClient.Exchange(request, fmt.Sprintf("10.203.0.1:%d", cfg.Core.DnsListenPort))
+	answer, _, err := dnsClient.Exchange(request, fmt.Sprintf("10.203.0.1:%d", cfg.DNS.ListenPort))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,14 +287,14 @@ func TestSystemLifecycleTrafficAndReload(t *testing.T) {
 	}
 	get("old")
 	updated := one.Snapshot().Config
-	updated.Proxy["A"] = newProxy.URL
+	updated.Outbounds[len(updated.Outbounds)-1].URL = newProxy.URL
 	if err := one.Reload(updated); err != nil {
 		t.Fatal(err)
 	}
 	get("old") // established TCP flow retains its original proxy generation
 	transport.CloseIdleConnections()
 	get("new")
-	answer, _, err = dnsClient.Exchange(request, fmt.Sprintf("10.203.0.1:%d", cfg.Core.DnsListenPort))
+	answer, _, err = dnsClient.Exchange(request, fmt.Sprintf("10.203.0.1:%d", cfg.DNS.ListenPort))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -102,7 +102,9 @@ sing-tun 的内部监听使用动态分配端口。KONE 从回调得到原始源
 
 响应字节写回客户端侧连接后，内核生成 TCP 报文，经 TUN 再交给 sing-tun；sing-tun 反向恢复原始地址和端口，再回注内核。网关路由表将其送回 LAN 客户端，本机部署则交给原应用 socket。
 
-代码入口：[流适配器](../pkg/kone/flow.go)、[代理选择](../pkg/kone/proxies.go)、[代理协议](../pkg/proxy/proxy.go)、[双向复制](../pkg/kone/tcp_relay.go)。
+配置中的 `[[outbounds]]` 用类型区分 proxy/direct/reject，规则的 outbound 只引用名称。名称没有特殊含义；运行时按同一快照中的类型判断直连、拒绝及 Fake-IP 是否需要真实解析。
+
+代码入口：[流适配器](../pkg/kone/flow.go)、[出站选择](../pkg/kone/outbounds.go)、[代理协议](../pkg/proxy/proxy.go)、[双向复制](../pkg/kone/tcp_relay.go)。
 
 ## 4. sing-tun、Wintun 与 gVisor 分别负责什么
 
@@ -118,7 +120,7 @@ sing-tun 的内部监听使用动态分配端口。KONE 从回调得到原始源
 TUN 交付的是 IP 报文，而 HTTP CONNECT/SOCKS5 出站需要已经建立的字节流；中间必须有人处理 TCP 握手、序列号、确认、重传和关闭。sing-tun 将这些工作连接起来，KONE 才能在连接层选择代理。gVisor 是更大的系统项目，这里只使用其 Go 网络栈 netstack，不会因此启动容器或运行沙箱。它能在用户态处理协议状态，但当前 mixed 模式仅把 UDP 交给它，TCP 仍由操作系统处理。
 
 sing-tun 本身也提供地址、路由和 DNS 管理能力。本次接入使用 **external configuration** 模式：网络变更由 KONE 的 `Network` 边界统一执行和回滚，避免两个管理者改动同一项系统配置。
-当前固定版本源码保留于 `pkg/singtun`，包含 Windows PE 加载器边界/session 清理修复，以及独占设备创建扩展，详见 [来源与补丁记录](../pkg/singtun/UPSTREAM.md)。独占创建使网卡名称预检查之后的进程竞争也不会接管既有设备。后续升级应复核这些补丁是否已被上游吸收。
+当前通过远程模块替换固定引用 xjdrew/sing-tun 的修补提交，KONE 仓库内不再复制源码。Windows PE 加载器边界/session 清理、HRESULT 错误规范化及独占设备创建在 [fork PR #1](https://github.com/xjdrew/sing-tun/pull/1) 单独 review，详见 [来源与升级说明](sing-tun.md)。独占创建使网卡名称预检查之后的进程竞争也不会接管既有设备。
 
 Windows 的 Wintun DLL 通过依赖内嵌，运行时调用其 API 创建网卡并部署驱动，所以用户省去手动预装 TAP 的步骤；权限和驱动仍然存在。
 
@@ -146,7 +148,7 @@ gVisor 的作用集中在 **IP 报文到 UDP 会话这一层**。代理规则、
 分片、MTU、大数据报及性能差异应以所选栈的端到端测试和目标设备测量为准。
 
 代码入口：[协议栈接入与监督](../pkg/kone/stack.go)、[mixed 接入](../pkg/kone/stack_mixed.go)、[设备创建](../pkg/kone/device.go)。
-依赖实现对应固定版本：[system](https://github.com/SagerNet/sing-tun/blob/040db71fcd33/stack_system.go)、[mixed](https://github.com/SagerNet/sing-tun/blob/040db71fcd33/stack_mixed.go)。
+依赖实现对应固定提交：[system](https://github.com/xjdrew/sing-tun/blob/1b310d7937079beb5018c1cab0885520d8b326e7/stack_system.go)、[mixed](https://github.com/xjdrew/sing-tun/blob/1b310d7937079beb5018c1cab0885520d8b326e7/stack_mixed.go)。
 
 ## 5. UDP 链路与当前能力边界
 

@@ -68,7 +68,7 @@ func (r *UDPRelay) grabTunnel(ctx context.Context, s *runtimeSnapshot, local net
 	if record == nil {
 		return nil
 	}
-	if s.rule.ProxyDNS(record.Hostname, record.resolved) == "REJECT" {
+	if s.rule.OutboundType(s.rule.ProxyDNS(record.Hostname, record.resolved)) == OutboundReject {
 		return nil
 	}
 	if record.RealIP == nil {

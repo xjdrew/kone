@@ -12,12 +12,17 @@ import (
 func testEngine(t *testing.T) *One {
 	t.Helper()
 	cfg := parseTestConfig(t, `
-[proxies]
-A='http://Proxy.Example.com:8080'
-B='socks5://127.0.0.1:1080'
+[[outbounds]]
+name='A'
+type='proxy'
+url='http://Proxy.Example.com:8080'
+[[outbounds]]
+name='B'
+type='proxy'
+url='socks5://127.0.0.1:1080'
 [[rules]]
 type='FINAL'
-proxy='A'
+outbound='A'
 `)
 	one, err := FromConfig(cfg)
 	require.NoError(t, err)
@@ -28,8 +33,8 @@ func TestReloadPreservesProxyBypass(t *testing.T) {
 	cleanProxyEnv(t)
 	one := testEngine(t)
 	require.NoError(t, one.Reload(one.Snapshot().Config))
-	require.Equal(t, "DIRECT", one.policy.Load().rule.Proxy("PROXY.EXAMPLE.COM."))
-	require.Equal(t, "DIRECT", one.policy.Load().rule.Proxy("127.0.0.1"))
+	require.Empty(t, one.policy.Load().rule.Proxy("PROXY.EXAMPLE.COM."))
+	require.Empty(t, one.policy.Load().rule.Proxy("127.0.0.1"))
 	require.Equal(t, "A", one.policy.Load().rule.Proxy("other.example.com"))
 }
 
@@ -39,7 +44,7 @@ func TestReloadUpdatesCachedPolicyAndPreservesAddress(t *testing.T) {
 	record := one.dnsTable.Set("example.com", "A")
 	one.dnsTable.SetNonProxyDomain("direct.example", 600)
 	cfg := one.Snapshot().Config
-	cfg.Rule[0].Proxy = "B"
+	cfg.Rule[0].Outbound = "B"
 	require.NoError(t, one.Reload(cfg))
 	_, records := one.DNSSnapshot()
 	got := records[record.Hostname]
@@ -47,7 +52,7 @@ func TestReloadUpdatesCachedPolicyAndPreservesAddress(t *testing.T) {
 	require.True(t, record.IP.Equal(got.IP))
 	require.False(t, one.dnsTable.IsNonProxyDomain("direct.example"))
 	// Caller mutations do not alter the active snapshot.
-	cfg.Rule[0].Proxy = "REJECT"
+	cfg.Rule[0].Outbound = "REJECT"
 	require.Equal(t, "B", one.policy.Load().rule.Proxy("example.com"))
 }
 
@@ -61,8 +66,8 @@ func TestReloadFailureLeavesPolicyIntact(t *testing.T) {
 	}{
 		{"core", func(c *KoneConfig) { c.Core.TcpListenPort = 83 }},
 		{"logging", func(c *KoneConfig) { c.General.LogLevel = "debug" }},
-		{"route", func(c *KoneConfig) { c.Rule = []RuleConfig{{Schema: "IP-CIDR", Pattern: "8.8.8.0/24", Proxy: "A"}} }},
-		{"invalid", func(c *KoneConfig) { c.Rule[0].Proxy = "Missing" }},
+		{"route", func(c *KoneConfig) { c.Rule = []RuleConfig{{Schema: "IP-CIDR", Pattern: "8.8.8.0/24", Outbound: "A"}} }},
+		{"invalid", func(c *KoneConfig) { c.Rule[0].Outbound = "Missing" }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,7 +94,7 @@ func TestCachedVirtualAddressCanBecomeDirect(t *testing.T) {
 	answer := &dns.Msg{Answer: []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET}, A: net.ParseIP("203.0.113.10")}}}
 	one.dnsTable.SetRealIP(record.Hostname, answer)
 	cfg := one.Snapshot().Config
-	cfg.Rule[0].Proxy = "DIRECT"
+	cfg.Rule[0].Outbound = "DIRECT"
 	require.NoError(t, one.Reload(cfg))
 	relay := NewTCPRelay(one, cfg.Core)
 	_, port := relay.nat.allocSession(net.IPv4(192, 168, 1, 2), record.IP, 50000, 443)
@@ -143,7 +148,7 @@ func TestReloadReevaluatesCachedCNAMEAndIPRules(t *testing.T) {
 		&dns.A{Hdr: dns.RR_Header{Name: "cdn.example.", Rrtype: dns.TypeA, Class: dns.ClassINET}, A: net.ParseIP("203.0.113.1")},
 	}})
 	cfg := one.Snapshot().Config
-	cfg.Rule = []RuleConfig{{Schema: "DOMAIN", Pattern: "cdn.example", Proxy: "B"}, {Schema: "FINAL", Proxy: "DIRECT"}}
+	cfg.Rule = []RuleConfig{{Schema: "DOMAIN", Pattern: "cdn.example", Outbound: "B"}, {Schema: "FINAL", Outbound: "DIRECT"}}
 	require.NoError(t, one.Reload(cfg))
 	require.Equal(t, "B", policyFor(one, record.Hostname))
 	require.True(t, record.IP.Equal(one.dnsTable.Get(record.Hostname).IP))

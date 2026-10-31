@@ -95,13 +95,16 @@ manager-addr=""
 tun="%s"
 stack="%s"
 network="10.204.0.1/24"
-dns-listen-port=%d
-dns-server=["1.1.1.1"]
-[proxies]
-Win="%s"
+[dns]
+listen-port=%d
+servers=["1.1.1.1"]
+[[outbounds]]
+name='Win'
+type='proxy'
+url="%s"
 [[rules]]
 type="FINAL"
-proxy="Win"
+outbound="Win"
 `, name, stack, dnsPort, proxy.URL)))
 				if err != nil {
 					t.Fatal(err)
