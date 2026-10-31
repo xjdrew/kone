@@ -1,9 +1,11 @@
 package kone
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/netip"
 	"runtime"
@@ -236,4 +238,26 @@ func TestGatewayConfigValidation(t *testing.T) {
 		record := one.dnsTable.Set(string(rune('a'+i))+".example", "A")
 		require.NotEqual(t, reserved.String(), record.IP.String())
 	}
+}
+
+func TestPacketTraceContainsHeadersOnly(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(previous)
+	packet := make([]byte, 40)
+	packet[0] = 0x45
+	packet[9] = 6
+	copy(packet[12:16], []byte{192, 0, 2, 2})
+	copy(packet[16:20], []byte{198, 51, 100, 1})
+	packet[23] = 80
+	packet[33] = 2
+	packet = append(packet, []byte("private-payload-password")...)
+	framed := append(make([]byte, singtun.PacketOffset), packet...)
+	tracePacket(context.Background(), "read", framed)
+	require.Contains(t, output.String(), "192.0.2.2")
+	require.Contains(t, output.String(), "destination_port")
+	require.NotContains(t, output.String(), "private-payload-password")
+	tracePacket(context.Background(), "write", nil)
+	tracePacket(context.Background(), "write", []byte{0x60})
 }

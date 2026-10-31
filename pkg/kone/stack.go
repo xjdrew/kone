@@ -2,6 +2,7 @@ package kone
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -54,6 +55,9 @@ func (t *supervisedTun) Read(p []byte) (int, error) {
 	}
 	defer t.ioTasks.Done()
 	n, err := t.Tun.Read(p)
+	if n > 0 && n <= len(p) {
+		tracePacket(t.ctx, "read", p[:n])
+	}
 	t.report(err)
 	return n, err
 }
@@ -70,9 +74,30 @@ func (t *supervisedTun) Write(p []byte) (int, error) {
 	defer t.ioTasks.Done()
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
+	tracePacket(t.ctx, "write", p)
 	n, err := t.Tun.Write(p)
 	t.report(err)
 	return n, err
+}
+
+// Debug only packet headers. Payloads can contain credentials or application
+// data and must never enter diagnostic logs.
+func tracePacket(ctx context.Context, direction string, packet []byte) {
+	if !slog.Default().Enabled(ctx, slog.LevelDebug) {
+		return
+	}
+	if len(packet) >= singtun.PacketOffset {
+		packet = packet[singtun.PacketOffset:]
+	}
+	fields := []any{"direction", direction, "bytes", len(packet)}
+	if len(packet) >= 20 && packet[0]>>4 == 4 {
+		fields = append(fields, "source", net.IP(packet[12:16]), "destination", net.IP(packet[16:20]), "protocol", packet[9])
+		header := int(packet[0]&15) * 4
+		if header >= 20 && len(packet) >= header+20 && packet[9] == 6 {
+			fields = append(fields, "source_port", binary.BigEndian.Uint16(packet[header:]), "destination_port", binary.BigEndian.Uint16(packet[header+2:]), "tcp_flags", packet[header+13])
+		}
+	}
+	slog.DebugContext(ctx, "TUN packet", fields...)
 }
 
 type singStack struct {
