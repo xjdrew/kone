@@ -33,7 +33,7 @@ cp configs/kone.example.toml config.toml
 sudo ./dist/kone -config config.toml
 ```
 
-On Windows, build `dist/kone.exe` and run it from an administrator terminal. See [Windows setup](docs/windows/README.md).
+On Windows, build `dist/kone.exe`. Normal startup validates the configuration and requests UAC elevation when needed, handing off to a visible administrator window. Read-only flags do not request elevation; services/headless callers can use `-no-elevate`. Smart App Control trust is separate from UAC. See [Windows setup](docs/windows/README.md).
 
 `-check` validates configuration without creating a TUN device or changing routes. `-version` prints the version and exits successfully. `-debug` overrides the configured log level. Logs are structured text or JSON on stderr; CLI results go to stdout.
 
@@ -72,7 +72,7 @@ go test ./pkg/kone -run '^$' -fuzz '^FuzzParseConfig$' -fuzztime 15s
 
 CI runs native race tests, non-decreasing PR coverage, cross-platform builds, dependency checks and container smoke tests. Privileged acceptance exercises TUN lifecycle, route ownership, reload, shutdown, Windows Wintun and traffic from a separate LAN client. Real Raspberry Pi throughput, suspend/resume and multi-VPN coexistence still need deployment-specific testing.
 
-See [dependency decisions and remaining work](docs/engineering.md), [Raspberry Pi deployment](docs/guides/how-to-use-with-raspberry-pi.md), and [Docker deployment](deploy/docker/README.md). Older network recipes are retained under `docs/guides` as historical references.
+See [product requirements and roadmap](docs/features.md), [management UI requirements](docs/management-ui-requirements.md), [dependency decisions and remaining work](docs/engineering.md), [Raspberry Pi deployment](docs/guides/how-to-use-with-raspberry-pi.md), and [Docker deployment](deploy/docker/README.md). Older network recipes are retained under `docs/guides` as historical references.
 
 ## License
 
