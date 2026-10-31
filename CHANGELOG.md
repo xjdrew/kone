@@ -13,7 +13,7 @@
 - Import verified GeoIP datasets and restore the previous version.
 - Update built-in IPv4 country data to DB-IP Country Lite October 2026.
 - Show verified local process ownership where the operating system allows it.
-- Support optional IPv6 capture on Linux.
+- Support optional IPv6 capture on Linux and Windows.
 - Request a separate Windows network helper when capture needs administrator permission.
 - Control capture from the Windows system tray.
 - Support expiring domain rules and disabled proxy outbounds.
@@ -29,6 +29,7 @@
 - Refresh expired DNS addresses and CNAME routing decisions without changing active connections.
 - Offer the last valid settings for repair when the saved profile is damaged.
 - Honor explicit direct domain rules before later default policies.
+- Preserve existing macOS routes when capture startup fails.
 
 # 2026/10/31
 

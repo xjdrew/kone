@@ -305,7 +305,7 @@ func testWindowsIPv6Traffic(t *testing.T, stack string) {
 	<-ready
 	cfg.DNS.Servers = []string{upstream.LocalAddr().String()}
 	cfg.Outbounds = []kone.OutboundConfig{{Name: "socks", URL: socks}, {Name: "ss-tcp", URL: "ss://" + url.UserPassword("aes-128-gcm", "interop-password").String() + "@" + ssTCP}, {Name: "ss-udp", URL: "ss://" + url.UserPassword("chacha20-ietf-poly1305", "interop-password").String() + "@" + ssUDP}, {Name: "http", URL: proxy.URL}}
-	cfg.Rule = []kone.RuleConfig{{Schema: "DOMAIN", Pattern: "socks6.example", Outbound: "socks"}, {Schema: "DOMAIN", Pattern: "ss6.example", Protocol: "tcp", Outbound: "ss-tcp"}, {Schema: "DOMAIN", Pattern: "ss6.example", Protocol: "udp", Outbound: "ss-udp"}, {Schema: "FINAL", Outbound: "http"}}
+	cfg.Rule = []kone.RuleConfig{{Schema: "DOMAIN", Pattern: "socks6.example", Outbound: "socks"}, {Schema: "DOMAIN", Pattern: "ss6.example", Protocol: "tcp", Outbound: "ss-tcp"}, {Schema: "DOMAIN", Pattern: "ss6.example", Protocol: "udp", Outbound: "ss-udp"}, {Schema: "IP-CIDR6", Pattern: "fd7a:205::/120", Outbound: "socks"}, {Schema: "FINAL", Outbound: "http"}}
 	one, stop, done := windowsIPv6Start(t, cfg)
 	select {
 	case <-one.Ready():
@@ -342,11 +342,23 @@ func testWindowsIPv6Traffic(t *testing.T, stack string) {
 			require.Equal(t, payload, response)
 		}
 	}
-	for _, expected := range []string{"tcp", "udp"} {
+	for _, network := range []string{"tcp6", "udp6"} {
+		connection, err := net.DialTimeout(network, "[fd7a:205::9]:443", 5*time.Second)
+		require.NoError(t, err)
+		connection.SetDeadline(time.Now().Add(5 * time.Second))
+		payload := []byte("literal IPv6 routed SOCKS echo")
+		_, err = connection.Write(payload)
+		require.NoError(t, err)
+		response := make([]byte, len(payload))
+		_, err = io.ReadFull(connection, response)
+		connection.Close()
+		require.NoError(t, err)
+		require.Equal(t, payload, response)
+	}
+	for _, expected := range []windowsSOCKSSeen{{"tcp", "socks6.example"}, {"udp", "socks6.example"}, {"tcp", "fd7a:205::9"}, {"udp", "fd7a:205::9"}} {
 		select {
 		case seen := <-socksSeen:
-			require.Equal(t, expected, seen.protocol)
-			require.Equal(t, "socks6.example", seen.hostname)
+			require.Equal(t, expected, seen)
 		case <-time.After(time.Second):
 			t.Fatal("SOCKS peer did not observe the remote business domain")
 		}
@@ -414,17 +426,22 @@ func testWindowsIPv6Traffic(t *testing.T, stack string) {
 	require.Equal(t, int32(1), actualQueries.Load(), "direct Fake-AAAA resolves once through the original IPv6 loopback upstream")
 	require.True(t, one.DNSStatus().IPv6)
 	records := one.TrafficSnapshot(kone.TrafficQuery{}).Records
-	require.GreaterOrEqual(t, len(records), 7)
+	require.GreaterOrEqual(t, len(records), 9)
 	for _, record := range records {
-		require.NotEmpty(t, record.Domain)
 		host, _, err := net.SplitHostPort(record.Source)
 		require.NoError(t, err)
 		require.NotNil(t, net.ParseIP(host))
 		require.Nil(t, net.ParseIP(host).To4())
-		require.True(t, strings.HasPrefix(record.FakeIP, "fd7a:204:"))
-		if record.Domain == "direct6.example" {
+		if record.Destination == "[fd7a:205::9]:443" {
+			require.Empty(t, record.Domain)
+			require.Empty(t, record.FakeIP)
+			require.Equal(t, "[fd7a:205::9]:443", record.RealDestination)
+		} else if record.Domain == "direct6.example" {
+			require.True(t, strings.HasPrefix(record.FakeIP, "fd7a:204:"))
 			require.Equal(t, net.JoinHostPort("::1", directPort), record.RealDestination)
 		} else {
+			require.NotEmpty(t, record.Domain)
+			require.True(t, strings.HasPrefix(record.FakeIP, "fd7a:204:"))
 			require.Empty(t, record.RealDestination, "a remote resolver does not expose the real business IP")
 		}
 	}

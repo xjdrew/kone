@@ -11,11 +11,11 @@ import (
 
 // IPv6 capture remains opt-in and is admitted only on platforms with an owned
 // address/route implementation and the corresponding native CI acceptance.
-func SupportsIPv6Capture() bool { return runtime.GOOS == "linux" }
+func SupportsIPv6Capture() bool { return runtime.GOOS == "linux" || runtime.GOOS == "windows" }
 
 func validateIPv6Platform(cfg CoreConfig) error {
-	if cfg.IPv6Network != "" && !SupportsIPv6Capture() && !ipv6AcceptanceEnabled() {
-		return errors.New("IPv6 capture is currently supported only on Linux; Windows/macOS IPv6 capture is not yet validated")
+	if cfg.IPv6Network != "" && !SupportsIPv6Capture() {
+		return errors.New("IPv6 capture is currently supported only on Linux and Windows; macOS IPv6 capture is not yet validated")
 	}
 	return nil
 }

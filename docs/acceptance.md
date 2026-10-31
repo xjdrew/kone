@@ -21,12 +21,12 @@
 | CFG-01/02/03/04 | 无参数先打开管理，用户目录持久化，单 TUN 元数据，命名出站及稳定 ID/启停，凭据保留/替换/清除，严格 TOML 导入/默认恢复 | [存储与导入](../pkg/control/tasks_test.go)、[CLI](../test/integration/cli_test.go)、[管理端到端](../test/integration/control_test.go) | 禁用代理后新连接明确拒绝，不执行直连/UDP 回退；损坏原件保留，现有连接保留其原快照 |
 | UI-01/02/03 | 八页面离线 Web、状态/错误/权限、显式副作用、Host/Origin/会话/CSRF 保护 | [API 安全](../pkg/control/server_test.go)、[前端单元](../web/test)、[浏览器](../web/e2e/console.spec.js) | 前端禁用按钮之外还有服务端权限检查；请求成功不代替运行结果 |
 | UI-04 | 原生采样路径桑基、守恒、其他合并、固定窗口/anchor/实际 flow IDs 分块钻取、等价路径列表 | [图形单测](../web/test/graph.test.mjs)、[观察](../pkg/kone/observation_test.go)、[高基数钻取](../web/e2e/console.spec.js) | 明细有展示/保留上限并提示；无流量不放生产演示数据；代理端点不当最终目的 |
-| UI-05 | 320px 八页面；360/390/430/768/1024px 首页；触控、键盘、横向图形平移和显式缩放 | [浏览器布局/截图](../web/e2e/console.spec.js)、[兼容基线](../web/vite.config.js) | 本轮自动化使用桌面 Chromium；iOS Safari、Android Chrome 真机横竖屏/锁屏/键盘仍需设备验收 |
+| UI-05 | 320px 八页面；360/390/430/768/1024px 首页；Chromium 全套及 WebKit/Firefox 关键页面、触控钻取、只读与弱网恢复项目 | [浏览器布局/截图](../web/e2e/console.spec.js)、[引擎与视口](../web/playwright.config.js)、[构建目标](../web/vite.config.js) | 按 engine/viewport 留存报告；自动化引擎不等于真实 iOS/Android，横竖屏/锁屏/软键盘仍需设备验收 |
 | UI-06 | 默认回环；主机显式私网 HTTPS、本地 CA、短期配对、只读/管理与撤销 | [LAN/TLS](../pkg/control/lan_test.go)、[会话](../pkg/control/server_test.go)、[访问说明](../README.md) | 不自动安装根证书、修改防火墙或开放路由器；手机证书信任/网络隔离需真机检查 |
 | DESK-01/02 | 默认管理、单实例和受控停机，三平台应用/安装包链路 | [CLI 与管理](../test/integration/control_test.go)、[打包工作流](../.github/workflows/go.yml)、[发布矩阵](releases.md) | 平台托盘、权限窗口与干净机器升级/卸载以具体平台验收为准；未签名/未公证不冒充完整发行体验 |
 | PERF-01/02 | 规则、DNS、GeoIP、观察开关/会话/并发管理查询与高基数容量基线，system/mixed 构建留档 | [基线说明](performance.md)、[核心基准](../pkg/kone/core_benchmark_test.go)、[观察基准](../pkg/kone/observation_benchmark_test.go) | 这是核心 CPU/分配及合成计数，不是 TUN 带宽或 RTT；真实硬件/长时转发需独立实验 |
 | DATA-01 | 有界本地文件、可信 SHA-256、来源许可版本、原子保存、回退与明确下次加载 | [GeoIP 数据](../pkg/geoip/database_test.go)、[控制 API](../pkg/control/geoip_test.go)、[端到端](../test/integration/geoip_test.go)、[界面校验](../web/e2e/console.spec.js) | 不根据输入 URL 自动下载；保存前需暂停，不替换旧流持有的数据快照 |
-| PROTO-01 | SOCKS5 原生 UDP、保留 direct/reject/显式回退；Linux 可选 IPv6 A/AAAA、规则、TCP/UDP、清理 | [IPv6 验收](../test/integration/ipv6_linux_test.go)、[IPv6 范围](ipv6.md)、[UDP 传输](../pkg/proxy) | Windows/macOS IPv6 启用明确拒绝；ICMP、任意分片/扩展头不在未验收时承诺 |
+| PROTO-01 | SOCKS5 原生 UDP、保留 direct/reject/显式回退；Linux/Windows 可选 IPv6 A/AAAA、规则、TCP/UDP、清理 | [Linux IPv6](../test/integration/ipv6_linux_test.go)、[Windows IPv6](../test/integration/ipv6_windows_test.go)、[IPv6 范围](ipv6.md)、[UDP 传输](../pkg/proxy) | macOS IPv6 启用明确拒绝；ICMP、任意分片/扩展头不在未验收时承诺 |
 | PROTO-02 | 三种 Shadowsocks AEAD2017 方法，TCP/原生 UDP、认证与篡改拒绝 | [独立协议互操作](../test/integration/shadowsocks_test.go)、[出站说明](configuration.md) | 不支持旧流密码、AEAD-2022、插件；实际第三方服务端版本仍需部署互操作 |
 | REL-01/02/03 | 每 first-parent master SHA 独立全门禁，版本/源码/工件绑定，开发唯一预发布、稳定升格、撤回与回退 | [发布逻辑单测](../test/release/release.test.mjs)、[发布流程](../.github/workflows/release.yml)、[操作说明](releases.md) | PR 只验证打包，不产生生产 Release；签名/公证和真实发布由合并后授权流程验收 |
 

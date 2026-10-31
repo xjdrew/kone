@@ -514,7 +514,7 @@ test("@compat touch/keyboard Sankey drilldown preserves exact sample and returns
   const node = page
     .locator(".sankey-node")
     .filter({ hasText: "example.com:443" });
-  if (testInfo.project.use.hasTouch) await node.tap();
+  if (testInfo.project.use.hasTouch) await node.locator("rect").tap();
   else {
     await node.focus();
     await page.keyboard.press("Enter");
@@ -652,11 +652,11 @@ test("@compat mobile 320px all pages retain navigation, editing, and no body ove
         name: "IP Geolocation by DB-IP",
       }),
     ).toBeVisible();
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth,
-      ),
-    ).toBe(true);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth), {
+        message: `Horizontal body overflow on ${name} at 320px`,
+      })
+      .toBeLessThanOrEqual(320);
   }
   await page.locator("#menu-toggle").click();
   await page.locator(".nav-link[data-page=home]").click();
@@ -866,7 +866,7 @@ for (const width of [360, 390, 430, 768, 1024])
     }
   });
 
-test("Linux IPv6 is an explicit saved opt-in and unavailable platforms cannot enable it", async ({
+test("IPv6 is an explicit saved opt-in and unavailable platforms cannot enable it", async ({
   page,
 }) => {
   const data = await mount(page, { ipv6: true });

@@ -88,7 +88,9 @@ func TestSystemGatewayLANFullCapture(t *testing.T) {
 	cfg.Core.OutboundInterface = "wan0"
 	cfg.DNS.Servers = []string{fmt.Sprintf("203.0.113.53:%d", dnsPort)}
 	cfg.Outbounds = append(cfg.Outbounds, kone.OutboundConfig{Name: "Gateway", URL: fmt.Sprintf("http://203.0.113.2:%d", proxyPort)})
-	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR", Pattern: "203.0.113.9/32", Outbound: kone.BuiltinDirect}, {Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Outbound: kone.BuiltinReject}, {Schema: "FINAL", Outbound: "Gateway"}}
+	// Keep the domain proxy policy earlier than the literal-IP direct exception,
+	// including after explicit UDP fallback has populated real DNS evidence.
+	cfg.Rule = []kone.RuleConfig{{Schema: "DOMAIN", Pattern: "gateway.example", Outbound: "Gateway"}, {Schema: "IP-CIDR", Pattern: "203.0.113.9/32", Outbound: kone.BuiltinDirect}, {Schema: "IP-CIDR", Pattern: "198.51.100.0/24", Outbound: kone.BuiltinReject}, {Schema: "FINAL", Outbound: "Gateway"}}
 	one, stop, done := systemStart(t, cfg)
 	// Exercise default denial, explicit fallback, then removal by hot reload.
 	// Each client opens new UDP sessions; established sessions retain snapshots.

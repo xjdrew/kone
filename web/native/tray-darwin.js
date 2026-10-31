@@ -24,7 +24,6 @@ function normalizeTrayState(input) {
 function run(argv) {
   ObjC.import("Foundation");
   ObjC.import("AppKit");
-  ObjC.import("CoreGraphics");
   ObjC.bindFunction("exit", ["void", ["int"]]);
   ObjC.bindFunction("fcntl", ["int", ["int", "int", "int"]]);
   ObjC.bindFunction("read", ["long", ["int", "void *", "unsigned long"]]);
@@ -38,15 +37,8 @@ function run(argv) {
   var item;
   var flags = -1;
   try {
-    // CoreGraphics returns a CFDictionaryRef, not an Objective-C wrapper.
-    var session = ObjC.deepUnwrap(
-      ObjC.castRefToObject($.CGSessionCopyCurrentDictionary()),
-    );
-    if (!session || session.kCGSessionOnConsoleKey !== true) {
-      write(errors, "KONE_TRAY_UNAVAILABLE: no console WindowServer session");
-      $.exit(77);
-      return;
-    }
+    // A background/SSH session is not proof that AppKit is unavailable. Ask
+    // AppKit itself, without automating other apps or changing OS settings.
     var app = $.NSApplication.sharedApplication;
     app.setActivationPolicy($.NSApplicationActivationPolicyAccessory);
     if (Number($.NSScreen.screens.count) === 0) {
@@ -134,6 +126,14 @@ function run(argv) {
     entry("exit", "退出 KONE", "exit:");
     bar = $.NSStatusBar.systemStatusBar;
     item = bar.statusItemWithLength($.NSVariableStatusItemLength);
+    if (item.isNil() || item.button.isNil()) {
+      write(
+        errors,
+        "KONE_TRAY_UNAVAILABLE: AppKit could not create a status item",
+      );
+      $.exit(77);
+      return;
+    }
     item.menu = menu;
     koneTrayObjects = [target, menu, item];
     function update(input) {
@@ -233,11 +233,21 @@ function run(argv) {
       }
     }
   } catch (error) {
-    write(
-      errors,
-      "KONE_TRAY_ERROR: " +
-        String(error.message || "native tray failure").slice(0, 240),
-    );
+    var reason = String(error.message || "native tray failure");
+    if (
+      /cannot (?:connect|communicate).*WindowServer|WindowServer.*(?:unavailable|connection)|CGSConnection.*(?:fail|invalid)/i.test(
+        reason,
+      )
+    ) {
+      write(
+        errors,
+        "KONE_TRAY_UNAVAILABLE: WindowServer rejected the AppKit connection",
+      );
+      if (item && bar) bar.removeStatusItem(item);
+      $.exit(77);
+      return;
+    }
+    write(errors, "KONE_TRAY_ERROR: " + reason.slice(0, 240));
     if (item && bar) bar.removeStatusItem(item);
     $.exit(1);
   } finally {

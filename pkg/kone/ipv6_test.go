@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"runtime"
 	"testing"
 	"time"
 
@@ -32,9 +31,14 @@ func TestIPv6ConfigurationBoundsAndPlatformAdmission(t *testing.T) {
 	configuration, err := ParseConfig([]byte("[core]\nipv6-network='fd7a:203::1/120'\n[[rules]]\ntype='IP-CIDR6'\npattern='2001:db8::/64'\noutbound='reject'"))
 	require.NoError(t, err)
 	require.Equal(t, "fd7a:203::1/120", configuration.Core.IPv6Network)
-	if runtime.GOOS != "linux" {
+	if !SupportsIPv6Capture() {
 		_, err := FromConfig(configuration)
-		require.ErrorContains(t, err, "only on Linux")
+		require.ErrorContains(t, err, "only on Linux and Windows")
+	} else {
+		one, err := FromConfig(configuration)
+		require.NoError(t, err)
+		require.True(t, one.DNSStatus().IPv6)
+		require.NoError(t, one.Close())
 	}
 	for _, network := range []string{"2001:db8::1/64", "fd7a:203::/64", "fd7a:203::1/63", "fd7a:203::1/121", "192.0.2.1/24"} {
 		_, err := ParseConfig([]byte("[core]\nipv6-network='" + network + "'"))

@@ -198,11 +198,11 @@ func darwinConnectProxy(t *testing.T) *httptest.Server {
 
 func darwinFakeAddress(t *testing.T, cfg *kone.KoneConfig, name string) net.IP {
 	t.Helper()
-	host, _, err := net.ParseCIDR(cfg.Core.Network)
-	require.NoError(t, err)
 	query := new(dns.Msg)
 	query.SetQuestion(name, dns.TypeA)
-	response, _, err := (&dns.Client{Timeout: 3 * time.Second}).Exchange(query, fmt.Sprintf("%s:%d", host, cfg.DNS.ListenPort))
+	// Darwin owns a wildcard DNS listener, reached through the loopback resolver
+	// endpoint. Its point-to-point TUN address is not a kernel-local DNS socket.
+	response, _, err := (&dns.Client{Timeout: 3 * time.Second}).Exchange(query, fmt.Sprintf("127.0.0.1:%d", cfg.DNS.ListenPort))
 	require.NoError(t, err)
 	require.Len(t, response.Answer, 1)
 	answer, ok := response.Answer[0].(*dns.A)
@@ -324,6 +324,11 @@ func TestSystemDarwinUTUN(t *testing.T) {
 					err := darwinWait(t, done)
 					require.Error(t, err)
 					require.NotContains(t, err.Error(), "fault reservation")
+					if kind == "dns" {
+						require.Contains(t, err.Error(), "DNS listener:")
+					} else {
+						require.Contains(t, err.Error(), "manager listener:")
+					}
 					require.NoError(t, one.Close())
 					darwinAssertOwnedGone(t, one)
 				})
@@ -336,7 +341,9 @@ func TestSystemDarwinUTUN(t *testing.T) {
 				t.Cleanup(func() { one.Close() })
 				done := make(chan error, 1)
 				go func() { done <- one.Run(context.Background()) }()
-				require.Error(t, darwinWait(t, done))
+				err := darwinWait(t, done)
+				require.Error(t, err)
+				require.Contains(t, err.Error(), "configure TUN:")
 				require.NoError(t, one.Close())
 				darwinAssertOwnedGone(t, one)
 				prefix := netip.MustParsePrefix(cfg.Core.Network)

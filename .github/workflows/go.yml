@@ -289,7 +289,7 @@ jobs:
       - name: Regress upstream PE loader pointer bounds
         run: go test -race -count=1 github.com/sagernet/sing-tun/internal/wintun github.com/sagernet/sing-tun/internal/wintun/memmod
       - name: Test embedded Wintun without TAP installation
-        run: go test -tags with_gvisor,kone_ipv6_acceptance -race -failfast -count=1 -timeout 12m -run '^TestSystemWindows(Wintun|IPv6Wintun)$' -v ./test/integration
+        run: go test -tags with_gvisor -race -failfast -count=1 -timeout 12m -run '^TestSystemWindows(Wintun|IPv6Wintun)$' -v ./test/integration
 
   mac-system:
     name: macOS utun lifecycle and traffic

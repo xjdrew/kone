@@ -72,6 +72,8 @@ input,
 select,
 textarea {
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 44px;
   background: var(--bg);
   border: 1px solid var(--line);
@@ -703,7 +705,7 @@ strong {
 }
 .form-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px;
 }
 .field {
@@ -753,9 +755,11 @@ strong {
 }
 .editor-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
 }
 .editor-item {
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 19px;
@@ -770,6 +774,8 @@ strong {
 }
 .editor-item h3 {
   margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .builtin-grid {
   display: grid;

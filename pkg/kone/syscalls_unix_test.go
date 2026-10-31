@@ -23,6 +23,13 @@ func TestUnixNetworkRollbackCommands(t *testing.T) {
 		}
 		return nil, nil
 	}}
+	n.routes = unixTestRouteOperations{add: func(context.Context, Device, *net.IPNet) (Cleanup, error) {
+		if fail {
+			return nil, errors.New("injected route failure")
+		}
+		calls = append(calls, "kernel route add")
+		return func(context.Context) error { calls = append(calls, "kernel route delete"); return nil }, nil
+	}}
 	cleanup, err := n.Configure(context.Background(), newMemoryDevice(), CoreConfig{Network: "10.192.0.1/16"})
 	require.NoError(t, err)
 	require.NoError(t, cleanup(context.Background()))
@@ -51,4 +58,12 @@ func TestUnixNetworkRollbackCommands(t *testing.T) {
 	cancel()
 	_, err = n.Open(ctx, CoreConfig{})
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+type unixTestRouteOperations struct {
+	add func(context.Context, Device, *net.IPNet) (Cleanup, error)
+}
+
+func (r unixTestRouteOperations) AddRoute(ctx context.Context, device Device, prefix *net.IPNet) (Cleanup, error) {
+	return r.add(ctx, device, prefix)
 }

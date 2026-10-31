@@ -85,7 +85,7 @@ servers = ["192.168.1.53"]
 - 支持 `http://host:port`、`https://host:port`、`socks5://host:port`、`ss://method:password@host:port`，端口必须显式提供；前三种 URL 不允许路径、查询或 fragment。SS 允许 SIP002 的可选末尾 `/` 和标签，支持 Base64URL 编码的用户信息；不支持插件查询参数。IPv6 主机使用方括号。
 - 代理出站使用 `name`、`url` 和可选的 `udp-fallback`；旧的出站 `type` 字段应删除，否则会报未知配置键。名称必须非空、唯一，不含控制字符或首尾空白，URL 必须合法；内置出站不能通过配置声明或覆盖。
 - 规则引用已配置的代理名或内置小写 `direct` / `reject`，引用区分大小写。`direct`、`reject` 及其大小写变体均不能用作代理名称。没有规则匹配时使用内置 `direct`。
-- 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 需要配置 `core.ipv6-network`，当前只允许 Linux 启动 IPv6 接管。
+- 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 需要配置 `core.ipv6-network`，当前支持 Linux/Windows 启动 IPv6 接管。
 - `DOMAIN-SUFFIX = example.com` 匹配自身和子域名，不匹配 `1example.com`。`DIRECT` CIDR 例外会保留规则优先级。
 
 原始域名、已知 CNAME 和已知 IP 的匹配共用配置中的规则顺序，选择最早的显式命中；后面的 `FINAL` 不会覆盖前面的显式 `DOMAIN direct`。受保护的代理端点绕过始终优先，没有显式命中时才使用默认 `direct`。没有真实 DNS 证据时只判断已知域名，不为了猜测地址规则而提前向本机解析器查询代理业务域名。
@@ -115,7 +115,7 @@ servers = ["192.168.1.53"]
 - `core.network` 的接口地址之后一个地址供协议栈使用，两者均不会分配为 Fake-IP。该地址必须保留至少一个后继主机地址。
 - 旧 `tcp-listen-port`、`udp-listen-port`、`tcp-nat-port-start/end`、`udp-nat-port-start/end` 已移除，旧配置必须删除这些键，严格校验会明确报错。内部监听和会话映射由 sing-tun 分配。
 
-IPv6 默认关闭，Linux 可通过 `core.ipv6-network` 显式启用；`core.auto-route6` 独立控制 IPv6 全局路由，需要指定真实出口。Windows/macOS 在 IPv6 后端未完成平台验收前明确拒绝启用。采用 `mixed` 不改变出站协议能力。IPv6 细节见 [IPv6 配置与边界](ipv6.md)，LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
+IPv6 默认关闭，Linux/Windows 可通过 `core.ipv6-network` 显式启用；`core.auto-route6` 独立控制 IPv6 全局路由，需要指定真实出口。macOS 在 IPv6 后端未完成平台验收前明确拒绝启用。采用 `mixed` 不改变出站协议能力。IPv6 细节见 [IPv6 配置与边界](ipv6.md)，LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
 
 ## UDP 策略与显式回退
 
