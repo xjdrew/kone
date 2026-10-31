@@ -29,7 +29,7 @@ func TestShutdownCancelsPendingFlowProxyDial(t *testing.T) {
 	one := lifecycleEngine(t, n, sockets)
 	cfg := one.Snapshot().Config
 	setTestOutbound(cfg, "office", "http://"+proxy.Addr().String())
-	cfg.Rule = []RuleConfig{{Schema: "FINAL", Outbound: "office"}}
+	cfg.Rule = append(cfg.Rule, RuleConfig{Schema: "FINAL", Outbound: "office"})
 	require.NoError(t, one.Reload(cfg))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
