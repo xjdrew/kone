@@ -52,6 +52,11 @@ func explainWithRule(rule *Rule, outbounds *Outbounds, target, protocol string, 
 	}
 	decision := rule.Decide(value, protocol, port)
 	decision.EffectiveOutbound = decision.Outbound
+	if err := outbounds.CheckEnabled(decision.Outbound); err != nil {
+		decision.Reason = err.Error()
+		decision.EffectiveOutbound = ""
+		return decision, err
+	}
 	if protocol == "udp" {
 		effective, err := outbounds.UDPOutbound(decision.Outbound)
 		if err != nil {

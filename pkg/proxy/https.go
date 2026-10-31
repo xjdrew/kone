@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"net"
 	"net/url"
+	"time"
 )
 
 type tlsDialer struct {
@@ -25,7 +26,16 @@ func (h *tlsDialer) Dial(network, addr string) (net.Conn, error) {
 	}
 	tlsConn := tls.Client(conn, &tls.Config{
 		ServerName: hostname(addr),
+		MinVersion: tls.VersionTLS12,
 	})
+	if err := tlsConn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		conn.Close()
+		return nil, atStage(StageTLS, err)
+	}
+	if err := tlsConn.Handshake(); err != nil {
+		conn.Close()
+		return nil, atStage(StageTLS, err)
+	}
 	return tlsConn, nil
 }
 

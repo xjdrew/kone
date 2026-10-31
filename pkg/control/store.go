@@ -4,6 +4,7 @@ package control
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -124,7 +125,21 @@ func cloneDocument(doc Document) Document {
 	return Document{Version: doc.Version, Config: cfg, Inbound: doc.Inbound}
 }
 
+func sameDocument(a, b Document) bool {
+	if a.Version != b.Version || a.Inbound != b.Inbound {
+		return false
+	}
+	left, errA := toml.Marshal(a.Config)
+	right, errB := toml.Marshal(b.Config)
+	return errA == nil && errB == nil && bytes.Equal(left, right)
+}
+
 func assignIDs(cfg *kone.KoneConfig) {
+	for i := range cfg.Outbounds {
+		if cfg.Outbounds[i].ID == "" {
+			cfg.Outbounds[i].ID = randomID("outbound")
+		}
+	}
 	for i := range cfg.Rule {
 		if cfg.Rule[i].ID == "" {
 			cfg.Rule[i].ID = randomID("rule")
@@ -133,6 +148,26 @@ func assignIDs(cfg *kone.KoneConfig) {
 			cfg.Rule[i].Source = "user"
 		}
 	}
+}
+
+// Older managed profiles had no outbound/rule IDs. Derive repeatable identities
+// while reading, then persist them on the next explicit save. Random IDs here
+// would make two reads of the same disk revision look like conflicting edits.
+func assignReadIDs(cfg *kone.KoneConfig) {
+	for i := range cfg.Outbounds {
+		if cfg.Outbounds[i].ID == "" {
+			digest := sha256.Sum256([]byte("outbound\x00" + cfg.Outbounds[i].Name))
+			cfg.Outbounds[i].ID = "outbound-" + hex.EncodeToString(digest[:8])
+		}
+	}
+	for i := range cfg.Rule {
+		if cfg.Rule[i].ID == "" {
+			rule := cfg.Rule[i]
+			digest := sha256.Sum256([]byte(fmt.Sprintf("rule\x00%d\x00%s\x00%s\x00%s\x00%s\x00%v\x00%s", i, rule.Schema, rule.Pattern, rule.Outbound, rule.Protocol, rule.Ports, rule.ExpiresAt)))
+			cfg.Rule[i].ID = "rule-" + hex.EncodeToString(digest[:8])
+		}
+	}
+	assignIDs(cfg)
 }
 
 func prepareDocument(request SaveRequest, current Document) (Document, error) {
@@ -158,6 +193,9 @@ func prepareDocument(request SaveRequest, current Document) (Document, error) {
 			}
 		}
 		u, _ := url.Parse(o.URL)
+		if o.ID == "" && old != nil {
+			o.ID = old.ID
+		}
 		if action.Action == "clear" {
 			u.User = nil
 			o.URL = u.String()
@@ -269,7 +307,7 @@ func readDocument(path string) (Document, error) {
 	if err != nil {
 		return Document{}, errors.New("saved configuration is invalid; restore a backup or save a corrected configuration")
 	}
-	assignIDs(cfg)
+	assignReadIDs(cfg)
 	return Document{stored.Version, cfg, stored.Inbound}, nil
 }
 
@@ -290,6 +328,9 @@ func safeMessage(err error, cfg *kone.KoneConfig) string {
 		for _, outbound := range cfg.Outbounds {
 			u, e := url.Parse(outbound.URL)
 			if e == nil && u.User != nil {
+				if raw := u.User.String(); raw != "" {
+					message = strings.ReplaceAll(message, raw, "REDACTED")
+				}
 				if password, ok := u.User.Password(); ok && password != "" {
 					message = strings.ReplaceAll(message, password, "REDACTED")
 				}

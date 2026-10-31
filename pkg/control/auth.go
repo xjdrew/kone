@@ -176,7 +176,7 @@ func (c *Controller) validOrigin(r *http.Request) bool {
 	lan := c.lan
 	c.mu.Unlock()
 	allowed := false
-	if local {
+	if local && r.TLS == nil && localRemote(r) {
 		if listen == "" {
 			allowed = true
 		} else {
@@ -184,7 +184,7 @@ func (c *Controller) validOrigin(r *http.Request) bool {
 			allowed = port == boundPort
 		}
 	}
-	if !allowed && r.TLS != nil && lan != nil {
+	if r.TLS != nil && lan != nil {
 		allowed = r.Host == lan.address
 	}
 	if !allowed {

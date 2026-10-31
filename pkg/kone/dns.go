@@ -25,20 +25,28 @@ var ErrResolve = errors.New("DNS resolution failed")
 var ErrDNSBusy = errors.New("DNS resolver concurrency limit reached")
 
 type Dns struct {
-	one         *One
-	server      *dns.Server
-	tcpServer   *dns.Server
-	client      *dns.Client
-	tcpClient   *dns.Client
-	nameservers []string
-	routes      []DNSRouteConfig
-	ctx         context.Context
-	started     atomic.Bool
-	tcpStarted  atomic.Bool
-	history     *dnsHistory
-	cache       *dnsResponseCache
-	pending     chan struct{}
-	ipv6        *ipv6DNSServers
+	one           *One
+	server        *dns.Server
+	tcpServer     *dns.Server
+	client        *dns.Client
+	tcpClient     *dns.Client
+	nameservers   []string
+	routes        []DNSRouteConfig
+	ctx           context.Context
+	started       atomic.Bool
+	tcpStarted    atomic.Bool
+	history       *dnsHistory
+	cache         *dnsResponseCache
+	pending       chan struct{}
+	ipv6          *ipv6DNSServers
+	routeClients  map[string]dnsRouteClients
+	systemContext DNSSystemContext
+	forceTCP      bool
+}
+
+type dnsRouteClients struct {
+	udp, tcp *dns.Client
+	device   string
 }
 
 func (d *Dns) Resolve(domain string) (*dns.Msg, error) {
@@ -91,12 +99,23 @@ type dnsLookupResult struct {
 	server, transport string
 }
 
-func (d *Dns) lookup(ctx context.Context, server string, r *dns.Msg) dnsLookupResult {
+func (d *Dns) lookup(ctx context.Context, server string, r *dns.Msg, routeKey ...string) dnsLookupResult {
 	result := dnsLookupResult{server: server, transport: "udp"}
-	result.msg, result.err = d.exchange(ctx, d.client, server, r)
-	if result.err == nil && result.msg != nil && result.msg.Truncated {
+	udp, tcp := d.client, d.tcpClient
+	if len(routeKey) > 0 {
+		if selected, ok := d.routeClients[routeKey[0]]; ok {
+			udp, tcp = selected.udp, selected.tcp
+		}
+	}
+	if d.forceTCP {
 		result.transport = "tcp"
-		result.msg, result.err = d.exchange(ctx, d.tcpClient, server, r)
+		result.msg, result.err = d.exchange(ctx, tcp, server, r)
+	} else {
+		result.msg, result.err = d.exchange(ctx, udp, server, r)
+	}
+	if !d.forceTCP && result.err == nil && result.msg != nil && result.msg.Truncated {
+		result.transport = "tcp"
+		result.msg, result.err = d.exchange(ctx, tcp, server, r)
 	}
 	if result.err == nil && (result.msg == nil || result.msg.Truncated) {
 		result.err = errors.New("truncated DNS response after TCP retry")
@@ -115,10 +134,13 @@ func (d *Dns) resolve(parent context.Context, r *dns.Msg) (*dns.Msg, error) {
 		return nil, err
 	}
 	meta, _ := parent.Value(dnsMetaKey{}).(*dnsQueryMeta)
-	servers, route := d.selectResolvers(r.Question[0].Name)
+	servers, route, routeKey, routeErr := d.selectResolverRoute(r.Question[0].Name)
 	if meta != nil {
 		meta.Route = route
 		meta.Cache = "miss"
+	}
+	if routeErr != nil {
+		return nil, routeErr
 	}
 	key := dnsCacheKey(r, route)
 	if msg := d.cache.get(key, r.Id, time.Now()); msg != nil {
@@ -126,6 +148,7 @@ func (d *Dns) resolve(parent context.Context, r *dns.Msg) (*dns.Msg, error) {
 		if meta != nil {
 			meta.Cache = "hit"
 			meta.Upstream = "cache"
+			meta.ResolverInterface = ""
 		}
 		return msg, nil
 	}
@@ -144,6 +167,9 @@ func (d *Dns) resolve(parent context.Context, r *dns.Msg) (*dns.Msg, error) {
 		meta.AttemptedResolvers = append([]string(nil), servers...)
 		if len(servers) == 1 {
 			meta.Upstream, meta.UpstreamTransport = servers[0], "udp"
+			if d.forceTCP {
+				meta.UpstreamTransport = "tcp"
+			}
 		}
 	}
 	ctx, cancel := context.WithCancel(parent)
@@ -152,7 +178,7 @@ func (d *Dns) resolve(parent context.Context, r *dns.Msg) (*dns.Msg, error) {
 	results := make(chan dnsLookupResult, len(servers))
 	for _, server := range servers {
 		wg.Add(1)
-		go func(server string) { defer wg.Done(); results <- d.lookup(ctx, server, r) }(server)
+		go func(server string) { defer wg.Done(); results <- d.lookup(ctx, server, r, routeKey) }(server)
 	}
 	var negative *dnsLookupResult
 	var failures []error
@@ -160,6 +186,7 @@ func (d *Dns) resolve(parent context.Context, r *dns.Msg) (*dns.Msg, error) {
 		if meta != nil {
 			meta.Upstream = result.server
 			meta.UpstreamTransport = result.transport
+			meta.ResolverInterface = d.resolverInterface(routeKey, result.server)
 		}
 		d.cache.put(key, result.msg, time.Now())
 		return result.msg, nil
@@ -182,6 +209,7 @@ func (d *Dns) resolve(parent context.Context, r *dns.Msg) (*dns.Msg, error) {
 				if meta != nil {
 					meta.Upstream = result.server
 					meta.UpstreamTransport = result.transport
+					meta.ResolverInterface = d.resolverInterface(routeKey, result.server)
 				}
 				failures = append(failures, result.err)
 			}
@@ -314,7 +342,13 @@ func (d *Dns) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func NewDns(one *One, cfg DNSConfig) (*Dns, error) {
+	if cfg.SystemContext.RequireManual {
+		return nil, errors.New("system DNS context requires explicit dns.servers/dns.rules before capture")
+	}
 	d := &Dns{one: one, ctx: context.Background(), history: newDNSHistory(int(cfg.HistoryLimit), time.Duration(cfg.HistoryRetention)*time.Second), cache: newDNSResponseCache(int(cfg.CacheLimit)), pending: make(chan struct{}, 64)}
+	d.routeClients = map[string]dnsRouteClients{}
+	d.systemContext = cloneDNSSystemContext(cfg.SystemContext)
+	d.forceTCP = cfg.SystemContext.UseTCP
 	addr := net.JoinHostPort(fixTunIP(one.ip).String(), strconv.Itoa(int(cfg.ListenPort)))
 	makeServer := func(network string) *dns.Server {
 		return &dns.Server{Net: network, Addr: addr, Handler: d, UDPSize: int(cfg.PacketSize), ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
@@ -333,13 +367,31 @@ func NewDns(one *One, cfg DNSConfig) (*Dns, error) {
 		d.nameservers = append(d.nameservers, normalized)
 	}
 	for _, route := range cfg.Rules {
-		copy := DNSRouteConfig{Suffix: normalizeDNSSuffix(route.Suffix)}
+		copy := route
+		copy.Suffix = normalizeDNSSuffix(route.Suffix)
+		copy.Servers = nil
 		for _, server := range route.Servers {
 			normalized, err := normalizeDNSServer(server)
 			if err != nil {
 				return nil, err
 			}
 			copy.Servers = append(copy.Servers, normalized)
+		}
+		if copy.Interface != "" && !copy.Unavailable {
+			dialer, err := outboundDialer(CoreConfig{OutboundInterface: copy.Interface}, copy.Servers)
+			if err != nil {
+				if !copy.Automatic {
+					return nil, fmt.Errorf("DNS rule %s interface is unavailable: %w", copy.Suffix, err)
+				}
+				copy.Unavailable = true
+				copy.Reason = "discovered DNS interface is unavailable; no default/public fallback"
+				d.systemContext.Warnings = append(d.systemContext.Warnings, copy.Reason)
+			} else {
+				udp, tcp := *d.client, *d.tcpClient
+				udp.Dialer = dialer
+				tcp.Dialer = dialer
+				d.routeClients[dnsRouteKey(copy)] = dnsRouteClients{udp: &udp, tcp: &tcp, device: copy.Interface}
+			}
 		}
 		d.routes = append(d.routes, copy)
 	}

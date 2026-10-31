@@ -37,6 +37,10 @@ stack = "system"
 # [dns] 整段可省略；默认在启动前读取当前系统 DNS，用于真实域名解析。
 # 系统上游会固定到本次运行，规则热更新不会重读已指向 KONE 的网卡 DNS。
 # [dns]
+# Linux 可选：DNS 监听就绪后，使用 systemd-resolved 为本次新建 TUN 引导系统 DNS。
+# 需要系统已使用 resolved stub、可验证真实上游；只修改/恢复自有 link，不改 resolv.conf。
+# CLI 默认 false；管理模式 Linux 首次默认 true，可在界面明确关闭。Windows/macOS true 会阻断启用。
+# system = false
 # 上游 DNS 地址；省略或 [] 使用系统 DNS，不内置公共 DNS 作为回退。
 # 可指定 IPv4/IPv6 地址和端口，例如 ["1.1.1.1", "[2001:4860:4860::8888]:53"]。
 # 不得指向 KONE 虚拟网段；IPv6 上游地址不代表支持 IPv6 流量接管。
@@ -54,7 +58,7 @@ stack = "system"
 # history-limit = 512
 # 查询历史保留秒数，范围 1..86400；条数或时间达到上限后清理旧记录。
 # history-retention = 3600
-# 真实 DNS 响应缓存条数，范围 0..10000；0 关闭缓存，另有 8 MiB 总量上限。
+# 真实 DNS 响应缓存条数，范围 0..10000；0 关闭缓存，报文编码累计另限 8 MiB。
 # 遵守正/负响应 TTL，不清除正在使用的 Fake-IP 映射。
 # cache-limit = 1024
 # 可选按域名后缀指定专用上游，最长后缀优先；匹配后只查询这里的上游。
@@ -63,6 +67,8 @@ stack = "system"
 # [[dns.rules]]
 # suffix = "corp.example"
 # servers = ["192.168.1.53"]
+# 可选专用解析出口；空字符串使用 core.outbound-interface，适合 VPN 专用 DNS 网卡。
+# interface = ""
 # [[dns.rules]]
 # suffix = "168.192.in-addr.arpa"
 # servers = ["192.168.1.53"]
@@ -71,6 +77,10 @@ stack = "system"
 # direct（直连）和 reject（拒绝）是内置出站，无需声明；名称及其大小写变体保留。
 # 只使用内置出站时可省略整个 outbounds 数组。
 [[outbounds]]
+# 可选稳定标识；管理界面自动分配，重命名可保留标识。
+# id = "office-proxy"
+# 默认启用；禁用后新连接明确拒绝，既有连接保留原决定，不回退直连。
+# enabled = true
 name = "office"
 # 支持 http、https CONNECT、socks5 或 ss，必须显式提供端口。
 # 也可填写 socks5://127.0.0.1:1080 或 https://username:password@example.com:443。
@@ -94,6 +104,10 @@ url = "http://127.0.0.1:8080"
 # 可选稳定规则标识与来源；管理界面自动分配，手写配置可省略。
 # id = "local-network"
 # source = "user"
+# 可选临时域名规则失效时间（RFC3339，例如 2026-11-02T08:00:00+08:00）。
+# 省略或空字符串表示永久；只允许域名类规则，失效后新连接重新按后续规则匹配。
+# 已建立连接保留原决定，Fake-IP 映射不会在失效时改指其他域名。
+# expires-at = ""
 # 按业务协议/目标端口限定；省略或空值表示全部 TCP/UDP、全部端口。
 # 域名规则先保留 Fake-IP 接管入口，再按实际协议和端口作最终决定。
 # protocol = ""

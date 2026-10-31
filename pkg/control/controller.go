@@ -34,12 +34,13 @@ type CaptureData interface {
 	ClearObservation() error
 }
 type Options struct {
-	Directory string
-	Version   string
-	Factory   Factory
-	Preflight func(context.Context, *kone.KoneConfig) kone.PreflightReport
-	Probe     func(context.Context, *kone.KoneConfig, string, string, bool) ProbeResult
-	Now       func() time.Time
+	Directory        string
+	Version          string
+	Factory          Factory
+	Preflight        func(context.Context, *kone.KoneConfig) kone.PreflightReport
+	Probe            func(context.Context, *kone.KoneConfig, string, string, bool) ProbeResult
+	Now              func() time.Time
+	ConfigureLogging func(kone.GeneralConfig) error
 }
 type Controller struct {
 	mu                            sync.Mutex
@@ -74,6 +75,7 @@ type Controller struct {
 	cancel                        context.CancelFunc
 	ctx                           context.Context
 	requestRates                  map[string]rateWindow
+	configureLogging              func(kone.GeneralConfig) error
 }
 type State struct {
 	ControlState     string         `json:"control_state"`
@@ -137,7 +139,7 @@ func New(options Options) (*Controller, error) {
 	c.observer = kone.NewTrafficObserver(kone.ObservationOptions{Capacity: 2048, Retention: time.Hour})
 	doc, err := readDocument(c.settingsPath())
 	if errors.Is(err, os.ErrNotExist) {
-		doc = Document{Version: 1, Config: kone.DefaultConfig(), Inbound: Inbound{"tun-main", "TUN", false}}
+		doc = Document{Version: 1, Config: managementDefaults(), Inbound: Inbound{"tun-main", "TUN", false}}
 		assignIDs(doc.Config)
 		if err = writeDocument(c.settingsPath(), doc); err != nil {
 			cancel()
@@ -145,9 +147,16 @@ func New(options Options) (*Controller, error) {
 		}
 	} else if err != nil {
 		c.configError = "Saved settings need repair; the original file has been preserved"
-		doc = Document{Version: 1, Config: kone.DefaultConfig(), Inbound: Inbound{"tun-main", "TUN", false}}
+		doc = Document{Version: 1, Config: managementDefaults(), Inbound: Inbound{"tun-main", "TUN", false}}
 	}
 	c.doc = doc
+	c.configureLogging = options.ConfigureLogging
+	if c.configureLogging != nil {
+		if err := c.configureLogging(doc.Config.General); err != nil {
+			cancel()
+			return nil, err
+		}
+	}
 	if confirmed, e := readDocument(c.confirmedPath()); e == nil {
 		c.confirmed = confirmed
 	}
@@ -160,10 +169,29 @@ func New(options Options) (*Controller, error) {
 	}
 	return c, nil
 }
-func (c *Controller) settingsPath() string   { return filepath.Join(c.directory, "settings.json") }
+func (c *Controller) settingsPath() string { return filepath.Join(c.directory, "settings.json") }
+
+func managementDefaults() *kone.KoneConfig {
+	cfg := kone.DefaultConfig()
+	cfg.DNS.System = kone.SupportsSystemDNS()
+	return cfg
+}
 func (c *Controller) confirmedPath() string  { return filepath.Join(c.directory, "confirmed.json") }
 func (c *Controller) journalPath() string    { return filepath.Join(c.directory, "capture.json") }
 func (c *Controller) BootstrapToken() string { c.mu.Lock(); defer c.mu.Unlock(); return c.bootstrap }
+
+// LocalAccessURL is for trusted native UI actions, never an HTTP route.
+// Renew the single-use fragment so opening a second browser remains possible.
+func (c *Controller) LocalAccessURL() (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.address == "" {
+		return "", errors.New("local management is unavailable")
+	}
+	c.bootstrap = randomToken()
+	c.bootstrapExpiry = c.now().Add(5 * time.Minute)
+	return "http://" + c.address + "/#token=" + c.bootstrap, nil
+}
 
 func (c *Controller) State() State {
 	c.mu.Lock()
@@ -176,7 +204,15 @@ func (c *Controller) State() State {
 	if c.closed {
 		control = "stopped"
 	}
-	return State{control, c.state, c.state, c.version, c.doc.Version, c.runningVersion, c.confirmed.Version, c.lastError, c.configError, host, "Only traffic entering KONE; DNS, diagnostics and business traffic are separate", map[string]any{"inbounds": []string{"tun"}, "stacks": kone.SupportedStacks(), "tcp": true, "udp_direct": true, "udp_proxy": true, "proxy_udp_schemes": []string{"socks5", "ss"}, "ipv6": kone.SupportsIPv6Capture(), "ipv6_enabled": c.doc.Config.Core.IPv6Network != "", "process_attribution": process.Supported(), "process_scope": "best effort for locally owned sockets; remote or unverified owners remain unknown", "tls_lan": true, "persistent_config": true, "statistics": "business payload bytes", "temporary_rules": false}, c.now()}
+	capabilities := map[string]any{
+		"inbounds": []string{"tun"}, "stacks": kone.SupportedStacks(),
+		"tcp": true, "udp_direct": true, "udp_proxy": true, "proxy_udp_schemes": []string{"socks5", "ss"},
+		"ipv6": kone.SupportsIPv6Capture(), "ipv6_enabled": c.doc.Config.Core.IPv6Network != "",
+		"system_dns": kone.SupportsSystemDNS(), "system_dns_enabled": c.doc.Config.DNS.System,
+		"process_attribution": process.Supported(), "process_scope": "best effort for local IPv4 sockets; IPv6 and unverified owners remain unknown; remote sources remain remote",
+		"tls_lan": true, "persistent_config": true, "statistics": "business payload bytes", "temporary_rules": true, "temporary_rule_scope": "domain rules only",
+	}
+	return State{ControlState: control, DataState: c.state, State: c.state, Version: c.version, SavedVersion: c.doc.Version, RunningVersion: c.runningVersion, ConfirmedVersion: c.confirmed.Version, LastError: c.lastError, ConfigError: c.configError, Host: host, Scope: "Only traffic entering KONE; DNS, diagnostics and business traffic are separate", Capabilities: capabilities, Time: c.now()}
 }
 
 func (c *Controller) Document() map[string]any {
@@ -220,13 +256,17 @@ func (c *Controller) Save(request SaveRequest) (map[string]any, error) {
 	c.mu.Lock()
 	current := cloneDocument(c.doc)
 	repair := c.configError != ""
+	closed := c.closed
 	c.mu.Unlock()
+	if closed {
+		return nil, errors.New("application is stopping")
+	}
 	next, err := prepareDocument(request, current)
 	if err != nil {
 		return nil, err
 	}
 	// Check disk revision as well as browser revision to reject external edits.
-	if disk, e := readDocument(c.settingsPath()); e == nil && disk.Version != current.Version {
+	if disk, e := readDocument(c.settingsPath()); e == nil && !sameDocument(disk, current) {
 		return nil, ErrConflict
 	} else if e != nil && !repair {
 		return nil, errors.New("saved settings changed or became unreadable; reload before saving")
@@ -262,7 +302,7 @@ func (c *Controller) Preflight(ctx context.Context) kone.PreflightReport {
 	err := c.configError
 	state := c.state
 	c.mu.Unlock()
-	if err != "" || state == "recovery_required" {
+	if err != "" || state == "recovery_required" || state == "recovery_failed" {
 		return kone.PreflightReport{Ready: false, Issues: []kone.PreflightIssue{{Code: "recovery", Severity: "error", Message: "Repair saved settings and inspect previous capture before enabling"}}}
 	}
 	return c.preflight(ctx, engineConfig(doc))
@@ -285,7 +325,7 @@ func (c *Controller) Start(ctx context.Context) error {
 		return errors.New("an engine operation is already in progress")
 	}
 	doc := cloneDocument(c.doc)
-	bad := c.configError != "" || c.state == "recovery_required"
+	bad := c.configError != "" || c.state == "recovery_required" || c.state == "recovery_failed"
 	c.mu.Unlock()
 	if bad {
 		return errors.New("repair configuration or recovery state before enabling capture")
@@ -295,7 +335,12 @@ func (c *Controller) Start(ctx context.Context) error {
 	}
 	check := c.preflight(ctx, engineConfig(doc))
 	if !check.Ready {
-		return errors.New("preflight failed; inspect blocking issues")
+		return c.startFailure(errors.New("preflight failed; inspect blocking issues"), doc.Config)
+	}
+	if c.configureLogging != nil {
+		if err := c.configureLogging(doc.Config.General); err != nil {
+			return c.startFailure(err, doc.Config)
+		}
 	}
 	c.mu.Lock()
 	c.state = "starting"
@@ -440,11 +485,15 @@ func (c *Controller) Pause(ctx context.Context) error {
 func (c *Controller) pauseLocked(ctx context.Context) error {
 	c.mu.Lock()
 	engine, cancel, done := c.engine, c.engineCancel, c.engineDone
+	failed, message := c.state == "recovery_failed", c.lastError
 	if engine != nil {
 		c.state = "pausing"
 	}
 	c.mu.Unlock()
 	if engine == nil {
+		if failed {
+			return errors.New(message)
+		}
 		return nil
 	}
 	cancel()

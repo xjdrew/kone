@@ -95,7 +95,12 @@ function fixture() {
         "cache-limit": 1024,
       },
       outbounds: [
-        { name: "Proxy A", url: "http://REDACTED:REDACTED@127.0.0.1:18080" },
+        {
+          id: "outbound-id-1",
+          enabled: true,
+          name: "Proxy A",
+          url: "http://REDACTED:REDACTED@127.0.0.1:18080",
+        },
       ],
       rules: [
         {
@@ -174,6 +179,7 @@ async function mount(page, options = {}) {
           udp_direct: true,
           proxy_udp_schemes: ["socks5", "ss"],
           ipv6: Boolean(data.ipv6),
+          system_dns: Boolean(data.systemDNS),
         },
         version: "test-version",
         session_id: "test-session",
@@ -242,11 +248,21 @@ async function mount(page, options = {}) {
         dropped_details: 0,
         recording: true,
         capacity: 4096,
+        total: records.length,
       };
+      const offset = url.searchParams.get("cursor")
+        ? records.findIndex(
+            (record) => record.id === url.searchParams.get("cursor"),
+          ) + 1
+        : 0;
+      const limit = Math.min(500, Number(url.searchParams.get("limit")) || 100);
+      traffic.records = records.slice(offset, offset + limit);
+      if (offset + limit < records.length)
+        traffic.next_cursor = traffic.records.at(-1).id;
       if (path === "/flows") return respond(traffic);
       const metric = url.searchParams.get("metric");
       const cumulative = metric === "cumulative";
-      const paths = records
+      let paths = records
         .filter((r) => r.upload + r.download > 0)
         .map((r) => ({
           id: `path-${r.id}`,
@@ -273,6 +289,26 @@ async function mount(page, options = {}) {
             until: end,
           },
         }));
+      if (data.aggregateAll && paths.length)
+        paths = [
+          {
+            ...paths[0],
+            id: "path-all",
+            target: "Other",
+            other: true,
+            value: paths.reduce((sum, path) => sum + path.value, 0),
+            upload: paths.reduce((sum, path) => sum + path.upload, 0),
+            download: paths.reduce((sum, path) => sum + path.download, 0),
+            connections: paths.length,
+            filter: {
+              anchor: traffic.anchor,
+              path_ids: ["path-all"],
+              flow_ids: records.map((record) => record.id),
+              since: start,
+              until: end,
+            },
+          },
+        ];
       return respond({
         traffic,
         sankey: {
@@ -294,6 +330,22 @@ async function mount(page, options = {}) {
       return respond({
         status: {
           automatic: true,
+          system_source: "test-system-scope",
+          search_domains: ["corp.example"],
+          warnings: data.autoScopes
+            ? ["Per-application VPN policy is not reproduced"]
+            : [],
+          rules: data.autoScopes
+            ? [
+                {
+                  suffix: "corp.example",
+                  servers: ["192.168.50.1:53"],
+                  interface: "eth0",
+                  automatic: true,
+                  exact: false,
+                },
+              ]
+            : [],
           servers: ["192.168.50.1:53"],
           tcp: true,
           history_dropped: 0,
@@ -341,6 +393,23 @@ async function mount(page, options = {}) {
         },
         restart_required: false,
       });
+    if (path === "/geoip/rollback")
+      return respond({
+        saved: {
+          version: "recovered-v1",
+          source: "verified previous dataset",
+          license: "CC0-1.0",
+          sha256: "b".repeat(64),
+          ranges: 1,
+        },
+      });
+    if (path === "/geoip" && data.geoCorrupt)
+      return respond(
+        {
+          error: { code: "geoip", message: "Saved active dataset is corrupt" },
+        },
+        400,
+      );
     if (path === "/geoip")
       return respond({
         saved: {
@@ -479,6 +548,7 @@ test("rename updates rule references atomically and explicitly preserves masked 
   await expect(page.locator("#page-notice")).toContainText("已保存");
   const save = data.writes.find((r) => r.path === "/config");
   expect(save.body.config.outbounds[0].name).toBe("Office");
+  expect(save.body.config.outbounds[0].id).toBe("outbound-id-1");
   expect(save.body.config.rules[0].outbound).toBe("Office");
   expect(save.body.credential_actions.Office).toMatchObject({
     action: "preserve",
@@ -685,13 +755,11 @@ test("GeoIP requires an independent checksum and sends a raw bounded upload with
     ranges: [{ start: "192.0.2.0", end: "192.0.2.255", country: "CN" }],
   });
   const digest = createHash("sha256").update(content).digest("hex");
-  await page
-    .locator("#geoip-file")
-    .setInputFiles({
-      name: "geoip.json",
-      mimeType: "application/json",
-      buffer: Buffer.from(content),
-    });
+  await page.locator("#geoip-file").setInputFiles({
+    name: "geoip.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(content),
+  });
   await page.locator("#geoip-expected").fill("0".repeat(64));
   await page.getByRole("button", { name: "校验并准备更新" }).click();
   await expect(page.locator("#page-notice")).toContainText(
@@ -776,4 +844,123 @@ test("Linux IPv6 is an explicit saved opt-in and unavailable platforms cannot en
   await page.reload();
   await expect(page.locator("#inbound-ipv6-network")).toBeDisabled();
   await expect(page.locator("#inbound-auto-route6")).toBeDisabled();
+});
+
+test("Other drilldown reads every original contributor in bounded requests and list pagination stays anchored", async ({
+  page,
+}) => {
+  const original = fixture().records[0];
+  const records = Array.from({ length: 250 }, (_, i) => ({
+    ...original,
+    id: `flow-${String(i).padStart(4, "0")}`,
+  }));
+  const data = await mount(page, { records, aggregateAll: true });
+  await page.locator(".sankey-node").filter({ hasText: "其他目的" }).click();
+  await page.getByRole("button", { name: "查看连接", exact: true }).click();
+  await expect(page.locator(".search-summary")).toContainText("已载入 250 条");
+  const reads = data.requests.filter((request) => request.path === "/flows");
+  expect(reads).toHaveLength(3);
+  expect(reads.flatMap((read) => read.query.flow_ids.split(","))).toEqual(
+    records.map((record) => record.id),
+  );
+  expect(reads.every((read) => read.query.anchor === "traffic-session:3")).toBe(
+    true,
+  );
+  await page.getByRole("button", { name: "切换实时", exact: true }).click();
+  await expect(page.locator(".search-summary")).toContainText("已载入 100 条");
+  await page.getByRole("button", { name: "固定快照并加载更早记录" }).click();
+  await expect(page.locator(".search-summary")).toContainText("已载入 250 条");
+  await expect(page.getByText("固定观察快照", { exact: false })).toBeVisible();
+});
+
+test("temporary domain rules and outbound disable are explicit saved drafts with stable identities", async ({
+  page,
+}) => {
+  const data = await mount(page);
+  await page.locator(".nav-link[data-page=rules]").click();
+  await page.locator(".editor-item").first().locator("summary").click();
+  await page.locator("#rule-lifetime-0").selectOption("temporary");
+  await expect(page.locator("#rule-expires-0")).toBeVisible();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        data.writes.find((write) => write.path === "/config")?.body.config
+          .rules[0]["expires-at"],
+    )
+    .toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  await page.locator(".nav-link[data-page=outbounds]").click();
+  await page.locator("#outbound-enabled-0").uncheck();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        data.writes.filter((write) => write.path === "/config").at(-1)?.body
+          .config.outbounds[0].enabled,
+    )
+    .toBe(false);
+  expect(
+    data.writes.filter((write) => write.path === "/config").at(-1).body.config
+      .outbounds[0].id,
+  ).toBe("outbound-id-1");
+  expect(
+    data.writes.some((write) => write.path.startsWith("/lifecycle/")),
+  ).toBe(false);
+});
+
+test("DNS system guidance saves explicit intent while automatic scopes remain read-only", async ({
+  page,
+}) => {
+  const data = await mount(page, { systemDNS: true, autoScopes: true });
+  await page.locator(".nav-link[data-page=dns]").click();
+  await expect(page.getByText("系统解析范围", { exact: true })).toBeVisible();
+  await page.locator("#dns-system").check();
+  await page.getByRole("button", { name: "＋ 添加解析规则" }).click();
+  await page.locator("#dns-route-suffix-0").fill("private.example");
+  await page.locator("#dns-route-servers-0").fill("192.168.50.1:53");
+  await page.locator("#dns-route-interface-0").fill("eth0");
+  await page.getByRole("button", { name: "保存", exact: true }).first().click();
+  await expect
+    .poll(
+      () =>
+        data.writes.find((write) => write.path === "/config")?.body.config.dns
+          .system,
+    )
+    .toBe(true);
+  const saved = data.writes.find((write) => write.path === "/config").body
+    .config.dns;
+  expect(saved.rules).toEqual([
+    {
+      suffix: "private.example",
+      servers: ["192.168.50.1:53"],
+      interface: "eth0",
+    },
+  ]);
+  expect(JSON.stringify(saved)).not.toContain("automatic");
+  expect(
+    data.writes.some((write) => write.path.startsWith("/lifecycle/")),
+  ).toBe(false);
+});
+
+test("corrupt GeoIP still permits explicit revalidation of the saved previous dataset", async ({
+  page,
+}) => {
+  const data = await mount(page, { geoCorrupt: true });
+  await page.locator(".nav-link[data-page=settings]").click();
+  await expect(
+    page.getByText("Saved active dataset is corrupt", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "尝试恢复已保存上一版" }).click();
+  await expect(page.getByRole("dialog")).toContainText(
+    "不会猜测或自动替换成内置版",
+  );
+  expect(data.writes.some((write) => write.path === "/geoip/rollback")).toBe(
+    false,
+  );
+  await page.getByRole("button", { name: "确认回退数据", exact: true }).click();
+  await expect
+    .poll(
+      () => data.writes.find((write) => write.path === "/geoip/rollback")?.body,
+    )
+    .toEqual({ base_version: 1, base_sha256: "" });
 });

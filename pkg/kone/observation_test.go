@@ -11,6 +11,7 @@ import (
 	"time"
 
 	processinfo "github.com/xjdrew/kone/pkg/process"
+	"github.com/xjdrew/kone/pkg/proxy"
 
 	"github.com/stretchr/testify/require"
 )
@@ -248,4 +249,66 @@ func TestSankeyHonorsAnchorAndSelectedFlowIDs(t *testing.T) {
 	require.Empty(t, graph.Paths)
 	first.Finish(nil, false)
 	second.Finish(nil, false)
+}
+
+func TestCombinedObservationSnapshotIsCoherentDuringConcurrentWrites(t *testing.T) {
+	observer := NewTrafficObserver(ObservationOptions{})
+	flow := beginObserved(t, observer, "concurrent:443", "tcp")
+	stop := make(chan struct{})
+	var worker sync.WaitGroup
+	worker.Add(1)
+	go func() {
+		defer worker.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				flow.AddUpload(17, 0)
+				flow.AddDownload(23, 0)
+			}
+		}
+	}()
+	for range 100 {
+		traffic, graph := observer.Data(TrafficQuery{}, SankeyOptions{Metric: "cumulative"})
+		require.Equal(t, traffic.Timestamp, graph.Timestamp)
+		require.Equal(t, traffic.Anchor, graph.Anchor)
+		require.Equal(t, float64(traffic.Totals.Bytes), graph.Total, "a management response must not combine counters and paths from different instants")
+	}
+	close(stop)
+	worker.Wait()
+	flow.Finish(nil, false)
+	invalid := observer.Snapshot(TrafficQuery{Anchor: fmt.Sprintf("%s-%020d", observer.session, observer.sequence+1)})
+	require.True(t, invalid.AnchorExpired, "future anchors cannot capture subsequently created unrelated flows")
+}
+
+func TestZeroByteFailureKeepsTypedProxyStage(t *testing.T) {
+	observer := NewTrafficObserver(ObservationOptions{})
+	flow := observer.Begin(FlowRecord{Target: "example.com:443", Protocol: "tcp"})
+	flow.Stage("dial")
+	flow.Finish(&proxy.StageError{Stage: proxy.StageAuth, Err: errors.New("407 Proxy Authentication Required")}, false)
+	record, ok := observer.Get(flow.ID())
+	require.True(t, ok)
+	require.Equal(t, "failed", record.Status)
+	require.Equal(t, proxy.StageAuth, record.Stage)
+	require.Equal(t, proxy.StageAuth, record.ErrorKind)
+	require.Zero(t, record.Upload+record.Download)
+	require.Equal(t, uint64(1), observer.Snapshot(TrafficQuery{}).Totals.Failed)
+}
+
+func TestClearingActiveHistoryPreservesIndependentAggregateTotals(t *testing.T) {
+	observer := NewTrafficObserver(ObservationOptions{})
+	flow := beginObserved(t, observer, "private.example:443", "tcp")
+	flow.AddUpload(10, 0)
+	observer.Clear()
+	flow.AddDownload(20, 0)
+	flow.Finish(errors.New("broken after clear"), false)
+	traffic, graph := observer.Data(TrafficQuery{}, SankeyOptions{Metric: "cumulative"})
+	require.Empty(t, traffic.Records, "cleared active detail must not reappear")
+	require.Equal(t, uint64(30), traffic.Totals.Bytes)
+	require.Equal(t, float64(30), graph.Total, "a stale per-flow path cannot replace and reset the existing Other aggregate")
+	require.Equal(t, uint64(1), graph.Failures)
+	require.Len(t, graph.Paths, 1)
+	require.True(t, graph.Paths[0].Other)
+	require.NotContains(t, graph.Paths[0].Target, "private.example")
 }

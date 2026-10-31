@@ -106,8 +106,11 @@ func (o *TrafficObserver) path(record *FlowRecord) string {
 func (o *TrafficObserver) countPath(flowID, pathID string, upload, download, connections, failures uint64) {
 	path := o.paths[pathID]
 	if path == nil {
-		path = &SankeyPath{ID: "other", Inbound: "other", RuleID: "other", RuleName: "Other / unretained details", EffectiveOutbound: "other", Target: "other", Other: true}
-		o.paths["other"] = path
+		path = o.paths["other"]
+		if path == nil {
+			path = &SankeyPath{ID: "other", Inbound: "other", RuleID: "other", RuleName: "Other / unretained details", EffectiveOutbound: "other", Target: "other", Other: true}
+			o.paths["other"] = path
+		}
 	}
 	addCounter(&path.Upload, upload)
 	addCounter(&path.Download, download)
@@ -152,7 +155,10 @@ func pathAsRecord(path *SankeyPath) *FlowRecord {
 func (o *TrafficObserver) Sankey(query TrafficQuery, options SankeyOptions) SankeySnapshot {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	now := o.now()
+	return o.sankeyLocked(query, options, o.now())
+}
+
+func (o *TrafficObserver) sankeyLocked(query TrafficQuery, options SankeyOptions, now time.Time) SankeySnapshot {
 	o.prune(now)
 	if options.Window < time.Second {
 		options.Window = time.Second

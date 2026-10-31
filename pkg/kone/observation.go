@@ -411,6 +411,13 @@ func (f *ObservedFlow) Finish(err error, stopping bool) {
 	if err == nil && f.transferFailed && !stopping {
 		status, kind = "failed", "transfer"
 	}
+	typedStage := ""
+	if status == "failed" && err != nil {
+		typedStage = DiagnosticStage(err)
+		if typedStage != "" {
+			kind = typedStage
+		}
+	}
 	pathID := f.pathID
 	if record := o.records[f.id]; record != nil {
 		if err == nil && record.Error != "" && !stopping {
@@ -426,6 +433,9 @@ func (f *ObservedFlow) Finish(err error, stopping bool) {
 		record.EndedAt = &now
 		record.UpdatedAt = now
 		record.Status = status
+		if typedStage != "" {
+			record.Stage = typedStage
+		}
 		if record.Stage == "transfer" || status == "closed" || status == "canceled" {
 			record.Stage = "closed"
 		}

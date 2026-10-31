@@ -168,7 +168,9 @@ func connectWindows(parent context.Context, launch LaunchHelper) (io.ReadWriteCl
 	if err != nil {
 		return nil, nil, err
 	}
-	if err = launch(ctx, executable, []string{"-network-helper", base, "-parent-pid", strconv.Itoa(os.Getpid())}); err != nil {
+	if err = boundedAuthorization(ctx, func() error {
+		return launch(ctx, executable, []string{"-network-helper", base, "-parent-pid", strconv.Itoa(os.Getpid())})
+	}, authorizationSlot); err != nil {
 		return nil, nil, fmt.Errorf("authorize network helper: %w", err)
 	}
 	commandConn, err := acceptPipe(ctx, commands)
@@ -200,6 +202,9 @@ func connectWindows(parent context.Context, launch LaunchHelper) (io.ReadWriteCl
 // RunNetworkHelper is a private executable mode, not a management listener.
 // Both pipe servers must be owned by the expected ordinary KONE process.
 func RunNetworkHelper(parent context.Context, base string, parentPID uint32) error {
+	return runNetworkHelper(parent, base, parentPID, nil)
+}
+func runNetworkHelper(parent context.Context, base string, parentPID uint32, factory EngineFactory) error {
 	if !validPipeBase(base) || parentPID == 0 {
 		return errors.New("invalid private helper invocation")
 	}
@@ -231,5 +236,5 @@ func RunNetworkHelper(parent context.Context, base string, parentPID uint32) err
 			return err
 		}
 	}
-	return ServeHelper(parent, commands, events, nil)
+	return ServeHelper(parent, commands, events, factory)
 }

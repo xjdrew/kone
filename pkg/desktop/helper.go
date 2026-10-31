@@ -44,6 +44,14 @@ type GeoIPRequest struct {
 	Builtin     bool
 	BaseVersion uint64
 }
+type ProbeRequest struct {
+	ID               string
+	Outbound, Target string
+	TLS              bool
+	TimeoutMS        int64
+	ExpectedVersion  uint64
+	Deadline         time.Time
+}
 type DeviceIdentity struct {
 	Name  string
 	Index int
@@ -107,15 +115,17 @@ func helperError(err error) string {
 }
 
 type helperService struct {
-	mu        sync.Mutex
-	ctx       context.Context
-	engine    NetworkEngine
-	factory   EngineFactory
-	events    *rpc.Client
-	started   bool
-	runCancel context.CancelFunc
-	runDone   chan struct{}
-	runError  error
+	mu             sync.Mutex
+	ctx            context.Context
+	engine         NetworkEngine
+	factory        EngineFactory
+	events         *rpc.Client
+	started        bool
+	runCancel      context.CancelFunc
+	runDone        chan struct{}
+	runError       error
+	probes         map[string]context.CancelFunc
+	canceledProbes map[string]time.Time
 }
 
 func (s *helperService) Start(request StartRequest, _ *Empty) error {
@@ -325,10 +335,105 @@ func (s *helperService) GeoIPRollback(version uint64, _ *Empty) error {
 	}
 	return owner.RollbackGeoIP(version)
 }
+
+type diagnosticOwner interface {
+	ProbeDiagnosticVersion(context.Context, string, string, bool, uint64) (kone.DiagnosticResult, error)
+}
+
+func (s *helperService) Probe(request ProbeRequest, reply *kone.DiagnosticResult) error {
+	if request.ID == "" || len(request.ID) > 64 {
+		return errors.New("invalid diagnostic request identity")
+	}
+	if err := kone.ValidateDiagnosticTarget(request.Target); err != nil {
+		return err
+	}
+	engine, err := s.current()
+	if err != nil {
+		return err
+	}
+	owner, ok := engine.(diagnosticOwner)
+	if !ok {
+		return errors.New("helper engine diagnostics are unavailable")
+	}
+	budget := time.Duration(request.TimeoutMS) * time.Millisecond
+	if budget <= 0 || budget > 5*time.Second {
+		budget = 5 * time.Second
+	}
+	if !request.Deadline.IsZero() {
+		remaining := time.Until(request.Deadline)
+		if remaining <= 0 {
+			return context.DeadlineExceeded
+		}
+		if remaining < budget {
+			budget = remaining
+		}
+	}
+	ctx, cancel := context.WithTimeout(s.ctx, budget)
+	s.mu.Lock()
+	for id, when := range s.canceledProbes {
+		if time.Since(when) > 10*time.Second {
+			delete(s.canceledProbes, id)
+		}
+	}
+	if _, canceled := s.canceledProbes[request.ID]; canceled {
+		delete(s.canceledProbes, request.ID)
+		s.mu.Unlock()
+		cancel()
+		return context.Canceled
+	}
+	if s.probes == nil {
+		s.probes = map[string]context.CancelFunc{}
+	}
+	if len(s.probes) >= 8 || s.probes[request.ID] != nil {
+		s.mu.Unlock()
+		cancel()
+		return errors.New("helper diagnostic capacity is busy")
+	}
+	s.probes[request.ID] = cancel
+	s.mu.Unlock()
+	defer func() { cancel(); s.mu.Lock(); delete(s.probes, request.ID); s.mu.Unlock() }()
+	*reply, err = owner.ProbeDiagnosticVersion(ctx, request.Outbound, request.Target, request.TLS, request.ExpectedVersion)
+	if err != nil {
+		return errors.New(helperError(err))
+	}
+	return nil
+}
+func (s *helperService) CancelProbe(id string, _ *Empty) error {
+	s.mu.Lock()
+	cancel := s.probes[id]
+	if cancel == nil && id != "" && len(id) <= 64 {
+		if s.canceledProbes == nil {
+			s.canceledProbes = map[string]time.Time{}
+		}
+		if len(s.canceledProbes) >= 64 {
+			var oldest string
+			var when time.Time
+			for candidate, value := range s.canceledProbes {
+				if when.IsZero() || value.Before(when) {
+					oldest, when = candidate, value
+				}
+			}
+			delete(s.canceledProbes, oldest)
+		}
+		s.canceledProbes[id] = time.Now()
+	}
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return nil
+}
 func (s *helperService) Stop(_ Empty, reply *StopReply) error {
 	s.mu.Lock()
 	cancel := s.runCancel
+	var cancelProbes []context.CancelFunc
+	for _, stop := range s.probes {
+		cancelProbes = append(cancelProbes, stop)
+	}
 	s.mu.Unlock()
+	for _, stop := range cancelProbes {
+		stop()
+	}
 	if cancel != nil {
 		cancel()
 	}
@@ -357,6 +462,9 @@ func (s *helperService) Stop(_ Empty, reply *StopReply) error {
 // Losing either parent connection cancels Run and executes its full rollback.
 // Its factory injection is for isolated tests and does not expose a public API.
 func ServeHelper(ctx context.Context, commands, events io.ReadWriteCloser, factory EngineFactory) error {
+	if commands == nil || events == nil {
+		return errors.New("private helper requires both IPC streams")
+	}
 	if factory == nil {
 		factory = func(cfg *kone.KoneConfig) (NetworkEngine, error) { return kone.FromConfig(cfg) }
 	}

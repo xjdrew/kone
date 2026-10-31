@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/xjdrew/kone/pkg/geoip"
 )
@@ -23,6 +24,7 @@ import (
 const CaptureOutbound = "@capture"
 
 type RoutingDecision struct {
+	ExpiresAt         string `json:"expires_at,omitempty"`
 	ConfigVersion     uint64 `json:"config_version"`
 	GeoIPVersion      string `json:"geoip_version"`
 	GeoIPSHA256       string `json:"geoip_sha256"`
@@ -41,6 +43,7 @@ type RoutingDecision struct {
 }
 
 type decisionRule struct {
+	expires time.Time
 	config  RuleConfig
 	pattern Pattern
 	id      string
@@ -55,6 +58,7 @@ func (rule *Rule) ProxyDNS(domain string, msg *dns.Msg) string {
 }
 
 type Rule struct {
+	now           func() time.Time
 	directDomains map[string]bool // always direct connect for proxy domain
 	patterns      []Pattern
 	outbounds     map[string]OutboundType
@@ -90,6 +94,10 @@ func (rule *Rule) Decide(val any, protocol string, port uint16) (decision Routin
 		}
 	}()
 	protocol = strings.ToLower(protocol)
+	now := time.Now()
+	if rule.now != nil {
+		now = rule.now()
+	}
 	var endpoint string
 	switch value := val.(type) {
 	case string:
@@ -105,6 +113,9 @@ func (rule *Rule) Decide(val any, protocol string, port uint16) (decision Routin
 		}
 	}
 	for _, entry := range rule.decisions {
+		if entry.config.ExpiresAt != "" && !now.Before(entry.expires) {
+			continue
+		}
 		if !entry.pattern.Match(val) {
 			continue
 		}
@@ -146,7 +157,7 @@ func (entry decisionRule) decision(protocol string, port uint16) RoutingDecision
 	if entry.config.Pattern != "" {
 		name += " " + entry.config.Pattern
 	}
-	return RoutingDecision{RuleID: entry.id, RuleName: name, RuleSource: source, RuleOrder: entry.order, Outbound: entry.config.Outbound, Protocol: protocol, Port: port, Reason: "ordered rule match"}
+	return RoutingDecision{RuleID: entry.id, RuleName: name, RuleSource: source, RuleOrder: entry.order, Outbound: entry.config.Outbound, Protocol: protocol, Port: port, ExpiresAt: entry.config.ExpiresAt, Reason: "ordered rule match"}
 }
 
 func (rule *Rule) Explain(val any, protocol string, port uint16) RoutingDecision {
@@ -206,7 +217,7 @@ func NewRuleWithGeoIP(rcs []RuleConfig, outbounds []OutboundConfig, database *ge
 			rule.patterns = append(rule.patterns, pattern)
 			id := rc.ID
 			if id == "" {
-				key := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%v", strings.ToUpper(rc.Schema), normalizeDomain(rc.Pattern), rc.Outbound, strings.ToLower(rc.Protocol), rc.Ports)
+				key := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%v\x00%s", strings.ToUpper(rc.Schema), normalizeDomain(rc.Pattern), rc.Outbound, strings.ToLower(rc.Protocol), rc.Ports, rc.ExpiresAt)
 				digest := sha256.Sum256([]byte(key))
 				id = "rule-" + hex.EncodeToString(digest[:8])
 				duplicates[id]++
@@ -215,7 +226,8 @@ func NewRuleWithGeoIP(rcs []RuleConfig, outbounds []OutboundConfig, database *ge
 				}
 			}
 			rc.Ports = append([]uint16(nil), rc.Ports...)
-			rule.decisions = append(rule.decisions, decisionRule{config: rc, pattern: pattern, id: id, order: index + 1})
+			expires, _ := time.Parse(time.RFC3339, rc.ExpiresAt)
+			rule.decisions = append(rule.decisions, decisionRule{config: rc, pattern: pattern, id: id, order: index + 1, expires: expires})
 		}
 	}
 	return rule

@@ -115,3 +115,18 @@ func TestResolverTimeoutDoesNotLeakProcessIdentity(t *testing.T) {
 		t.Fatal("lookup ignored deadline")
 	}
 }
+
+func TestIPv6LocalFlowCannotMatchIPv4WildcardSocketOwner(t *testing.T) {
+	now := time.Now()
+	var lookups atomic.Int32
+	r := New(Options{LocalAddresses: func() ([]netip.Addr, error) { return []netip.Addr{netip.MustParseAddr("2001:db8::1")}, nil }, Lookup: func(context.Context, Query) (Result, error) {
+		lookups.Add(1)
+		return Result{Status: "matched", PID: 42, Name: "wrong IPv4 process", StartedAt: now.Add(-time.Hour)}, nil
+	}})
+	defer r.Close()
+	result := r.resolve(context.Background(), Query{Protocol: "udp", Source: netip.MustParseAddrPort("[2001:db8::1]:1234"), Destination: netip.MustParseAddrPort("[2001:db8::2]:443"), ObservedAt: now})
+	require.Equal(t, "unknown", result.Status)
+	require.Contains(t, result.Reason, "IPv6")
+	require.Zero(t, result.PID)
+	require.Zero(t, lookups.Load())
+}

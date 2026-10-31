@@ -18,6 +18,7 @@ type memoryEngine struct {
 	ready, stop                      chan struct{}
 	once                             sync.Once
 	failure, closeError, reloadError error
+	observerError                    error
 	wait                             bool
 }
 
@@ -40,7 +41,7 @@ func (e *memoryEngine) Run(ctx context.Context) error {
 func (e *memoryEngine) Ready() <-chan struct{}                         { return e.ready }
 func (e *memoryEngine) Close() error                                   { e.once.Do(func() { close(e.stop) }); return e.closeError }
 func (e *memoryEngine) Reload(*kone.KoneConfig) error                  { return e.reloadError }
-func (e *memoryEngine) SetTrafficObserver(*kone.TrafficObserver) error { return nil }
+func (e *memoryEngine) SetTrafficObserver(*kone.TrafficObserver) error { return e.observerError }
 
 func testController(t *testing.T, options Options) *Controller {
 	t.Helper()

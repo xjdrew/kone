@@ -15,6 +15,30 @@ export function targetWithPort(value, port) {
   return target.includes(":") ? `[${target}]:${port}` : `${target}:${port}`;
 }
 
+// GET requests stay below the control server's request-header budget. Flow IDs
+// identify exact graph contributors, so large queries can omit redundant paths.
+export function flowQueryChunks(base, pathIDs, flowIDs) {
+  const paths = [...new Set(pathIDs)];
+  const ids = [...new Set(flowIDs)].slice(0, 5000);
+  const pathQuery = paths.join(",");
+  if (!ids.length) return [{ ...base, path_ids: pathQuery, limit: "500" }];
+  const result = [];
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const query = {
+      ...base,
+      flow_ids: ids.slice(offset, offset + 100).join(","),
+      limit: "500",
+    };
+    if (
+      new URLSearchParams({ ...query, path_ids: pathQuery }).toString().length <
+      8000
+    )
+      query.path_ids = pathQuery;
+    result.push(query);
+  }
+  return result;
+}
+
 let bearer = "";
 let csrf = "";
 export function setSession(data = {}) {

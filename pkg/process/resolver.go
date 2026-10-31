@@ -170,6 +170,10 @@ func (r *Resolver) resolve(ctx context.Context, query Query) Result {
 		unknown.Source = "local_interface_snapshot"
 		return unknown
 	}
+	if !query.Source.Addr().Unmap().Is4() || !query.Destination.Addr().Unmap().Is4() {
+		unknown.Reason = "IPv6 process attribution is unavailable; IPv4 wildcard sockets cannot identify this flow"
+		return unknown
+	}
 	if ctx.Err() != nil {
 		unknown.Reason = "process attribution timed out"
 		return unknown

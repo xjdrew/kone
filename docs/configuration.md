@@ -65,14 +65,16 @@ suffix = "168.192.in-addr.arpa"
 servers = ["192.168.1.53"]
 ```
 
-上面的参数均为可选项，含义及全部默认值见完整示例。`listen-port` 是 TUN 地址上的 KONE DNS 服务端口，同时监听 UDP/TCP；`servers` 是实际解析使用的上游，两者不同。上游 UDP 响应截断时，使用同一上游和出口重试 TCP。支持 IPv6 上游 DNS 和 AAAA 查询，但尚不接管 IPv6 业务流量。
+上面的参数均为可选项，含义及全部默认值见完整示例。`listen-port` 是 TUN 地址上的 KONE DNS 服务端口，同时监听 UDP/TCP；`servers` 是实际解析使用的上游，两者不同。上游 UDP 响应截断时，使用同一上游和出口重试 TCP。支持 IPv6 上游 DNS 和 AAAA 查询；Linux 可另外显式启用 IPv6 接管，默认只接管 IPv4。
 自动上游仅在创建 engine 时发现一次，生效服务器保存在运行实例中，配置仍保留“自动”状态。规则热更新不会重新读取已经被 KONE 改写的 Windows 网卡 DNS；改变 DNS 设置或系统网络需要重启。
 
 `[[dns.rules]]` 使用最长域名后缀匹配，自身和子域名均匹配，`suffix = "."` 为显式兜底。匹配后只查询该条规则中的服务器；超时或 NXDOMAIN 不会触发默认/公共 DNS 回退。反向解析域名也使用相同机制。同组上游并发解析，等待其他上游结果后才接受否定响应，避免较快的 NXDOMAIN 掩盖另一台服务器的有效回答。每组最多 16 台上游，最多 64 条分流规则。
 
-系统自动发现当前解析器地址，并不等同于完整复制多网卡/VPN 的接口专属解析规则。内网或 VPN 环境应显式配置专用后缀与解析器，保留客户端原有搜索域；KONE 按客户端实际发送的完整查询名称匹配，不自行把短名称扩展到公共域名。全部 DNS 外层连接沿用 `core.outbound-interface`，目前不能为每条 DNS 规则另选接口。
+默认解析器自动发现会同时读取可见的系统上下文：Windows NRPT、网卡 DNS 后缀/搜索域和路由；Linux systemd-resolved 的 per-link DNS/路由域；macOS 的 scoped resolver。手工 `dns.rules` 优先于自动 scope，手工规则内部仍按最长后缀匹配。规则可设置 `interface = "VPN"` 指定专用出口；省略时使用核心出口。查询事件记录使用的解析接口、自动发现来源与警示，搜索域仅作为上下文展示，仍由客户端完成短名称展开。
 
-查询历史独立记录客户端 UDP/TCP 请求和内部控制解析，包含名称/类型、状态/错误、实际上游和传输、缓存、真实/虚拟地址、延迟与版本；DNS 查询不代表建立了业务连接。默认最多 512 条、保留一小时，`history-limit = 0` 关闭记录；上限 10000 条和 86400 秒。可在管理页清空历史。响应缓存默认最多 1024 条、总量最多 8 MiB，遵守正响应及 SOA 否定响应 TTL，最长一小时；`cache-limit = 0` 关闭。带 EDNS 扩展等特殊语义的请求绕过该缓存。清空响应缓存不会回收活动连接使用的 Fake-IP 映射。
+自动发现不是完整复制所有 VPN、按应用或安全 DNS 策略。已知 scope 缺失服务器、接口不可用、接口归属歧义，或需要尚不能复制的 NRPT 安全/IPsec/DNSSEC、加密或多播解析行为时，该 scope 失败，不向公共默认上游回退；请按实际环境补充手工规则。无法可靠读取上下文时明确警示。系统 DNS 引导关闭且原 systemd-resolved stub 可用时，可继续委托它维护原作用域与加密策略；开启系统 DNS 引导时必须改用验证后的真实上游，防止 stub 回到 KONE 形成环路。自动读取使用四秒总预算与 1 MiB 输出上限，不执行网络配置命令。具体发现边界见 [DNS 系统上下文](dns-context.md)。
+
+查询历史独立记录客户端 UDP/TCP 请求和内部控制解析，包含名称/类型、状态/错误、实际上游和传输、缓存、真实/虚拟地址、延迟与版本；DNS 查询不代表建立了业务连接。默认最多 512 条、保留一小时，`history-limit = 0` 关闭记录；上限 10000 条和 86400 秒。可在管理页清空历史。响应缓存默认最多 1024 条，报文编码大小累计最多 8 MiB，遵守正响应及 SOA 否定响应 TTL，最长一小时；`cache-limit = 0` 关闭。带 EDNS 扩展等特殊语义的请求绕过该缓存。清空响应缓存不会回收活动连接使用的 Fake-IP 映射。
 
 ## 校验规则
 
@@ -83,7 +85,7 @@ servers = ["192.168.1.53"]
 - 支持 `http://host:port`、`https://host:port`、`socks5://host:port`、`ss://method:password@host:port`，端口必须显式提供；前三种 URL 不允许路径、查询或 fragment。SS 允许 SIP002 的可选末尾 `/` 和标签，支持 Base64URL 编码的用户信息；不支持插件查询参数。IPv6 主机使用方括号。
 - 代理出站使用 `name`、`url` 和可选的 `udp-fallback`；旧的出站 `type` 字段应删除，否则会报未知配置键。名称必须非空、唯一，不含控制字符或首尾空白，URL 必须合法；内置出站不能通过配置声明或覆盖。
 - 规则引用已配置的代理名或内置小写 `direct` / `reject`，引用区分大小写。`direct`、`reject` 及其大小写变体均不能用作代理名称。没有规则匹配时使用内置 `direct`。
-- 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 当前会报不支持。
+- 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 需要配置 `core.ipv6-network`，当前只允许 Linux 启动 IPv6 接管。
 - `DOMAIN-SUFFIX = example.com` 匹配自身和子域名，不匹配 `1example.com`。`DIRECT` CIDR 例外会保留规则优先级。
 
 `http_proxy`、`https_proxy`、`socks_proxy` 环境变量会定义或覆盖同名的 proxy 出站。未设置小写变量时读取大写形式；Windows 环境变量本身不区分大小写。文件中的重复定义或无效 URL 不会被环境变量掩盖；内置出站不受这些环境变量影响。
@@ -111,7 +113,7 @@ servers = ["192.168.1.53"]
 - `core.network` 的接口地址之后一个地址供协议栈使用，两者均不会分配为 Fake-IP。该地址必须保留至少一个后继主机地址。
 - 旧 `tcp-listen-port`、`udp-listen-port`、`tcp-nat-port-start/end`、`udp-nat-port-start/end` 已移除，旧配置必须删除这些键，严格校验会明确报错。内部监听和会话映射由 sing-tun 分配。
 
-IPv6 拦截仍未启用。采用 `mixed` 不改变出站协议能力。LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
+IPv6 默认关闭，Linux 可通过 `core.ipv6-network` 显式启用；`core.auto-route6` 独立控制 IPv6 全局路由，需要指定真实出口。Windows/macOS 在 IPv6 后端未完成平台验收前明确拒绝启用。采用 `mixed` 不改变出站协议能力。IPv6 细节见 [IPv6 配置与边界](ipv6.md)，LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
 
 ## UDP 策略与显式回退
 

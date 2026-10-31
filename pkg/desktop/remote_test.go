@@ -23,6 +23,7 @@ type fakeNetworkEngine struct {
 	started           bool
 	wait              bool
 	closeError        error
+	probe             func(context.Context, string, string, bool, uint64) (kone.DiagnosticResult, error)
 }
 
 func newFakeNetworkEngine(t *testing.T, cfg *kone.KoneConfig) *fakeNetworkEngine {
@@ -41,6 +42,16 @@ func (e *fakeNetworkEngine) CaptureDeviceIdentity() (string, int, bool) {
 	return "owned-test-device", 12345, true
 }
 func (e *fakeNetworkEngine) Ready() <-chan struct{} { return e.ready }
+
+func (e *fakeNetworkEngine) ProbeDiagnosticVersion(ctx context.Context, outbound, target string, tls bool, version uint64) (kone.DiagnosticResult, error) {
+	e.mu.Lock()
+	probe := e.probe
+	e.mu.Unlock()
+	if probe != nil {
+		return probe(ctx, outbound, target, tls, version)
+	}
+	return e.One.ProbeDiagnosticVersion(ctx, outbound, target, tls, version)
+}
 func (e *fakeNetworkEngine) Run(ctx context.Context) error {
 	e.mu.Lock()
 	e.started = true
@@ -243,4 +254,60 @@ func TestRemoteGuardsAndCredentialRedaction(t *testing.T) {
 	}
 	invokeTrayAction(TrayActions{}, 1)
 	invokeTrayAction(actions, 99)
+}
+
+func TestRemoteDiagnosticUsesRunningRevisionAndCancelKeepsCaptureAlive(t *testing.T) {
+	remote, fake, _ := helperHarness(t, false)
+	done := startRemote(t, remote)
+	result, err := remote.ProbeDiagnosticVersion(context.Background(), kone.BuiltinDirect, "example.invalid:443", false, 8)
+	require.NoError(t, err)
+	require.Equal(t, "not_applied", result.Status)
+	require.Equal(t, uint64(7), result.ConfigVersion)
+	entered := make(chan struct{})
+	canceled := make(chan struct{})
+	fake.mu.Lock()
+	fake.probe = func(ctx context.Context, _, _ string, _ bool, _ uint64) (kone.DiagnosticResult, error) {
+		close(entered)
+		<-ctx.Done()
+		close(canceled)
+		return kone.DiagnosticResult{Status: "canceled"}, nil
+	}
+	fake.mu.Unlock()
+	ctx, cancel := context.WithCancel(context.Background())
+	probeDone := make(chan error, 1)
+	go func() {
+		_, err := remote.ProbeDiagnostic(ctx, kone.BuiltinDirect, "127.0.0.1:443", false)
+		probeDone <- err
+	}()
+	<-entered
+	cancel()
+	require.ErrorIs(t, <-probeDone, context.Canceled)
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("helper did not cancel its diagnostic")
+	}
+	traffic, _, err := remote.TrafficData(kone.TrafficQuery{}, kone.SankeyOptions{})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), traffic.Totals.Active, "canceling one diagnostic cannot stop business capture")
+	require.NoError(t, remote.Close())
+	require.NoError(t, <-done)
+}
+
+func TestHelperRemembersCancellationBeforeProbeRegistration(t *testing.T) {
+	cfg := kone.DefaultConfig()
+	cfg.DNS.Servers = []string{"127.0.0.1:53"}
+	fake := newFakeNetworkEngine(t, cfg)
+	defer fake.Close()
+	fake.probe = func(context.Context, string, string, bool, uint64) (kone.DiagnosticResult, error) {
+		t.Fatal("a canceled request must not resolve or connect later")
+		return kone.DiagnosticResult{}, nil
+	}
+	service := &helperService{ctx: context.Background(), engine: fake}
+	require.NoError(t, service.CancelProbe("early", &Empty{}))
+	var reply kone.DiagnosticResult
+	err := service.Probe(ProbeRequest{ID: "early", Target: "127.0.0.1:443", TimeoutMS: 1000, Deadline: time.Now().Add(time.Second)}, &reply)
+	require.ErrorIs(t, err, context.Canceled)
+	err = service.Probe(ProbeRequest{ID: "expired", Target: "127.0.0.1:443", TimeoutMS: 1000, Deadline: time.Now().Add(-time.Second)}, &reply)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }

@@ -28,6 +28,7 @@ func TestDNSDefaultsUseSystemOnceAndSurviveReload(t *testing.T) {
 	servers := []string{"192.0.2.53"}
 	one, err := FromConfig(cfg, func(one *One) error {
 		one.readSystemDNS = func() ([]string, error) { reads++; return servers, nil }
+		one.readSystemDNSContext = func() (DNSSystemContext, error) { return DNSSystemContext{}, nil }
 		return nil
 	})
 	require.NoError(t, err)
@@ -246,6 +247,9 @@ func TestExampleDocumentsEveryConfigurationField(t *testing.T) {
 		fields := value.(map[string]any)
 		for i := 0; i < item.schema.NumField(); i++ {
 			key := strings.Split(item.schema.Field(i).Tag.Get("toml"), ",")[0]
+			if key == "-" {
+				continue
+			}
 			require.Contains(t, fields, key, "%s.%s missing from complete example", item.section, key)
 		}
 	}

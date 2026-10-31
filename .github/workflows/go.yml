@@ -280,10 +280,95 @@ jobs:
       - name: Test embedded Wintun without TAP installation
         run: go test -tags with_gvisor -race -failfast -count=1 -timeout 12m -run '^TestSystemWindowsWintun$' -v ./test/integration
 
+  dns-system:
+    name: Linux owned system DNS guidance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify isolated resolver tools are available
+        run: |
+          command -v busctl
+          command -v resolvectl
+          command -v dbus-daemon
+          test -x /usr/lib/systemd/systemd-resolved
+      - name: Build native DNS acceptance binary
+        run: go test -tags with_gvisor -race -c -o "$RUNNER_TEMP/kone-system-dns.test" ./test/integration
+      - name: Exercise OS DNS in private mount, network and D-Bus contexts
+        run: |
+          sudo env KONE_SYSTEM_DNS_TEST=1 unshare --mount --net --propagation private --fork -- bash scripts/test-system-dns.sh "$RUNNER_TEMP/kone-system-dns.test"
+
+  performance:
+    name: Reproducible performance baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Record hardware, toolchain and benchmark inputs
+        run: |
+          mkdir -p baseline
+          node -e 'const fs=require("node:fs"),os=require("node:os"),cp=require("node:child_process"); fs.writeFileSync("baseline/environment.json", JSON.stringify({sha:cp.execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),time:new Date().toISOString(),os:os.platform(),release:os.release(),arch:os.arch(),cpu:os.cpus()[0]?.model,logical_cpus:os.cpus().length,memory_bytes:os.totalmem(),concurrency:[1,2],samples:3,benchtime:"500ms",datasets:"deterministic fixtures in benchmark source at this SHA",network:"synthetic/local fixtures; no host TUN or external proxy"},null,2)+"\n")'
+          go version > baseline/toolchain.txt
+          go env GOOS GOARCH GOVERSION CGO_ENABLED >> baseline/toolchain.txt
+      - name: Measure both stack builds and retain matching profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          for stack in system mixed; do
+            flags=()
+            if [ "$stack" = mixed ]; then flags=(-tags with_gvisor); fi
+            go test "${flags[@]}" ./pkg/kone -run '^$' -bench . -benchmem -benchtime=500ms -count=3 -cpu=1,2 | tee "baseline/core-$stack.txt"
+            go test "${flags[@]}" ./pkg/geoip -run '^$' -bench . -benchmem -benchtime=500ms -count=3 -cpu=1,2 | tee "baseline/geoip-$stack.txt"
+            grep -q '^Benchmark' "baseline/core-$stack.txt"
+            grep -q '^Benchmark' "baseline/geoip-$stack.txt"
+            go test "${flags[@]}" ./pkg/kone -run '^$' -bench '^BenchmarkObservationQueries$' -benchmem -benchtime=1s -count=1 -cpu=2 -cpuprofile="baseline/cpu-$stack.out" -memprofile="baseline/memory-$stack.out" -o "baseline/kone-$stack.test" > "baseline/profile-$stack.txt"
+          done
+      - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: ${{ inputs.artifact-prefix }}performance-baseline
+          path: baseline/
+
+  shadowsocks-interop:
+    name: Official Shadowsocks server interoperability
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test digest-pinned shadowsocks-rust over isolated loopback
+        run: bash scripts/test-shadowsocks-interop.sh
+      - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: ${{ inputs.artifact-prefix }}shadowsocks-interoperability
+          path: |
+            ${{ runner.temp }}/kone-shadowsocks-interop/results.json
+            ${{ runner.temp }}/kone-shadowsocks-interop/server.log
+            ${{ runner.temp }}/kone-shadowsocks-interop/test.log
+            ${{ runner.temp }}/kone-shadowsocks-interop/image.json
+
   verified:
     name: Required gates verified (${{ inputs.ref || github.sha }})
-    if: ${{ !cancelled() && inputs.ref != '' && needs.web.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success' && needs.packages.result == 'success' && needs.robustness.result == 'success' && needs.docker.result == 'success' && needs.system.result == 'success' && needs.windows-system.result == 'success' && (needs.coverage.result == 'success' || needs.coverage.result == 'skipped') }}
-    needs: [web, test, coverage, build, packages, robustness, docker, system, windows-system]
+    if: ${{ !cancelled() && inputs.ref != '' && needs.web.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success' && needs.packages.result == 'success' && needs.performance.result == 'success' && needs.dns-system.result == 'success' && needs.shadowsocks-interop.result == 'success' && needs.robustness.result == 'success' && needs.docker.result == 'success' && needs.system.result == 'success' && needs.windows-system.result == 'success' && (needs.coverage.result == 'success' || needs.coverage.result == 'skipped') }}
+    needs: [web, test, coverage, build, packages, performance, robustness, docker, system, dns-system, shadowsocks-interop, windows-system]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1

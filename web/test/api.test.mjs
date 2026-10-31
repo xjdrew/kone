@@ -1,6 +1,12 @@
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { request, bootstrap, ApiError, targetWithPort } from "../src/api.js";
+import {
+  request,
+  bootstrap,
+  ApiError,
+  targetWithPort,
+  flowQueryChunks,
+} from "../src/api.js";
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -14,6 +20,32 @@ test("diagnostic target formatting preserves explicit ports and brackets IPv6 li
   assert.equal(targetWithPort("fd7a:203::2", 443), "[fd7a:203::2]:443");
   assert.equal(targetWithPort("[fd7a:203::2]", 443), "[fd7a:203::2]:443");
   assert.equal(targetWithPort("[fd7a:203::2]:8443", 443), "[fd7a:203::2]:8443");
+});
+
+test("large graph drilldown stays bounded while preserving exact sampled membership", () => {
+  const ids = Array.from(
+    { length: 1200 },
+    (_, i) => `session-12345678901234567890-${i}`,
+  );
+  const paths = Array.from(
+    { length: 800 },
+    (_, i) => `path-12345678901234567890-${i}`,
+  );
+  const queries = flowQueryChunks(
+    { anchor: "s:1200", since: "start", until: "end" },
+    paths,
+    ids,
+  );
+  assert.equal(queries.length, 12);
+  assert.deepEqual(
+    queries.flatMap((query) => query.flow_ids.split(",")),
+    ids,
+  );
+  for (const query of queries) {
+    assert.equal(query.anchor, "s:1200");
+    assert.equal(query.since, "start");
+    assert.ok(new URLSearchParams(query).toString().length < 8000);
+  }
 });
 
 test("bootstrap removes URL token before exchange and uses cookie/CSRF after exchange", async () => {

@@ -3,6 +3,7 @@ module github.com/xjdrew/kone
 go 1.27.3
 
 require (
+	github.com/Microsoft/go-winio v0.6.4
 	github.com/miekg/dns v1.1.73
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/sagernet/gvisor v0.0.0-20260727.0-sing-box-mod.1
@@ -16,7 +17,6 @@ require (
 )
 
 require (
-	github.com/Microsoft/go-winio v0.6.4 // indirect
 	github.com/florianl/go-nfqueue/v2 v2.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect

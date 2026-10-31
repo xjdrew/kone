@@ -7,6 +7,7 @@ import {
   request,
   setSession,
   targetWithPort,
+  flowQueryChunks,
 } from "./api.js";
 import { aggregatePaths, bytes, nativePaths, renderSankey } from "./graph.js";
 
@@ -114,6 +115,9 @@ const stateLabels = {
   invalid_config: "配置待修复",
 };
 const statusLabels = {
+  not_applied: "尚未应用",
+  unknown: "结果未知",
+  reachable: "传输可达",
   active: "活动",
   connecting: "连接中",
   closed: "已结束",
@@ -142,6 +146,7 @@ function h(tag, props = {}, ...children) {
       key === "checked" ||
       key === "disabled" ||
       key === "hidden" ||
+      key === "open" ||
       key === "required"
     )
       node[key] = Boolean(item);
@@ -651,8 +656,20 @@ async function lifecycle(actionName) {
   });
 }
 async function watchOperation(operation) {
-  if (!operation.id || !["running", "queued"].includes(operation.status))
+  const completed = (operation) => {
+    if (
+      operation.error ||
+      ["failed", "not_applied", "canceled", "cancelled", "expired"].includes(
+        operation.status,
+      )
+    )
+      throw new ApiError(
+        operation.error || statusLabels[operation.status] || "操作未完成。",
+      );
     return operation;
+  };
+  if (!operation.id || !["running", "queued"].includes(operation.status))
+    return completed(operation);
   notice("主机正在执行操作，可在诊断页查看任务结果。页面断连不会重复提交。");
   const deadline = Date.now() + 45000;
   while (Date.now() < deadline) {
@@ -660,8 +677,7 @@ async function watchOperation(operation) {
     operation = await endpoints.operation(operation.id);
     await refreshState();
     if (!["running", "queued"].includes(operation.status)) {
-      if (operation.status === "failed" || operation.error)
-        throw new ApiError(operation.error || "主机操作失败。");
+      completed(operation);
       notice("主机操作已完成，运行状态已刷新。", "success");
       return operation;
     }
@@ -686,6 +702,8 @@ function changeGraph(key, value) {
   refreshAll().catch(failure);
 }
 async function drillPath(selected, aggregation) {
+  if (model.readBusy) return;
+  model.readBusy = true;
   const snapshot = model.graphSnapshot;
   try {
     let result = snapshot;
@@ -700,15 +718,29 @@ async function drillPath(selected, aggregation) {
       const flowIDs = [
         ...new Set(filters.flatMap((filter) => filter.flow_ids || [])),
       ];
-      const query = {
-        anchor: aggregation.anchor,
-        path_ids: pathIDs.join(","),
-        flow_ids: flowIDs.join(","),
-        limit: "4096",
+      const base = { anchor: aggregation.anchor };
+      if (aggregation.window_start) base.since = aggregation.window_start;
+      if (aggregation.window_end) base.until = aggregation.window_end;
+      const queries = flowQueryChunks(base, pathIDs, flowIDs);
+      const records = new Map();
+      let incomplete = flowIDs.length > 5000;
+      for (const query of queries) {
+        const page = normalizeTraffic(await endpoints.flows(query));
+        if (page.anchor_expired) throw new ApiError("所点快照已过期。", 410);
+        for (const flow of page.flows) records.set(flow.id, flow);
+        incomplete ||= Boolean(page.truncated || page.next_cursor);
+        result ||= page;
+        if (result === snapshot) result = page;
+      }
+      result = {
+        ...result,
+        total: records.size,
+        next_cursor: "",
+        flows: [...records.values()],
+        truncated:
+          incomplete ||
+          (flowIDs.length > 0 && records.size < Math.min(flowIDs.length, 5000)),
       };
-      if (aggregation.window_start) query.since = aggregation.window_start;
-      if (aggregation.window_end) query.until = aggregation.window_end;
-      result = normalizeTraffic(await endpoints.flows(query));
     }
     model.frozen = {
       snapshot: result,
@@ -728,6 +760,49 @@ async function drillPath(selected, aggregation) {
         : error.message,
       "error",
     );
+  } finally {
+    model.readBusy = false;
+  }
+}
+
+async function loadOlderFlows() {
+  if (model.readBusy) return;
+  const current = model.frozen?.snapshot || model.traffic;
+  if (!current.next_cursor || current.flows.length >= 5000) return;
+  model.readBusy = true;
+  try {
+    const query = model.frozen?.query || { protocol: model.protocol };
+    const page = normalizeTraffic(
+      await endpoints.flows({
+        ...query,
+        anchor: current.anchor,
+        cursor: current.next_cursor,
+        limit: "500",
+      }),
+    );
+    if (page.anchor_expired)
+      throw new ApiError("原列表快照已过期，请显式切换实时后重试。", 410);
+    const records = new Map(
+      [...current.flows, ...page.flows].map((flow) => [flow.id, flow]),
+    );
+    const snapshot = {
+      ...current,
+      next_cursor: page.next_cursor,
+      flows: [...records.values()],
+      total: page.total,
+      truncated: current.truncated || page.truncated,
+    };
+    model.frozen = {
+      snapshot,
+      ids: snapshot.flows.map((flow) => flow.id),
+      query,
+      label: "连接列表分页",
+    };
+    render();
+  } catch (error) {
+    notice(error.message, "error");
+  } finally {
+    model.readBusy = false;
   }
 }
 function closeDialog() {
@@ -1308,11 +1383,11 @@ function renderConnections() {
   return [
     model.frozen &&
       note(
-        `固定路径快照：${model.frozen.label} · ${time(model.frozen.window_start || model.frozen.snapshot.at)}${model.frozen.window_end ? ` 至 ${time(model.frozen.window_end)}` : ""}。页面保留所点样本；计数为明细当前值，不将新连接混入。`,
+        `固定观察快照：${model.frozen.label} · ${time(model.frozen.window_start || model.frozen.snapshot.at)}${model.frozen.window_end ? ` 至 ${time(model.frozen.window_end)}` : ""}。页面保留所点样本；计数为明细当前值，不将新连接混入。`,
       ),
     model.frozen?.snapshot.truncated &&
       note(
-        "部分原始明细已过期或超出保留容量。保留原聚合证据，不用新连接补位。",
+        "部分原始明细已过期、超出保留容量或界面 5000 条展示上限。保留原聚合证据，不用新连接补位。",
         "warning",
       ),
     model.frozen &&
@@ -1332,7 +1407,7 @@ function renderConnections() {
       h(
         "div",
         { class: "search-summary" },
-        `${flows.length} 条记录${model.traffic.dropped ? ` · ${model.traffic.dropped} 条明细因容量限制未保留` : ""}`,
+        `当前筛选 ${flows.length} 条 · 已载入 ${(model.frozen?.snapshot || model.traffic).flows.length} 条 / 保留 ${(model.frozen?.snapshot || model.traffic).total ?? model.traffic.flows.length} 条；筛选作用于已载入记录${model.traffic.dropped ? ` · ${model.traffic.dropped} 条明细因容量限制未保留` : ""}`,
       ),
       flows.length
         ? h("div", { class: "table-wrap" }, table)
@@ -1367,6 +1442,9 @@ function renderConnections() {
           ),
         ),
       ),
+      !model.frozen?.window_start &&
+        (model.frozen?.snapshot || model.traffic).next_cursor &&
+        button("固定快照并加载更早记录", loadOlderFlows, "ghost", false),
     ),
   ];
 }
@@ -1656,6 +1734,16 @@ function renderOutbounds() {
       h(
         "div",
         { class: "form-grid" },
+        check(
+          "启用此代理出站",
+          outbound.enabled !== false,
+          (value) => {
+            outbound.enabled = value;
+            markDirty();
+          },
+          "禁用后新连接明确拒绝，不直连或执行 UDP 回退；已有连接保留原快照。",
+          `outbound-enabled-${index}`,
+        ),
         field(
           "名称",
           outbound.name,
@@ -1726,7 +1814,7 @@ function renderOutbounds() {
         ),
         actions.action === "replace" &&
           field(
-            "用户名",
+            "用户名 / SS 加密方法",
             actions.username || "",
             (value) => credentials({ username: value }),
             { id: `outbound-username-${index}`, autocomplete: "username" },
@@ -1762,6 +1850,7 @@ function renderOutbounds() {
             navigate("diagnostics");
           },
           "ghost compact",
+          !canManage() || outbound.enabled === false,
         ),
       ),
     );
@@ -1921,6 +2010,8 @@ function renderRules() {
           rule.type,
           (value) => {
             rule.type = value;
+            if (!["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD"].includes(value))
+              delete rule["expires-at"];
             if (value === "FINAL") {
               delete rule.pattern;
               model.draft.rules.splice(index, 1);
@@ -1991,6 +2082,70 @@ function renderRules() {
             placeholder: "留空匹配所有端口",
             hint: "逗号分隔，例如 443, 8443。后端校验范围和重复。",
           },
+        ),
+      ),
+      h(
+        "details",
+        { class: "disclosure", open: Boolean(rule["expires-at"]) },
+        h(
+          "summary",
+          {},
+          rule["expires-at"]
+            ? `临时规则 · ${time(rule["expires-at"])}`
+            : "高级：规则有效期",
+        ),
+        h(
+          "div",
+          { class: "form-grid" },
+          field(
+            "有效期",
+            rule["expires-at"] ? "temporary" : "permanent",
+            (value) => {
+              if (value === "permanent") delete rule["expires-at"];
+              else
+                rule["expires-at"] = new Date(
+                  Date.now() + 3600000,
+                ).toISOString();
+              markDirty();
+              render();
+            },
+            {
+              id: `rule-lifetime-${index}`,
+              disabled:
+                !canManage() ||
+                !["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD"].includes(
+                  rule.type,
+                ),
+              options: [
+                { value: "permanent", label: "永久" },
+                { value: "temporary", label: "临时（默认一小时，可调整）" },
+              ],
+              hint: "临时规则只支持域名，不隐式移除 CIDR 路由。",
+            },
+          ),
+          rule["expires-at"] &&
+            field(
+              "到期时间（当前浏览器时区）",
+              (() => {
+                const date = new Date(rule["expires-at"]);
+                return Number.isFinite(date.valueOf())
+                  ? new Date(date.valueOf() - date.getTimezoneOffset() * 60000)
+                      .toISOString()
+                      .slice(0, 16)
+                  : "";
+              })(),
+              (value) => {
+                const date = new Date(value);
+                if (Number.isFinite(date.valueOf()))
+                  rule["expires-at"] = date.toISOString();
+                markDirty();
+              },
+              {
+                id: `rule-expires-${index}`,
+                type: "datetime-local",
+                hint: "到期后新连接继续匹配后续规则，已有连接及 Fake-IP 映射保留。",
+              },
+            ),
         ),
       ),
     ),
@@ -2142,7 +2297,7 @@ function renderDNS() {
                   ? "muted"
                   : "success",
             ),
-        `${record.upstream || record.server || "—"} / ${record.upstream_transport || record.transport || "未知"}`,
+        `${record.upstream || record.server || "—"} / ${record.upstream_transport || record.transport || "未知"} · ${record.resolver_interface || "接口未提供"}`,
         `${record.duration_ms ?? record.latency_ms ?? "—"} ms`,
         button(
           "详情",
@@ -2173,6 +2328,15 @@ function renderDNS() {
       h(
         "div",
         { class: "form-grid" },
+        check(
+          "引导本机系统 DNS",
+          Boolean(dns.system),
+          (value) => configSet("dns", "system", value),
+          "仅 Linux systemd-resolved：监听就绪后设置自有 TUN link DNS，停止先恢复。不会改 resolv.conf、HTTP 代理或其他接口；现有 VPN 的更具体 DNS 域仍优先。",
+          "dns-system",
+          !canManage() ||
+            (!model.state.capabilities?.system_dns && !dns.system),
+        ),
         field(
           "上游 DNS",
           list(dns.servers).join(", "),
@@ -2275,6 +2439,14 @@ function renderDNS() {
           ["当前解析模式", dns.servers?.length ? "显式上游" : "系统 DNS"],
           ["本次实际服务器", list(actual).join(", ") || "尚未发现或尚未启用"],
           [
+            "系统发现来源",
+            model.dns?.status?.system_source || "尚未发现或使用手工上游",
+          ],
+          [
+            "系统搜索域",
+            list(model.dns?.status?.search_domains).join(", ") || "未返回",
+          ],
+          [
             "DNS TCP",
             model.dns?.status?.tcp
               ? "支持，与 UDP 共用解析策略"
@@ -2309,6 +2481,20 @@ function renderDNS() {
                   id: `dns-route-suffix-${index}`,
                   placeholder: "corp.example",
                   hint: ". 表示所有域名。",
+                },
+              ),
+              field(
+                "解析器出口接口",
+                route.interface || "",
+                (value) => {
+                  if (value) route.interface = value;
+                  else delete route.interface;
+                  markDirty();
+                },
+                {
+                  id: `dns-route-interface-${index}`,
+                  placeholder: "留空按系统路由",
+                  hint: "指定真实接口；回环解析器仍保持回环，不可指定 TUN。",
                 },
               ),
               field(
@@ -2347,6 +2533,34 @@ function renderDNS() {
         render();
       }),
       configFooter(),
+    ),
+    card(
+      "系统解析范围",
+      "以下为运行时只读快照，自动发现的系统范围不会写成可编辑内部字段。手工规则优先，不保证复制全部应用或 VPN 策略。",
+      list(model.dns?.status?.warnings).map((warning) =>
+        note(warning, "warning"),
+      ),
+      list(model.dns?.status?.rules).filter((route) => route.automatic).length
+        ? h(
+            "div",
+            { class: "panel-list" },
+            list(model.dns.status.rules)
+              .filter((route) => route.automatic)
+              .map((route) =>
+                row(
+                  `${route.exact ? "精确" : "后缀"} ${route.suffix}`,
+                  `${list(route.servers).join(", ") || "上游不可用"} · ${route.interface || "系统路由"}${route.reason ? ` · ${route.reason}` : ""}`,
+                  tag(
+                    route.unavailable ? "拒绝不安全回退" : "系统范围",
+                    route.unavailable ? "error" : "muted",
+                  ),
+                ),
+              ),
+          )
+        : empty(
+            "没有自动解析范围",
+            "手工上游、系统未提供范围或尚未启动时，不虚构系统搜索域/VPN 配置。",
+          ),
     ),
     card(
       "查询记录",
@@ -2618,7 +2832,7 @@ function showTask(task) {
             results.map((result) =>
               row(
                 result.outbound || "未知出站",
-                `${result.stage || "未知阶段"} · ${result.message || ""}`,
+                `${{ target_tls: "目标 TLS", proxy_transport: "代理外层传输", proxy_auth: "代理认证", proxy_handshake: "代理握手", connect: "目标连接", dns: "DNS 解析" }[result.stage] || result.stage || "未知阶段"} · ${result.message || ""}${result.peer_kind === "proxy_endpoint" ? " · 地址证据仅为代理端点，真实业务地址未知" : ""}${result.dns_path ? ` · DNS ${result.dns_path}` : ""}`,
                 h(
                   "div",
                   {},
@@ -2690,7 +2904,10 @@ function renderSettings() {
           "应用已保存设置",
           () =>
             action(
-              () => endpoints.apply({ version: model.config?.version }),
+              async () =>
+                watchOperation(
+                  await endpoints.apply({ version: model.config?.version }),
+                ),
               "已应用保存的设置",
             ),
           "primary",
@@ -2722,7 +2939,7 @@ function renderSettings() {
             await endpoints.undo({ base_version: model.config?.version });
             await loadConfig(true);
             render();
-          }, "已撤销到上一份有效设置"),
+          }, "已保存上一份有效设置，尚未应用"),
         ),
       ),
     ),
@@ -3087,14 +3304,16 @@ function renderGeoIP() {
           );
         },
         "primary",
-        !canManage() || running(),
+        !canManage() || running() || Boolean(model.geoError),
       ),
       button(
-        "回退上一份 GeoIP",
+        model.geoError ? "尝试恢复已保存上一版" : "回退上一份 GeoIP",
         () =>
           dialog(
             "回退 GeoIP",
-            "将保存上一份有效数据，不自动启用接管。",
+            model.geoError
+              ? "当前数据无法读取。主机将重新校验已保存 previous 元数据及数据文件，成功后恢复；不会猜测或自动替换成内置版。"
+              : "将保存上一份有效数据，不自动启用接管。",
             detailPairs([
               ["回退版本", model.geoip?.previous?.version],
               ["SHA-256", model.geoip?.previous?.sha256],
@@ -3108,7 +3327,7 @@ function renderGeoIP() {
                   action(async () => {
                     model.geoip = await request("/geoip/rollback", "POST", {
                       base_version: model.config.version,
-                      base_sha256: saved.sha256,
+                      base_sha256: model.geoError ? "" : saved.sha256,
                     });
                     notice(
                       "已保存上一份 GeoIP，下次显式启用接管时加载。",
@@ -3121,7 +3340,9 @@ function renderGeoIP() {
             ],
           ),
         "danger",
-        !canManage() || running() || !model.geoip?.previous,
+        !canManage() ||
+          running() ||
+          (!model.geoip?.previous && !model.geoError),
       ),
     ),
   );
@@ -3242,7 +3463,11 @@ function renderLANSettings() {
     note(
       "手机看到所连接 KONE 主机的流量，打开页面不会使手机全部业务自动经过 KONE。",
     ),
-    model.state.remote_session && note("局域网入口、配对代码和证书下载需要在 KONE 主机本机操作。", "warning"),
+    model.state.remote_session &&
+      note(
+        "局域网入口、配对代码和证书下载需要在 KONE 主机本机操作。",
+        "warning",
+      ),
     h(
       "div",
       { class: "field" },
@@ -3261,7 +3486,10 @@ function renderLANSettings() {
         lan.enabled ? "更新局域网入口" : "开启局域网访问",
         () =>
           action(async () => {
-            model.lan = await request("/access/lan", "POST", { enabled: true, address: address.value });
+            model.lan = await request("/access/lan", "POST", {
+              enabled: true,
+              address: address.value,
+            });
             showResult("局域网访问", model.lan);
             await refreshState();
             render();
@@ -3282,41 +3510,52 @@ function renderLANSettings() {
           "danger",
           !owner,
         ),
-      button("创建只读授权码", () =>
-        action(async () => {
-          const result = await endpoints.pair({ role: "read" });
-          dialog(
-            "手机只读授权",
-            "此代码短期有效。先信任本地主机证书，再在手机授权页输入；地址不包含长期秘密。",
-            detailPairs([
-              ["访问地址", result.address || lan.url || lan.address || "先启用局域网访问"],
-              ["授权代码", result.code || result.pairing_code],
-              ["到期时间", time(result.expires || result.expires_at)],
-              ["权限", "只读 · 不能修改配置、诊断或启停"],
-            ]),
-          );
-        }),
+      button(
+        "创建只读授权码",
+        () =>
+          action(async () => {
+            const result = await endpoints.pair({ role: "read" });
+            dialog(
+              "手机只读授权",
+              "此代码短期有效。先信任本地主机证书，再在手机授权页输入；地址不包含长期秘密。",
+              detailPairs([
+                [
+                  "访问地址",
+                  result.address ||
+                    lan.url ||
+                    lan.address ||
+                    "先启用局域网访问",
+                ],
+                ["授权代码", result.code || result.pairing_code],
+                ["到期时间", time(result.expires || result.expires_at)],
+                ["权限", "只读 · 不能修改配置、诊断或启停"],
+              ]),
+            );
+          }),
         "",
         !owner || !lan.enabled,
       ),
-      button("创建管理授权码", () =>
-        action(async () => {
-          const result = await endpoints.pair({ role: "admin" });
-          dialog(
-            "手机管理授权",
-            "管理会话可修改配置和启停接管，仅授权给可信设备。",
-            detailPairs([
-              ["访问地址", result.address || lan.url || lan.address],
-              ["授权代码", result.code || result.pairing_code],
-              ["到期时间", time(result.expires || result.expires_at)],
-              ["权限", "管理"],
-            ]),
-          );
-        }),
+      button(
+        "创建管理授权码",
+        () =>
+          action(async () => {
+            const result = await endpoints.pair({ role: "admin" });
+            dialog(
+              "手机管理授权",
+              "管理会话可修改配置和启停接管，仅授权给可信设备。",
+              detailPairs([
+                ["访问地址", result.address || lan.url || lan.address],
+                ["授权代码", result.code || result.pairing_code],
+                ["到期时间", time(result.expires || result.expires_at)],
+                ["权限", "管理"],
+              ]),
+            );
+          }),
         "",
         !owner || !lan.enabled,
       ),
-      owner && lan.enabled &&
+      owner &&
+        lan.enabled &&
         h(
           "a",
           {
@@ -3487,6 +3726,7 @@ async function loadPageData() {
       model.geoError = null;
     } catch (error) {
       model.geoError = error.message;
+      model.geoip = null;
     }
     try {
       model.recovery = await request("/recovery");

@@ -15,11 +15,13 @@ These capabilities form the compatibility baseline for future refactoring. New f
 | F01 | Desktop and gateway deployment | Linux, macOS and Windows; Linux amd64, arm64 and ARMv7 builds, including Raspberry Pi gateways |
 | F02 | LAN traffic takeover | Selective Fake-IP/CIDR routing or optional full IPv4 capture; clients use the gateway and KONE DNS, with forwarding and firewall rules configured by the operator |
 | F03 | DNS and routing policy | Stable Fake-IP addresses; ordered domain, suffix, keyword, IPv4 CIDR, GeoIP, DIRECT, REJECT and final rules |
-| F04 | Outbound policy | HTTP/HTTPS CONNECT and SOCKS5 TCP; built-in direct/reject; unsupported proxy UDP is denied unless an explicit direct fallback is configured |
+| F04 | Outbound policy | HTTP/HTTPS CONNECT TCP, SOCKS5 TCP/UDP and Shadowsocks AEAD2017 TCP/UDP; built-in direct/reject; unsupported proxy UDP is denied unless an explicit direct fallback is configured |
 | F05 | Safe rule reload | Atomic rule/proxy snapshots; virtual addresses and established connections survive reload |
 | F06 | Predictable lifecycle | Startup rollback, signal/context shutdown, owned route/device cleanup and failed TUN opens without panics |
 | F07 | Gateway outbound isolation | Bind proxy transports and upstream DNS to the physical interface to avoid recapture by full-tunnel routes |
-| F08 | Operation and diagnostics | Strict TOML validation, checks without network changes, structured logs and local management |
+| F08 | Operation and diagnostics | Persistent authenticated management, strict TOML import/validation, live business-flow observation, DNS history and independent diagnostics |
+| F09 | Explicit IPv6 on Linux | Optional ULA virtual network and IPv6 capture/rules; disabled by default, with unsupported Windows/macOS activation rejected before changes |
+| F10 | Owned DNS guidance | Optional Linux systemd-resolved link integration after listeners are ready, with verified ownership and restoration before DNS shutdown |
 
 ## Build and run
 
@@ -65,8 +67,8 @@ Reload atomically publishes domain/GeoIP/default rules and outbound definitions,
 
 ## Current boundaries
 
-- IPv4 DNS virtual-address routing, explicit CIDR routes and optional full IPv4 route capture. Full capture still follows DIRECT/REJECT/proxy rules and existing more-specific system routes. LAN clients must use KONE DNS and the gateway; DHCP and firewall setup remain operator-owned.
-- TCP uses the selected outbound. UDP uses direct for direct rules and always denies reject rules. Current proxies have no UDP support, so proxy UDP is denied by default; set the proxy's optional `udp-fallback = "direct"` only when direct UDP is intended. SOCKS5 UDP ASSOCIATE and IPv6 interception are not implemented.
+- IPv4 DNS virtual-address routing, explicit CIDR routes and optional full IPv4 capture; Linux may explicitly opt into ULA IPv6 virtual addresses, IPv6 rules and optional full IPv6 capture. IPv6 is disabled by default and Windows/macOS activation is rejected. Full capture follows routing rules and existing more-specific system routes. LAN clients must use KONE DNS and the gateway; DHCP and firewall setup remain operator-owned.
+- TCP uses the selected outbound. UDP uses direct for direct rules and always denies reject rules. SOCKS5 and supported Shadowsocks AEAD2017 outbounds carry native UDP; HTTP/HTTPS CONNECT do not. Unsupported proxy UDP is denied by default; set `udp-fallback = "direct"` only when direct UDP is intended. Shadowsocks plugins, legacy stream ciphers and AEAD-2022 are outside the supported range.
 - The default `system` stack works with an ordinary Go build. Optional `mixed` (system TCP and gVisor UDP) requires `-tags with_gvisor`; see [stack selection](docs/configuration.md#tun-backend-and-stack). Packet/fragment behavior depends on the selected stack; arbitrary fragmentation is not a compatibility guarantee yet.
 - Startup failures roll back owned network changes; normal signal/context shutdown closes active flows and restores adapter settings. Forced termination cannot run cleanup. See [runtime reliability](docs/runtime.md).
 - Full IPv4 capture requires `core.outbound-interface` so proxy transports and DNS leave through the physical interface. Changing that interface requires a restart; automatic network switching and crash recovery remain future work.
@@ -89,6 +91,10 @@ npm run test:e2e
 ```
 
 Browser journeys run against an isolated loopback mock API and never start KONE or change host networking. They cover all eight pages at 320px, real-path aggregation and fixed-window drilldown, configuration conflicts, credential preservation, read-only authorization and offline/error states. Phone browser layouts are covered by automated browser tests; iOS Safari and Android Chrome device/network trust still need real-device acceptance.
+
+The Web baseline is Safari/iOS 16.4, Chrome/Android 110 and Firefox 115 or later. Assets, icons and fonts do not require a public CDN. [Verified releases](docs/releases.md) describes per-commit qualification, three-platform packages, checksums, stable promotion, withdrawal and rollback; packages are currently unsigned and macOS packages are not notarized.
+
+[System DNS guidance](docs/system-dns.md) describes the Linux opt-in and platform boundaries. [The acceptance index](docs/acceptance.md) links each feature to tests and remaining hardware checks; [performance baselines](docs/performance.md) keep synthetic recorder throughput separate from measured network performance.
 
 ```sh
 go test ./...

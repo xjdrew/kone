@@ -2,6 +2,7 @@ package kone
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ type DNSQueryEvent struct {
 	Transport          string    `json:"transport"`
 	Upstream           string    `json:"upstream,omitempty"`
 	UpstreamTransport  string    `json:"upstream_transport,omitempty"`
+	ResolverInterface  string    `json:"resolver_interface,omitempty"`
 	AttemptedResolvers []string  `json:"attempted_resolvers,omitempty"`
 	Route              string    `json:"route,omitempty"`
 	Status             string    `json:"status"`
@@ -38,6 +40,7 @@ type dnsQueryMeta struct {
 	Upstream, UpstreamTransport, Cache, Route string
 	Virtual, Real                             []string
 	AttemptedResolvers                        []string
+	ResolverInterface                         string
 }
 
 type dnsHistory struct {
@@ -148,6 +151,7 @@ func (d *Dns) recordQuery(request, reply *dns.Msg, err error, transport, source 
 	}
 	if meta != nil {
 		event.Upstream, event.UpstreamTransport, event.Route = meta.Upstream, meta.UpstreamTransport, meta.Route
+		event.ResolverInterface = meta.ResolverInterface
 		event.AttemptedResolvers = append([]string(nil), meta.AttemptedResolvers...)
 		if meta.Cache != "" {
 			event.Cache = meta.Cache
@@ -187,6 +191,11 @@ func validDNSSuffix(suffix string) bool {
 	if suffix == "" || len(suffix) > 253 || strings.ContainsAny(suffix, "\x00\r\n\t /*\\") {
 		return false
 	}
+	for _, ch := range suffix {
+		if ch > 127 {
+			return false
+		}
+	}
 	_, valid := dns.IsDomainName(dns.Fqdn(suffix))
 	return valid
 }
@@ -199,16 +208,32 @@ func normalizeDNSSuffix(suffix string) string {
 }
 
 func (d *Dns) selectResolvers(name string) ([]string, string) {
+	servers, suffix, _, _ := d.selectResolverRoute(name)
+	return servers, suffix
+}
+
+func (d *Dns) selectResolverRoute(name string) ([]string, string, string, error) {
 	name = normalizeDomain(name)
 	best := -1
 	servers, suffix := d.nameservers, ""
+	selected := DNSRouteConfig{}
 	for _, route := range d.routes {
 		candidate := normalizeDNSSuffix(route.Suffix)
-		if (candidate == "." || name == candidate || strings.HasSuffix(name, "."+candidate)) && len(candidate) > best {
-			best, servers, suffix = len(candidate), route.Servers, candidate
+		score := 2 * len(candidate)
+		if route.Exact {
+			score++
+		}
+		if !route.Automatic {
+			score += 1024
+		}
+		if (candidate == "." || name == candidate || !route.Exact && strings.HasSuffix(name, "."+candidate)) && score > best {
+			best, servers, suffix, selected = score, route.Servers, candidate, route
 		}
 	}
-	return servers, suffix
+	if selected.Unavailable {
+		return nil, suffix, dnsRouteKey(selected), errors.New("exclusive system DNS scope unavailable: " + selected.Reason)
+	}
+	return servers, suffix, dnsRouteKey(selected), nil
 }
 
 // Maintain expires query records and caches even when no browser is connected.
@@ -247,6 +272,9 @@ type DNSRuntimeStatus struct {
 	CacheLimit              int              `json:"cache_limit"`
 	TCP                     bool             `json:"tcp"`
 	IPv6                    bool             `json:"ipv6"`
+	SystemSource            string           `json:"system_source"`
+	SearchDomains           []string         `json:"search_domains"`
+	Warnings                []string         `json:"warnings"`
 }
 
 func (one *One) DNSQueries() []DNSQueryEvent {
@@ -271,6 +299,9 @@ func (one *One) DNSStatus() DNSRuntimeStatus {
 		return status
 	}
 	d := one.dns
+	status.SystemSource = d.systemContext.Source
+	status.SearchDomains = append([]string(nil), d.systemContext.SearchDomains...)
+	status.Warnings = append([]string(nil), d.systemContext.Warnings...)
 	status.IPv6 = one.dnsTable6 != nil
 	status.Servers = append(status.Servers, d.nameservers...)
 	for _, route := range d.routes {

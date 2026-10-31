@@ -21,30 +21,44 @@ func SupportedStacks() []string {
 // DialDiagnostic uses exactly the engine's outbound binding and DNS policy.
 // It creates no TUN, route or adapter changes and never replays an application request.
 func (one *One) DialDiagnostic(ctx context.Context, outbound, target string) (net.Conn, error) {
+	return one.dialDiagnosticSnapshot(ctx, one.policy.Load(), outbound, target)
+}
+
+func (one *One) dialDiagnosticSnapshot(ctx context.Context, s *runtimeSnapshot, outbound, target string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(target)
 	if err != nil {
-		return nil, errors.New("target must be host:port")
+		return nil, diagnosticError("configuration", errors.New("target must be host:port"))
 	}
 	p, err := strconv.Atoi(port)
 	if err != nil || p < 1 || p > 65535 {
-		return nil, errors.New("invalid target port")
+		return nil, diagnosticError("configuration", errors.New("invalid target port"))
 	}
-	s := one.policy.Load()
+	if s == nil {
+		return nil, diagnosticError("configuration", errors.New("engine policy is not initialized"))
+	}
 	if s.rule.OutboundType(outbound) == OutboundDirect {
 		if _, err := netip.ParseAddr(host); err != nil {
 			response, err := one.dns.ResolveContext(ctx, host)
 			if err != nil {
-				return nil, err
+				return nil, diagnosticError("dns", err)
 			}
 			record := &DomainRecord{}
 			record.SetRealIP(response)
 			if record.RealIP == nil {
-				return nil, errors.New("domain has no IPv4 address")
+				return nil, diagnosticError("dns", errors.New("domain has no IPv4 address"))
 			}
 			target = net.JoinHostPort(record.RealIP.String(), port)
 		}
 	}
-	return s.outbounds.DialContext(ctx, outbound, target)
+	conn, err := s.outbounds.DialContext(ctx, outbound, target)
+	if err != nil {
+		stage := "connect"
+		if s.rule.OutboundType(outbound) == OutboundReject || errors.Is(err, ErrRejected) {
+			stage = "policy"
+		}
+		return nil, diagnosticError(stage, err)
+	}
+	return conn, nil
 }
 
 type PreflightIssue struct {

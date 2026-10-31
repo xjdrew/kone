@@ -11,10 +11,12 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/miekg/dns"
 	"github.com/pelletier/go-toml/v2"
 	"github.com/xjdrew/kone/pkg/geoip"
 	"github.com/xjdrew/kone/pkg/kone"
@@ -206,7 +208,7 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		inbound := c.doc.Inbound
 		c.mu.Unlock()
 		inbound.Enabled = false
-		value, err := c.Save(SaveRequest{BaseVersion: request.BaseVersion, Config: jsonConfig(kone.DefaultConfig()), Inbound: inbound})
+		value, err := c.Save(SaveRequest{BaseVersion: request.BaseVersion, Config: jsonConfig(managementDefaults()), Inbound: inbound})
 		if err != nil {
 			respondError(err)
 			return
@@ -547,17 +549,18 @@ func (c *Controller) simulate(w http.ResponseWriter, r *http.Request) {
 
 func (c *Controller) exactRule(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		BaseVersion uint64 `json:"base_version"`
-		Target      string `json:"target"`
-		Outbound    string `json:"outbound"`
-		Protocol    string `json:"protocol"`
-		Port        uint16 `json:"port"`
+		BaseVersion      uint64 `json:"base_version"`
+		Target           string `json:"target"`
+		Outbound         string `json:"outbound"`
+		Protocol         string `json:"protocol"`
+		Port             uint16 `json:"port"`
+		TemporarySeconds int64  `json:"temporary_seconds,omitempty"`
 	}
 	if err := readJSON(w, r, &request); err != nil {
 		apiError(w, 400, "request", err.Error())
 		return
 	}
-	if len(request.Target) > 253 || strings.ContainsAny(request.Target, " /\\\x00\r\n\t") {
+	if request.Target == "" || len(request.Target) > 253 || strings.ContainsAny(request.Target, " /\\\x00\r\n\t") {
 		apiError(w, 400, "target", "Use an exact hostname or IP")
 		return
 	}
@@ -567,17 +570,32 @@ func (c *Controller) exactRule(w http.ResponseWriter, r *http.Request) {
 	rule := kone.RuleConfig{ID: randomID("rule"), Source: "one-click", Schema: "DOMAIN", Pattern: strings.ToLower(strings.TrimSuffix(request.Target, ".")), Outbound: request.Outbound, Protocol: request.Protocol}
 	if address, err := netip.ParseAddr(request.Target); err == nil {
 		if !address.Is4() {
-			apiError(w, 400, "unsupported", "IPv6 capture is not available")
+			if doc.Config.Core.IPv6Network == "" || !kone.SupportsIPv6Capture() {
+				apiError(w, 400, "unsupported", "Configure IPv6 capture on a supported platform before adding an IPv6 rule")
+				return
+			}
+			rule.Schema = "IP-CIDR6"
+			rule.Pattern = address.String() + "/128"
+		} else {
+			rule.Schema = "IP-CIDR"
+			rule.Pattern = address.String() + "/32"
+		}
+	} else if _, valid := dns.IsDomainName(dns.Fqdn(rule.Pattern)); !valid || rule.Pattern == "" || strings.ContainsAny(rule.Pattern, ":?#@*") {
+		apiError(w, 400, "target", "Use an exact DNS hostname or IP address")
+		return
+	}
+	if request.TemporarySeconds != 0 {
+		if rule.Schema != "DOMAIN" || request.TemporarySeconds < 60 || request.TemporarySeconds > 86400 {
+			apiError(w, 400, "temporary_rule", "Temporary rules require a domain and a duration from 60 to 86400 seconds")
 			return
 		}
-		rule.Schema = "IP-CIDR"
-		rule.Pattern = address.String() + "/32"
+		rule.ExpiresAt = c.now().Add(time.Duration(request.TemporarySeconds) * time.Second).UTC().Format(time.RFC3339)
 	}
 	if request.Port != 0 {
 		rule.Ports = []uint16{request.Port}
 	}
 	for _, existing := range doc.Config.Rule {
-		if existing.Schema == rule.Schema && existing.Pattern == rule.Pattern && existing.Protocol == rule.Protocol {
+		if existing.Schema == rule.Schema && strings.EqualFold(existing.Pattern, rule.Pattern) && existing.Protocol == rule.Protocol && slices.Equal(existing.Ports, rule.Ports) {
 			apiError(w, 409, "duplicate_rule", "An exact rule already exists; edit it instead")
 			return
 		}

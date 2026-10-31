@@ -40,28 +40,30 @@ type ConfigSnapshot struct {
 }
 
 type One struct {
-	ip              net.IP
-	subnet          *net.IPNet
-	policy          atomic.Pointer[runtimeSnapshot]
-	reloadMu        sync.Mutex
-	mu              sync.Mutex
-	started, closed bool
-	cancel          context.CancelFunc
-	done, ready     chan struct{}
-	cleanupErr      error
-	network         Network
-	sockets         Sockets
-	shutdownTimeout time.Duration
-	readSystemDNS   func() ([]string, error)
-	stackFactory    stackFactory
-	flows           *flowHandler
-	dnsTable        *DnsTable
-	dnsTable6       *DnsTable
-	dns             *Dns
-	manager         *Manager
-	captureRecorder func(string, int) error
-	captureIdentity captureDeviceIdentity
-	initialGeoIP    *geoip.Database
+	ip                   net.IP
+	subnet               *net.IPNet
+	policy               atomic.Pointer[runtimeSnapshot]
+	reloadMu             sync.Mutex
+	mu                   sync.Mutex
+	started, closed      bool
+	cancel               context.CancelFunc
+	runContext           context.Context
+	done, ready          chan struct{}
+	cleanupErr           error
+	network              Network
+	sockets              Sockets
+	shutdownTimeout      time.Duration
+	readSystemDNS        func() ([]string, error)
+	readSystemDNSContext func() (DNSSystemContext, error)
+	stackFactory         stackFactory
+	flows                *flowHandler
+	dnsTable             *DnsTable
+	dnsTable6            *DnsTable
+	dns                  *Dns
+	manager              *Manager
+	captureRecorder      func(string, int) error
+	captureIdentity      captureDeviceIdentity
+	initialGeoIP         *geoip.Database
 }
 
 type Option func(*One) error
@@ -97,11 +99,18 @@ func WithShutdownTimeout(timeout time.Duration) Option {
 func cloneConfig(cfg *KoneConfig) *KoneConfig {
 	copy := *cfg
 	copy.Outbounds = slices.Clone(cfg.Outbounds)
+	for i := range copy.Outbounds {
+		if value := copy.Outbounds[i].Enabled; value != nil {
+			enabled := *value
+			copy.Outbounds[i].Enabled = &enabled
+		}
+	}
 	copy.Rule = slices.Clone(cfg.Rule)
 	for i := range copy.Rule {
 		copy.Rule[i].Ports = slices.Clone(cfg.Rule[i].Ports)
 	}
 	copy.DNS.Servers = slices.Clone(cfg.DNS.Servers)
+	copy.DNS.SystemContext = cloneDNSSystemContext(cfg.DNS.SystemContext)
 	copy.DNS.Rules = slices.Clone(cfg.DNS.Rules)
 	for i := range copy.DNS.Rules {
 		copy.DNS.Rules[i].Servers = slices.Clone(cfg.DNS.Rules[i].Servers)
@@ -139,6 +148,7 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	cfg = cloneConfig(cfg)
 	ip, subnet, _ := net.ParseCIDR(cfg.Core.Network)
 	one := &One{ip: ip.To4(), subnet: subnet, network: systemNetwork{run: runCommand, gateway: "0.0.0.0"}, sockets: &net.ListenConfig{}, stackFactory: newSingStack, shutdownTimeout: 15 * time.Second, readSystemDNS: systemDNSServers, done: make(chan struct{}), ready: make(chan struct{})}
+	one.readSystemDNSContext = readDNSSystemContext
 	for _, option := range options {
 		if err := option(one); err != nil {
 			return nil, err
@@ -147,6 +157,10 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	dnsCfg, err := effectiveDNSConfig(cfg.DNS, one.readSystemDNS)
 	if err != nil {
 		return nil, err
+	}
+	if len(cfg.DNS.Servers) == 0 {
+		context, contextErr := one.readSystemDNSContext()
+		dnsCfg = mergeSystemDNSContext(dnsCfg, context, contextErr)
 	}
 	effective := cloneConfig(cfg)
 	effective.DNS = dnsCfg
@@ -180,6 +194,7 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 		return nil, err
 	}
 	one.dns.setDialer(dialer)
+	p.dial = one.endpointDialer(dialer)
 	one.manager = NewManager(one, cfg)
 	return one, nil
 }
@@ -271,6 +286,7 @@ func (one *One) Run(parent context.Context) (result error) {
 	}
 	one.started = true
 	ctx, cancel := context.WithCancel(parent)
+	one.runContext = ctx
 	one.cancel = cancel
 	one.mu.Unlock()
 	var device Device
@@ -279,6 +295,7 @@ func (one *One) Run(parent context.Context) (result error) {
 	var dnsTCP net.Listener
 	var manager net.Listener
 	var stack packetStack
+	var restoreSystemDNS Cleanup
 	var wg sync.WaitGroup
 	errorsCh := make(chan error, 12)
 	defer func() {
@@ -295,6 +312,11 @@ func (one *One) Run(parent context.Context) (result error) {
 		defer stop()
 		// Stop admission and active flows before restoring system networking.
 		var cleanup []error
+		if restoreSystemDNS != nil {
+			dnsCleanupCtx, dnsStop := context.WithTimeout(cleanupCtx, 3*time.Second)
+			cleanup = append(cleanup, restoreSystemDNS(dnsCleanupCtx))
+			dnsStop()
+		}
 		if manager != nil {
 			cleanup = append(cleanup, manager.Close())
 		}
@@ -475,6 +497,16 @@ func (one *One) Run(parent context.Context) (result error) {
 	}
 	if err := one.dns.startIPv6DNS(ctx, start, errorsCh); err != nil {
 		return err
+	}
+	if cfg.DNS.System {
+		configurer, ok := one.network.(SystemDNSConfigurer)
+		if !ok {
+			return errors.New("network backend cannot configure system DNS")
+		}
+		restoreSystemDNS, err = configurer.ConfigureSystemDNS(ctx, device, cfg.Core, cfg.DNS)
+		if err != nil {
+			return fmt.Errorf("configure system DNS: %w", err)
+		}
 	}
 	start("DNS cache", func() error { return one.dns.Maintain(ctx) })
 	if one.manager != nil {

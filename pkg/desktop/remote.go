@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"net/rpc"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
@@ -32,6 +34,7 @@ type RemoteEngine struct {
 	archive                          *StopReply
 	geoIP                            *geoip.Database
 	requests                         chan struct{}
+	probeSequence                    atomic.Uint64
 }
 
 func NewRemote(cfg *kone.KoneConfig, connect Connector) (*RemoteEngine, error) {
@@ -130,8 +133,23 @@ func (e *RemoteEngine) Run(parent context.Context) error {
 	e.cancel = cancel
 	config, version, database := e.config, e.version, e.geoIP
 	e.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		e.finish(err)
+		return err
+	}
 	commands, events, err := e.connect(ctx)
 	if err != nil {
+		e.finish(err)
+		return err
+	}
+	if commands == nil || events == nil {
+		if commands != nil {
+			commands.Close()
+		}
+		if events != nil {
+			events.Close()
+		}
+		err = errors.New("privileged helper transport is incomplete")
 		e.finish(err)
 		return err
 	}
@@ -401,4 +419,47 @@ func (e *RemoteEngine) GeoIPData() (kone.GeoIPRuntimeStatus, error) {
 func (e *RemoteEngine) RollbackGeoIP(version uint64) error {
 	var reply Empty
 	return e.call("GeoIPRollback", version, &reply, 10*time.Second)
+}
+
+func (e *RemoteEngine) ProbeDiagnostic(ctx context.Context, outbound, target string, withTLS bool) (kone.DiagnosticResult, error) {
+	return e.ProbeDiagnosticVersion(ctx, outbound, target, withTLS, 0)
+}
+func (e *RemoteEngine) ProbeDiagnosticVersion(ctx context.Context, outbound, target string, withTLS bool, expectedVersion uint64) (kone.DiagnosticResult, error) {
+	var reply kone.DiagnosticResult
+	if err := ctx.Err(); err != nil {
+		return reply, err
+	}
+	select {
+	case e.requests <- struct{}{}:
+		defer func() { <-e.requests }()
+	default:
+		return reply, errors.New("network helper diagnostic capacity is busy")
+	}
+	e.mu.Lock()
+	client, closed := e.client, e.closed
+	e.mu.Unlock()
+	if client == nil || closed {
+		return reply, errors.New("network helper is not connected")
+	}
+	id := strconv.FormatUint(e.probeSequence.Add(1), 10)
+	budget := 5 * time.Second
+	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < budget {
+		budget = time.Until(deadline)
+	}
+	call := client.Go("Network.Probe", ProbeRequest{ID: id, Outbound: outbound, Target: target, TLS: withTLS, TimeoutMS: budget.Milliseconds(), ExpectedVersion: expectedVersion, Deadline: time.Now().Add(budget)}, &reply, make(chan *rpc.Call, 1))
+	select {
+	case result := <-call.Done:
+		if err := ctx.Err(); err != nil {
+			return kone.DiagnosticResult{}, err
+		}
+		return reply, result.Error
+	case <-ctx.Done():
+		var ignored Empty
+		client.Go("Network.CancelProbe", id, &ignored, make(chan *rpc.Call, 1))
+		return kone.DiagnosticResult{}, ctx.Err()
+	case <-time.After(7 * time.Second):
+		var ignored Empty
+		client.Go("Network.CancelProbe", id, &ignored, make(chan *rpc.Call, 1))
+		return kone.DiagnosticResult{}, errors.New("network helper diagnostic timed out")
+	}
 }

@@ -141,6 +141,9 @@ func (h *flowHandler) resolveDestination(ctx context.Context, s *runtimeSnapshot
 		}
 	}
 	selectOutbound := func(name string) (string, error) {
+		if err := s.outbounds.CheckEnabled(name); err != nil {
+			return name, err
+		}
 		if s.rule.OutboundType(name) == OutboundReject {
 			return name, ErrRejected
 		}

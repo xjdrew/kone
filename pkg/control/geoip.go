@@ -23,8 +23,13 @@ func (c *Controller) geoIPStatus() (map[string]any, error) {
 	c.mu.Lock()
 	engine := c.engine
 	c.mu.Unlock()
-	if one, ok := engine.(*kone.One); ok {
-		status := one.GeoIPStatus()
+	if data, ok := engine.(interface {
+		GeoIPData() (kone.GeoIPRuntimeStatus, error)
+	}); ok {
+		status, err := data.GeoIPData()
+		if err != nil {
+			return nil, err
+		}
 		value["running"] = status
 		value["restart_required"] = status.Current.SHA256 != repository.Current().Metadata().SHA256
 	}

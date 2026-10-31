@@ -15,9 +15,12 @@ export const requiredJobs = [
   "test",
   "build",
   "packages",
+  "performance",
   "robustness",
   "docker",
   "system",
+  "dns-system",
+  "shadowsocks-interop",
   "windows-system",
 ];
 export function validSHA(value) {

@@ -2,55 +2,16 @@ package control
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
-	"net"
-	"net/netip"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/xjdrew/kone/pkg/kone"
 )
 
-type ProbeResult struct {
-	Target        string    `json:"target"`
-	Outbound      string    `json:"outbound"`
-	Protocol      string    `json:"protocol"`
-	Stage         string    `json:"stage"`
-	Status        string    `json:"status"`
-	Message       string    `json:"message,omitempty"`
-	RemoteAddress string    `json:"remote_address,omitempty"`
-	DurationMS    int64     `json:"duration_ms"`
-	Time          time.Time `json:"time"`
-	Expires       time.Time `json:"expires"`
-	Scope         string    `json:"scope"`
-}
+type ProbeResult = kone.DiagnosticResult
 
 func validTarget(target string) error {
-	if len(target) > 320 || strings.ContainsAny(target, "/\\?#@\x00\r\n\t ") {
-		return errors.New("target must be a hostname or IP with an explicit port")
-	}
-	host, port, err := net.SplitHostPort(target)
-	if err != nil || host == "" {
-		return errors.New("target must be host:port")
-	}
-	p, e := strconv.Atoi(port)
-	if e != nil || p < 1 || p > 65535 {
-		return errors.New("invalid target port")
-	}
-	if a, e := netip.ParseAddr(host); e == nil {
-		if a.IsUnspecified() || a.IsMulticast() {
-			return errors.New("target cannot be unspecified or multicast")
-		}
-	} else {
-		for _, r := range host {
-			if r > 127 || !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '-' || r == '_') {
-				return errors.New("invalid target hostname")
-			}
-		}
-	}
-	return nil
+	return kone.ValidateDiagnosticTarget(target)
 }
 
 func probeTarget(ctx context.Context, cfg *kone.KoneConfig, outbound, target string, withTLS bool) (r ProbeResult) {
@@ -68,30 +29,12 @@ func probeTarget(ctx context.Context, cfg *kone.KoneConfig, outbound, target str
 		return r
 	}
 	defer one.Close()
-	conn, err := one.DialDiagnostic(ctx, outbound, target)
-	r.DurationMS = time.Since(start).Milliseconds()
+	r, err = one.ProbeDiagnostic(ctx, outbound, target, withTLS)
 	if err != nil {
+		r.Status = "unknown"
+		r.Stage = "lifecycle"
 		r.Message = safeMessage(err, cfg)
-		return r
 	}
-	defer conn.Close()
-	r.RemoteAddress = conn.RemoteAddr().String()
-	if withTLS {
-		r.Stage = "tls"
-		host, _, _ := net.SplitHostPort(target)
-		client := tls.Client(conn, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
-		if err = client.HandshakeContext(ctx); err != nil {
-			r.Message = safeMessage(err, cfg)
-			r.DurationMS = time.Since(start).Milliseconds()
-			return r
-		}
-	}
-	r.Status = "reachable"
-	r.Message = "TCP connection succeeded; application requests were not replayed"
-	if withTLS {
-		r.Message = "TCP and verified TLS succeeded; no application request was sent"
-	}
-	r.DurationMS = time.Since(start).Milliseconds()
 	return r
 }
 
@@ -203,6 +146,7 @@ func (c *Controller) Diagnose(target string, outbounds []string, withTLS bool, k
 	}
 	c.mu.Lock()
 	doc := cloneDocument(c.doc)
+	engine := c.engine
 	c.mu.Unlock()
 	known := map[string]bool{kone.BuiltinDirect: true}
 	for _, outbound := range doc.Config.Outbounds {
@@ -226,9 +170,24 @@ func (c *Controller) Diagnose(target string, outbounds []string, withTLS bool, k
 				return results, err
 			}
 			probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			result := c.probe(probeCtx, engineConfig(doc), name, target, withTLS)
+			var result ProbeResult
+			var probeErr error
+			if active, ok := engine.(interface {
+				ProbeDiagnosticVersion(context.Context, string, string, bool, uint64) (kone.DiagnosticResult, error)
+			}); ok {
+				result, probeErr = active.ProbeDiagnosticVersion(probeCtx, name, target, withTLS, doc.Version)
+			} else {
+				result = c.probe(probeCtx, engineConfig(doc), name, target, withTLS)
+				result.ConfigVersion = doc.Version
+			}
 			cancel()
 			results = append(results, result)
+			if probeErr != nil {
+				return results, probeErr
+			}
+			if err := ctx.Err(); err != nil {
+				return results, err
+			}
 		}
 		suggested := false
 		if len(results) > 1 && results[0].Outbound == kone.BuiltinDirect && results[0].Status == "failed" {

@@ -14,7 +14,7 @@ func (o *TrafficObserver) sequenceOf(id string) (uint64, bool) {
 		return 0, false
 	}
 	value, err := strconv.ParseUint(strings.TrimPrefix(id, prefix), 10, 64)
-	return value, err == nil
+	return value, err == nil && value <= o.sequence
 }
 
 func matchesTraffic(record *FlowRecord, query TrafficQuery) bool {
@@ -91,7 +91,10 @@ func cloneFlowRecord(record FlowRecord) FlowRecord {
 func (o *TrafficObserver) Snapshot(query TrafficQuery) TrafficSnapshot {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	now := o.now()
+	return o.snapshotLocked(query, o.now())
+}
+
+func (o *TrafficObserver) snapshotLocked(query TrafficQuery, now time.Time) TrafficSnapshot {
 	o.prune(now)
 	anchor := o.sequence
 	if query.Anchor != "" {

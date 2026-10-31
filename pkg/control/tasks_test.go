@@ -95,7 +95,7 @@ func TestDiagnosticTCPAndTLSDoNotReplayApplicationRequests(t *testing.T) {
 	require.Equal(t, "connect", result.Stage)
 	result = probeTarget(ctx, cfg, "direct", target, true)
 	require.Equal(t, "failed", result.Status)
-	require.Equal(t, "tls", result.Stage)
+	require.Equal(t, "target_tls", result.Stage)
 	result = probeTarget(ctx, cfg, "direct", "bad/url", false)
 	require.Equal(t, "failed", result.Status)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

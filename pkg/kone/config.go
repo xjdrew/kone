@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	singtun "github.com/sagernet/sing-tun"
@@ -44,6 +45,7 @@ type CoreConfig struct {
 }
 
 type DNSConfig struct {
+	System           bool             `toml:"system"`
 	ListenPort       uint16           `toml:"listen-port"`
 	TTL              uint             `toml:"ttl"`
 	PacketSize       uint16           `toml:"packet-size"`
@@ -54,11 +56,17 @@ type DNSConfig struct {
 	HistoryRetention uint             `toml:"history-retention"`
 	CacheLimit       uint             `toml:"cache-limit"`
 	Rules            []DNSRouteConfig `toml:"rules,omitempty"`
+	SystemContext    DNSSystemContext `toml:"-"`
 }
 
 type DNSRouteConfig struct {
-	Suffix  string   `toml:"suffix" json:"suffix"`
-	Servers []string `toml:"servers" json:"servers"`
+	Suffix      string   `toml:"suffix" json:"suffix"`
+	Servers     []string `toml:"servers" json:"servers"`
+	Interface   string   `toml:"interface,omitempty" json:"interface,omitempty"`
+	Automatic   bool     `toml:"-" json:"automatic,omitempty"`
+	Exact       bool     `toml:"-" json:"exact,omitempty"`
+	Unavailable bool     `toml:"-" json:"unavailable,omitempty"`
+	Reason      string   `toml:"-" json:"reason,omitempty"`
 }
 
 type OutboundType string
@@ -73,6 +81,8 @@ const (
 )
 
 type OutboundConfig struct {
+	ID          string `toml:"id,omitempty"`
+	Enabled     *bool  `toml:"enabled,omitempty"`
 	Name        string `toml:"name"`
 	URL         string `toml:"url"`
 	UDPFallback string `toml:"udp-fallback,omitempty"`
@@ -86,13 +96,14 @@ func builtinOutbounds() map[string]OutboundType {
 }
 
 type RuleConfig struct {
-	ID       string   `toml:"id,omitempty"`
-	Source   string   `toml:"source,omitempty"`
-	Protocol string   `toml:"protocol,omitempty"`
-	Ports    []uint16 `toml:"ports,omitempty"`
-	Schema   string   `toml:"type"`
-	Pattern  string   `toml:"pattern,omitempty"`
-	Outbound string   `toml:"outbound"`
+	ExpiresAt string   `toml:"expires-at,omitempty"`
+	ID        string   `toml:"id,omitempty"`
+	Source    string   `toml:"source,omitempty"`
+	Protocol  string   `toml:"protocol,omitempty"`
+	Ports     []uint16 `toml:"ports,omitempty"`
+	Schema    string   `toml:"type"`
+	Pattern   string   `toml:"pattern,omitempty"`
+	Outbound  string   `toml:"outbound"`
 }
 
 type KoneConfig struct {
@@ -216,8 +227,15 @@ func parseConfig(source any, environment bool) (*KoneConfig, error) {
 }
 
 func validateOutbounds(config []OutboundConfig) (map[string]OutboundType, error) {
+	ids := map[string]bool{}
 	types := builtinOutbounds()
 	for i, o := range config {
+		if o.ID != "" {
+			if ids[o.ID] || len(o.ID) > 128 || strings.ContainsAny(o.ID, "\x00\r\n\t ") {
+				return nil, fmt.Errorf("outbounds[%d]: id must be unique and contain no whitespace or control characters", i+1)
+			}
+			ids[o.ID] = true
+		}
 		fail := func(reason string) error { return fmt.Errorf("outbounds[%d]: %s", i+1, reason) }
 		if o.Name == "" || strings.TrimSpace(o.Name) != o.Name || strings.ContainsAny(o.Name, "\x00\r\n\t") {
 			return nil, fail("name must be nonempty with no surrounding whitespace or control characters")
@@ -274,14 +292,19 @@ func systemDNSServers() ([]string, error) {
 
 func normalizeDNSServer(value string) (string, error) {
 	if ip, err := netip.ParseAddr(value); err == nil {
+		if ip.Zone() != "" && !ip.IsLinkLocalUnicast() {
+			return "", errors.New("DNS address zones are allowed only for link-local IPv6")
+		}
 		return net.JoinHostPort(ip.String(), "53"), nil
 	}
 	host, port, err := net.SplitHostPort(value)
 	if err != nil {
 		return "", errors.New("expected an IP address, optionally with a port")
 	}
-	if _, err := netip.ParseAddr(host); err != nil {
+	if ip, err := netip.ParseAddr(host); err != nil {
 		return "", errors.New("DNS server must be an IP address")
+	} else if ip.Zone() != "" && !ip.IsLinkLocalUnicast() {
+		return "", errors.New("DNS address zones are allowed only for link-local IPv6")
 	}
 	if err := validatePort(port); err != nil {
 		return "", err
@@ -387,10 +410,14 @@ func (cfg *KoneConfig) Validate() error {
 	seenDNSSuffixes := make(map[string]bool)
 	for i, route := range cfg.DNS.Rules {
 		suffix := normalizeDNSSuffix(route.Suffix)
-		if !validDNSSuffix(suffix) || seenDNSSuffixes[suffix] || len(route.Servers) == 0 || len(route.Servers) > 16 {
+		key := dnsRouteKey(route)
+		if !validDNSSuffix(suffix) || seenDNSSuffixes[key] || len(route.Servers) == 0 && !(route.Automatic && route.Unavailable) || len(route.Servers) > 16 {
 			return fmt.Errorf("dns.rules[%d] requires a unique valid suffix and at least one server", i+1)
 		}
-		seenDNSSuffixes[suffix] = true
+		seenDNSSuffixes[key] = true
+		if len(route.Interface) > 256 || strings.TrimSpace(route.Interface) != route.Interface || strings.ContainsAny(route.Interface, "\x00\r\n\t\"'") || route.Interface != "" && route.Interface == cfg.Core.Tun {
+			return fmt.Errorf("dns.rules[%d].interface is invalid or names the TUN", i+1)
+		}
 		for j, server := range route.Servers {
 			normalized, err := normalizeDNSServer(server)
 			if err != nil {
@@ -410,6 +437,16 @@ func (cfg *KoneConfig) Validate() error {
 	ruleIDs := map[string]bool{}
 	for i, r := range cfg.Rule {
 		fail := func(reason string) error { return fmt.Errorf("rules[%d]: %s", i+1, reason) }
+		if r.ExpiresAt != "" {
+			if _, err := time.Parse(time.RFC3339, r.ExpiresAt); err != nil {
+				return fail("expires-at must be an RFC3339 timestamp")
+			}
+			switch strings.ToUpper(r.Schema) {
+			case "DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD":
+			default:
+				return fail("temporary rules support domain targets only; capture routes need an explicit restart")
+			}
+		}
 		if r.ID != "" {
 			if ruleIDs[r.ID] || len(r.ID) > 128 || strings.ContainsAny(r.ID, "\x00\r\n\t ") {
 				return fail("id must be unique and contain no whitespace or control characters")
