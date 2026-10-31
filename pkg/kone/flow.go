@@ -109,6 +109,9 @@ func (h *flowHandler) destination(ctx context.Context, s *runtimeSnapshot, desti
 func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	var result error
 	defer func() {
+		if result != nil && ctx.Err() == nil {
+			slog.Debug("TCP flow ended", "source", source, "destination", destination, "error", result)
+		}
 		if onClose != nil {
 			onClose(result)
 		}
@@ -125,6 +128,7 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 		result = err
 		return
 	}
+	slog.Debug("TCP flow selected", "source", source, "destination", addr, "proxy", policy, "version", s.version)
 	remote, err := s.proxies.DialContext(ctx, policy, addr)
 	if err != nil {
 		result = err

@@ -11,6 +11,7 @@
 - Enforce exclusive native device creation on Linux/Windows so a concurrent name-check race cannot attach an existing interface; verify the original engine remains usable after duplicate creation fails.
 - Enumerate all KONE module packages explicitly for head/base coverage so the in-tree third-party module keeps the same dependency treatment; verify local upstream patches separately with race tests.
 - Inject Windows DNS port conflicts on the exact new TUN address rather than relying on wildcard UDP binding behavior.
+- Configure owned Wintun L3 forwarding/DAD prerequisites and restore automatic metric mode without applying an invalid manual metric value.
 
 # 2026/10/31 — runtime reliability
 - Add context-owned startup, cancellation, idempotent close and reverse-order network rollback; propagate component and cleanup failures.

@@ -78,10 +78,18 @@ func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) 
 		return nil
 	}
 	p := map[string]any{"Index": old.Index, "IP": ip.String(), "Prefix": prefix, "MTU": MTU, "OldMTU": old.MTU, "Metric": old.Metric, "Auto": old.AutomaticMetric, "DNS": old.DNS, "StaticDNS": old.StaticDNS}
+	if _, owned := d.(*singDevice); owned {
+		// A newly owned L3 adapter needs the same kernel TCP prerequisites as
+		// sing-tun's native Windows configurator. Device removal rolls these
+		// temporary interface flags back; no pre-existing adapter is changed.
+		if _, err := n.powershell(ctx, `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -Forwarding Enabled -RouterDiscovery Disabled -DadTransmits 0`, p); err != nil {
+			return nil, err
+		}
+	}
 	if err := apply("MTU", `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -NlMtuBytes $p.MTU`, `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -NlMtuBytes $p.OldMTU`, p); err != nil {
 		return undo.restore, err
 	}
-	if err := apply("metric", `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1`, `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -InterfaceMetric $p.Metric -AutomaticMetric $p.Auto`, p); err != nil {
+	if err := apply("metric", `Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric 1`, `if($p.Auto -eq 'Enabled'){Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -AutomaticMetric Enabled}else{Set-NetIPInterface -InterfaceIndex $p.Index -AddressFamily IPv4 -AutomaticMetric Disabled -InterfaceMetric $p.Metric}`, p); err != nil {
 		return undo.restore, err
 	}
 	if old.DHCP == "Enabled" {

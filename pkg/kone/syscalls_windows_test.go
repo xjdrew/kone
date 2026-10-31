@@ -91,6 +91,7 @@ func TestWindowsConfigurationRollback(t *testing.T) {
 			require.NotNil(t, cleanup)
 			require.NoError(t, cleanup(context.Background()))
 			joined := strings.Join(calls, "\n")
+			require.Contains(t, joined, "if($p.Auto -eq 'Enabled')")
 			require.NotContains(t, joined, "Remove-NetRoute")
 			require.Contains(t, joined, "-NlMtuBytes $p.OldMTU")
 			if failAt == 0 {
@@ -115,6 +116,7 @@ func TestWindowsSnapshotErrorsDoNotMutate(t *testing.T) {
 
 func TestNewWintunWithoutIPv4AddressCanBeConfigured(t *testing.T) {
 	calls := 0
+	configuredL3 := false
 	n := systemNetwork{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		calls++
 		script := decodePowerShell(t, args)
@@ -123,12 +125,19 @@ func TestNewWintunWithoutIPv4AddressCanBeConfigured(t *testing.T) {
 			require.Contains(t, script, "-ErrorAction Stop")
 			return []byte(`{"Index":42,"MTU":1500,"Metric":0,"AutomaticMetric":"Enabled","DHCP":"Disabled","StaticDNS":false,"DNS":[],"Addresses":[]}`), nil
 		}
+		if strings.Contains(script, "-Forwarding Enabled") {
+			configuredL3 = true
+			require.Contains(t, script, "-DadTransmits 0")
+		}
 		return nil, nil
 	}}
-	undo, err := n.Configure(context.Background(), newMemoryDevice(), CoreConfig{Network: "10.192.0.1/16"})
+	device := &singDevice{Tun: &stubTun{memoryDevice: newMemoryDevice()}, name: "kone-test"}
+	defer device.Close()
+	undo, err := n.Configure(context.Background(), device, CoreConfig{Network: "10.192.0.1/16"})
 	require.NoError(t, err)
 	require.NoError(t, undo(context.Background()))
-	require.Equal(t, 9, calls)
+	require.Equal(t, 10, calls)
+	require.True(t, configuredL3)
 }
 
 func TestWindowsRouteOwnershipAndTimeout(t *testing.T) {

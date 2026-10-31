@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -35,6 +36,7 @@ func TestSystemWindowsWintun(t *testing.T) {
 	if os.Getenv("KONE_WINDOWS_SYSTEM_TEST") != "1" {
 		t.Skip("requires disposable administrator Windows runner")
 	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "SOCKS_PROXY"} {
 		t.Setenv(key, "")
 	}
