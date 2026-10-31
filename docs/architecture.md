@@ -115,6 +115,8 @@ sing-tun 的内部监听使用动态分配端口。KONE 从回调得到原始源
 | gVisor netstack | 在 mixed 模式中处理 UDP 网络报文、会话及响应报文生成 |
 | KONE | DNS/Fake-IP、路由策略、代理协议选择、快照、出站接口绑定、管理统计与资源所有权 |
 
+TUN 交付的是 IP 报文，而 HTTP CONNECT/SOCKS5 出站需要已经建立的字节流；中间必须有人处理 TCP 握手、序列号、确认、重传和关闭。sing-tun 将这些工作连接起来，KONE 才能在连接层选择代理。gVisor 是更大的系统项目，这里只使用其 Go 网络栈 netstack，不会因此启动容器或运行沙箱。它能在用户态处理协议状态，但当前 mixed 模式仅把 UDP 交给它，TCP 仍由操作系统处理。
+
 sing-tun 本身也提供地址、路由和 DNS 管理能力。本次接入使用 **external configuration** 模式：网络变更由 KONE 的 `Network` 边界统一执行和回滚，避免两个管理者改动同一项系统配置。
 当前固定版本源码保留于 `pkg/singtun`，包含 Windows PE 加载器边界/session 清理修复，以及独占设备创建扩展，详见 [来源与补丁记录](../pkg/singtun/UPSTREAM.md)。独占创建使网卡名称预检查之后的进程竞争也不会接管既有设备。后续升级应复核这些补丁是否已被上游吸收。
 

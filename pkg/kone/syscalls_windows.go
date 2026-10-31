@@ -138,14 +138,19 @@ func (n systemNetwork) PrepareStack(ctx context.Context, cfg CoreConfig) (Cleanu
 	if err != nil {
 		return nil, err
 	}
+	// Firewall application filters need the canonical executable path. In
+	// particular, go test can run from a DOS 8.3 TEMP path (RUNNER~1).
+	program, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve firewall executable: %w", err)
+	}
 	ip, _, err := net.ParseCIDR(cfg.Network)
 	if err != nil {
 		return nil, err
 	}
-	// Firewall rule IDs are registry-style identifiers, not executable paths.
 	// Keep the upstream display name so its helper recognizes the exception,
 	// but use a unique safe ID to clean up exactly the rule we created.
-	p := map[string]any{"Name": "Kone-TCP-" + rand.Text(), "Rule": "sing-tun (" + path + ")", "Program": path, "IP": ip.String()}
+	p := map[string]any{"Name": "Kone-TCP-" + rand.Text(), "Rule": "sing-tun (" + path + ")", "Program": program, "IP": ip.String()}
 	data, err := n.powershell(ctx, `@(Get-NetFirewallRule -ErrorAction Stop | Where-Object { $_.DisplayName -eq $p.Rule }).Count | ConvertTo-Json`, p)
 	if err != nil {
 		return nil, err
@@ -158,12 +163,12 @@ func (n systemNetwork) PrepareStack(ctx context.Context, cfg CoreConfig) (Cleanu
 		return nil, nil
 	}
 	cleanup := func(ctx context.Context) error {
-		_, err := n.powershell(ctx, `Get-NetFirewallRule -Name $p.Name -ErrorAction SilentlyContinue | Remove-NetFirewallRule`, p)
+		_, err := n.powershell(ctx, `Get-NetFirewallRule -ErrorAction Stop | Where-Object { $_.Name -eq $p.Name } | Remove-NetFirewallRule`, p)
 		return err
 	}
 	_, err = n.powershell(ctx, `New-NetFirewallRule -Name $p.Name -DisplayName $p.Rule -Program $p.Program -LocalAddress $p.IP -Direction Inbound -Action Allow -Protocol TCP -Profile Any | Out-Null`, p)
 	if err != nil {
-		err = fmt.Errorf("create TCP firewall exception for %q at %s: %w", path, ip, err)
+		err = fmt.Errorf("create TCP firewall exception for %q at %s: %w", program, ip, err)
 	}
 	return cleanup, err
 }

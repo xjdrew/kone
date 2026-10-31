@@ -7,12 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf16"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/windows"
 )
 
 func decodePowerShell(t *testing.T, args []string) string {
@@ -48,8 +51,8 @@ func TestWindowsStackFirewallOwnership(t *testing.T) {
 				return nil, nil
 			}
 			require.Contains(t, script, "Remove-NetFirewallRule")
-			require.Contains(t, script, "-Name $p.Name")
-			require.NotContains(t, script, "Where-Object")
+			require.Contains(t, script, "$_.Name -eq $p.Name")
+			require.NotContains(t, script, "$_.DisplayName")
 			return nil, nil
 		}}
 		undo, err := n.PrepareStack(context.Background(), CoreConfig{Network: "10.192.0.1/16"})
@@ -71,6 +74,47 @@ func TestWindowsStackFirewallOwnership(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, undo)
 	}
+}
+
+func TestWindowsFirewallExpandsShortExecutablePath(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "long executable directory")
+	require.NoError(t, os.Mkdir(dir, 0700))
+	program := filepath.Join(dir, "firewall-test.exe")
+	require.NoError(t, os.WriteFile(program, nil, 0600))
+	ptr, err := windows.UTF16PtrFromString(program)
+	require.NoError(t, err)
+	buffer := make([]uint16, 32768)
+	n, err := windows.GetShortPathName(ptr, &buffer[0], uint32(len(buffer)))
+	require.NoError(t, err)
+	require.Less(t, n, uint32(len(buffer)))
+	short := windows.UTF16ToString(buffer[:n])
+	previous := os.Args[0]
+	os.Args[0] = short
+	defer func() { os.Args[0] = previous }()
+	canonical, err := filepath.EvalSymlinks(program)
+	require.NoError(t, err)
+	calls := 0
+	network := systemNetwork{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		calls++
+		script := decodePowerShell(t, args)
+		_, encoded, found := strings.Cut(script, "FromBase64String('")
+		require.True(t, found)
+		encoded, _, _ = strings.Cut(encoded, "')")
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		require.NoError(t, err)
+		var params map[string]string
+		require.NoError(t, json.Unmarshal(data, &params))
+		require.Equal(t, canonical, params["Program"])
+		require.Equal(t, "sing-tun ("+short+")", params["Rule"])
+		if calls == 1 {
+			return []byte("0"), nil
+		}
+		return nil, nil
+	}}
+	undo, err := network.PrepareStack(context.Background(), CoreConfig{Network: "10.192.0.1/16"})
+	require.NoError(t, err)
+	require.NoError(t, undo(context.Background()))
+	require.Equal(t, 3, calls)
 }
 
 func TestWindowsPartialFirewallFailureIsOwned(t *testing.T) {
