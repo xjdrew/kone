@@ -23,6 +23,7 @@
 
 ## Bugfixes
 
+- Build Windows installation packages without installing PowerShell 7.
 - Keep management available while capture is paused or fails to start.
 - Preserve active Fake-IP mappings and prevent private DNS fallback to public resolvers.
 - Pause capture when the physical network context changes.

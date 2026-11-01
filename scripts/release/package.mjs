@@ -1,4 +1,4 @@
-// Run only in CI against already-verified artifacts. Never launches capture.
+// Package checked build inputs for CI or local review. Never launches capture.
 import { execFileSync } from "node:child_process";
 import {
   cp,
@@ -18,6 +18,7 @@ import {
   validSHA,
   targets,
 } from "./model.mjs";
+import { runWindowsScript } from "./windows-powershell.mjs";
 
 const input = resolve(process.env.RELEASE_INPUT || "release-input");
 const output = resolve(process.env.RELEASE_OUTPUT || "release-assets");
@@ -95,12 +96,9 @@ try {
       });
     if (platform === "win32") {
       const archive = `${base}.zip`;
-      execFileSync(
-        "pwsh",
+      runWindowsScript(
+        "scripts/release/zip.ps1",
         [
-          "-NoProfile",
-          "-File",
-          "scripts/release/zip.ps1",
           "-Source",
           stage,
           "-Destination",
@@ -111,12 +109,9 @@ try {
       if (native) {
         const extracted = join(scratch, `${base}-extracted`);
         const installed = join(scratch, `${base}-installed`);
-        execFileSync(
-          "pwsh",
+        runWindowsScript(
+          "scripts/release/expand.ps1",
           [
-            "-NoProfile",
-            "-File",
-            "scripts/release/expand.ps1",
             "-Source",
             join(output, archive),
             "-Destination",
@@ -124,12 +119,9 @@ try {
           ],
           { stdio: "inherit" },
         );
-        execFileSync(
-          "pwsh",
+        runWindowsScript(
+          join(extracted, base, "install.ps1"),
           [
-            "-NoProfile",
-            "-File",
-            join(extracted, base, "install.ps1"),
             "-Prefix",
             installed,
           ],
