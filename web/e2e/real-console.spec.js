@@ -282,6 +282,17 @@ test("@real genuine management cookie, password rotation, save, reload and resta
     expect(afterPasswordChange.version).toBe(beforePasswordChange.version);
     await ui.assertPaused();
     await verifySaved();
+    await ui.page.locator(".nav-link[data-page=rules]").click();
+    await ui.page.getByRole("button", { name: "模拟规则匹配", exact: true }).click();
+    await ui.page.locator("#simulate-target").fill("saved-browser.example");
+    const rotatedRequest = ui.page.waitForResponse(response => new URL(response.url()).pathname === "/api/v1/rules/simulate" && response.request().method() === "POST");
+    await ui.page.getByRole("button", { name: "模拟匹配", exact: true }).click();
+    const rotatedResponse = await rotatedRequest;
+    expect(rotatedResponse.status()).toBe(200);
+    expect(rotatedResponse.request().headers()["x-csrf-token"] === afterPasswordChange.csrf).toBe(true);
+    await expect(ui.page.locator('[data-rule-simulation-result][data-rule-simulation-match="rule"]')).toContainText("saved-browser.example");
+    await ui.page.locator("#detail-dialog").getByRole("button", { name: "关闭详情", exact: true }).click();
+    await ui.assertPaused();
     const retiredContext = await browser.newContext();
     contexts.push(retiredContext);
     await retiredContext.addCookies([originalCookie]);
