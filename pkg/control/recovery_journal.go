@@ -201,10 +201,21 @@ func (c *Controller) inspectRecovery(ctx context.Context, interfaces func() ([]n
 		return report, err
 	}
 	report.RunID, report.RecordedAt = record.RunID, record.StartedAt
-	if record.Platform != runtime.GOOS || !record.DeviceRecorded || record.Legacy {
+	if record.Platform != runtime.GOOS || record.Legacy {
 		report.Ownership = "unverified"
 		report.Items = append(report.Items, RecoveryItem{Kind: "tun", Identity: record.RequestedName, Status: "identity_unknown", Message: "The actual created interface was not durably recorded; the requested name is insufficient proof of ownership"})
 		report.NextAction = "Inspect the previous capture on this host; KONE will not delete an interface with uncertain ownership"
+		return report, nil
+	}
+	if !record.DeviceRecorded {
+		// Device identity is durably acknowledged before Configure, routing or
+		// firewall setup. An interrupted startup without that acknowledgement
+		// cannot have applied capture settings. Clear only the journal: even a
+		// partially opened device must never be guessed by its requested name.
+		report.Ownership = "not_configured"
+		report.Items = append(report.Items, RecoveryItem{Kind: "capture", Status: "not_configured", Message: "Startup stopped before device ownership was recorded; no capture network settings were applied"})
+		report.CanClear = true
+		report.NextAction = "Clear the interrupted startup record, then run preflight before enabling capture"
 		return report, nil
 	}
 	values, err := interfaces()
@@ -228,12 +239,12 @@ func (c *Controller) inspectRecovery(ctx context.Context, interfaces func() ([]n
 	}
 	report.Items = append(report.Items, RecoveryItem{Kind: "tun", Identity: record.DeviceName, Status: "absent", Message: "The recorded transient interface is absent"})
 	if record.Platform == "windows" {
-		report.Items = append(report.Items, RecoveryItem{Kind: "firewall", Status: "unverified", Message: "A persistent firewall exception may remain; this record has no verifiable firewall rule identity"})
-		report.NextAction = "Inspect KONE's firewall exception on the host; ownership cannot be verified for automatic deletion"
-		return report, nil
+		// A program-scoped firewall exception cannot capture traffic without
+		// the TUN. Preserve it rather than deleting an unverified rule, but do
+		// not make this advisory prevent clearing a completed capture forever.
+		report.Items = append(report.Items, RecoveryItem{Kind: "firewall", Status: "unverified", Message: "A program-scoped firewall exception may remain; it is preserved because its ownership cannot be verified and does not capture traffic without the absent TUN"})
 	}
-	// Current Linux/macOS address and route changes are device-scoped. There is
-	// no global system DNS mutation in those implementations.
+	// Address, route and DNS changes are scoped to the transient device.
 	report.Items = append(report.Items, RecoveryItem{Kind: "routes", Status: "released_with_device", Message: "Device-scoped capture routes were released with the absent transient interface"})
 	report.CanClear = true
 	report.NextAction = "Clear the completed recovery record, then run preflight before enabling capture"

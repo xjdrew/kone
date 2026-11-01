@@ -40,10 +40,11 @@ func TestRecoveryJournalNeverStoresProxyCredentials(t *testing.T) {
 		return nil, nil
 	})
 	require.NoError(t, err)
-	require.False(t, report.CanClear)
-	require.Equal(t, "identity_unknown", report.Items[0].Status)
-	require.Error(t, c.Recover(context.Background()))
-	require.Equal(t, "recovery_required", c.state)
+	require.True(t, report.CanClear)
+	require.Equal(t, "not_configured", report.Items[0].Status)
+	require.NoError(t, c.Recover(context.Background()))
+	require.Equal(t, "paused", c.state)
+	require.NoFileExists(t, c.journalPath())
 }
 
 func TestRecoveryEpochCannotRemoveNewRun(t *testing.T) {
@@ -97,9 +98,10 @@ func TestRecoveryPreservesReusedAndExistingInterfaces(t *testing.T) {
 	require.NoError(t, c.recordRecoveryDevice("owned-run-1234", "kone-test", 54321))
 	report, err := c.inspectRecovery(context.Background(), func() ([]net.Interface, error) { return nil, nil })
 	require.NoError(t, err)
-	require.Equal(t, runtime.GOOS != "windows", report.CanClear)
+	require.True(t, report.CanClear)
 	if runtime.GOOS == "windows" {
 		require.Equal(t, "unverified", report.Items[1].Status)
+		require.Contains(t, report.Items[1].Message, "preserved")
 	}
 	_, err = c.inspectRecovery(context.Background(), func() ([]net.Interface, error) { return nil, errors.New("denied") })
 	require.ErrorContains(t, err, "denied")
@@ -107,6 +109,44 @@ func TestRecoveryPreservesReusedAndExistingInterfaces(t *testing.T) {
 	cancel()
 	_, err = c.InspectRecovery(ctx)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestRecoveryPreservesForeignPlatformJournalWithoutDeviceIdentity(t *testing.T) {
+	c := journalController(t)
+	require.NoError(t, c.saveRecoveryJournal(recoveryJournal{Version: recoveryJournalVersion, RunID: "foreign-run-1234", StartedAt: time.Now(), Platform: "another-platform"}))
+	report, err := c.inspectRecovery(t.Context(), func() ([]net.Interface, error) {
+		t.Fatal("foreign records cannot infer device ownership")
+		return nil, nil
+	})
+	require.NoError(t, err)
+	require.False(t, report.CanClear)
+	require.Equal(t, "identity_unknown", report.Items[0].Status)
+	require.Error(t, c.Recover(t.Context()))
+	require.Equal(t, "recovery_required", c.state)
+	require.FileExists(t, c.journalPath())
+}
+
+func TestRecoveryClearsAbsentDeviceAndAcknowledgesState(t *testing.T) {
+	c := journalController(t)
+	require.NoError(t, c.writeRecoveryJournal(kone.DefaultConfig(), "absent-run-1234"))
+	require.NoError(t, c.recordRecoveryDevice("absent-run-1234", "kone-missing-unit-test-device", 2147483647))
+	report, err := c.InspectRecovery(t.Context())
+	require.NoError(t, err)
+	require.True(t, report.CanClear)
+	require.NoError(t, c.Recover(t.Context()))
+	require.Equal(t, "paused", c.state)
+	require.NoFileExists(t, c.journalPath())
+}
+
+func TestRecoveryNeverClearsAnActiveCaptureRecord(t *testing.T) {
+	c := testController(t, Options{})
+	enable(t, c)
+	require.NoError(t, c.Start(t.Context()))
+	require.ErrorContains(t, c.Recover(t.Context()), "pause capture")
+	require.Equal(t, "running", c.State().State)
+	require.FileExists(t, c.journalPath())
+	require.NoError(t, c.Pause(t.Context()))
+	require.NoFileExists(t, c.journalPath())
 }
 
 func TestRecoveryMigratesCredentialBearingLegacyRecord(t *testing.T) {

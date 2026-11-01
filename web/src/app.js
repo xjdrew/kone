@@ -153,6 +153,14 @@ const statusLabels = {
   expired: "已过期",
   unsupported: "不支持",
   succeeded: "已完成",
+  warning: "提示",
+  not_configured: "未配置网络",
+  absent: "已释放",
+  released_with_device: "随设备释放",
+  unverified: "待核实",
+  still_present: "仍存在",
+  identity_changed: "身份已变化",
+  identity_unknown: "身份未知",
   success: "已完成",
 };
 
@@ -615,7 +623,7 @@ async function saveConfig(apply) {
           : "已保存。点击“应用已保存设置”后才会改变新连接策略。",
         validation.restart_required ? "warning" : "success",
       );
-    await loadConfig(false);
+    await loadConfig(true);
     if (editor && model.editor === editor) finishEditor(true);
     await refreshOutboundHealth();
     render();
@@ -627,7 +635,7 @@ async function loadConfig(force = false) {
   const epoch = model.authEpoch;
   const document = await endpoints.config();
   if (!currentAuth(epoch)) return;
-  if (!force && model.dirty) {
+  if (!force && (model.dirty || model.editor)) {
     if (document.version !== model.config?.version)
       model.versionConflict = true;
     return;
@@ -720,6 +728,10 @@ async function refreshState() {
     model.authenticated = true;
     model.lastSuccess = new Date().toISOString();
     updateShell();
+    if (state.saved_version && state.saved_version !== model.config?.version) {
+      await loadConfig(false);
+      if (!currentAuth(epoch)) return false;
+    }
     if (model.editor && wasLocked !== captureLocked()) renderEditor();
     if (!wasOnline) renderPreserving();
     return true;
@@ -748,20 +760,21 @@ function startReadyCapture() {
   return action(async () => { const result = await watchOperation(await endpoints.lifecycle("start")); showResult("启用接管", result); });
 }
 function readinessMessage(item) {
+  if (["recovery", "config_invalid", "configuration", "preflight"].includes(item.code))
+    return explainError(item.message) || "请前往设置与恢复，查看阻断原因并处理后重试。";
   return {
     inbound_disabled: "请先在入站启用 TUN 入口并保存。",
     capture_scope: "当前是选择性接管，仅覆盖 Fake-IP 和显式 CIDR；普通直连流量可能不进入 KONE。",
     direct_only: "当前规则不使用上游代理，只执行直连或拒绝；仅添加代理不会自动改变规则。",
     direct_only_confirmation: "请明确确认仅直连接管，或先在规则中选择代理出站。",
-    recovery: "请先检查并恢复上一次未完成的接管，再启用。",
     outbound_disabled: "规则引用的代理已禁用；新连接会被拒绝，不会自动直连。",
     outbound_health: item.status === "error" ? "最近的出站测试未通过。请修正重试，或明确选择继续；不会自动退回直连。" : "规则引用的出站尚无有效成功测试。建议先测试，也可以明确选择继续。",
-    preflight: "环境预检未通过，请先处理阻断项。",
   }[item.code] || explainError(item.message);
 }
 function goToReadinessItem(item) {
   closeDialog();
   const page = item.action === "configure_rules" ? "rules" : item.page;
+  if (item.code === "recovery") model.notice = { message: readinessMessage(item), kind: "warning" };
   model.page = page;
   navigate(page);
   render();
@@ -783,6 +796,7 @@ function showReadiness(report) {
   const items = [...list(report.blockers), ...list(report.warnings)];
   dialog("启用接管前确认", report.ready ? "以下提示不会改变你的规则，请确认后继续。" : "先完成阻断项，再启用接管。", h("div", {},
     items.length ? h("div", { class: "panel-list" }, items.map(item => row({ inbounds: "入站", outbounds: "出站与模式", rules: "路由规则", dns: "DNS", settings: "配置与恢复" }[item.page] || "启用检查", readinessMessage(item), h("div", { "data-readiness-blocker": item.id || item.code }, badge(item.severity === "error" ? "failed" : "warning"), item.page && item.action !== "confirm_direct" && button(item.action === "test_outbound" ? "测试此出站" : `前往${{ inbounds: "入站设置", outbounds: "出站设置", rules: "规则设置", dns: "DNS 设置", settings: "设置" }[item.action === "configure_rules" ? "rules" : item.page] || "设置"}`, () => goToReadinessItem(item), "ghost", !canManage()))))) : note("检查结果来自当前保存版本。"),
+    report.recovery && h("div", { class: "form-section", "data-recovery-evidence": "" }, h("h3", {}, "上次接管的恢复检查"), h("p", {}, report.recovery.can_clear ? "可安全清除恢复记录；完成恢复后再启用接管。" : "请先处理下列恢复项。"), list(report.recovery.items).map(item => row(item.identity || ({ capture: "接管启动", tun: "TUN 设备", routes: "接管路由", firewall: "防火墙", journal: "恢复记录" }[item.kind] || item.kind), explainError(item.message), badge(item.status)))),
     list(report.changes).length > 0 && h("details", { class: "disclosure" }, h("summary", {}, "将执行的系统变更"), h("ul", {}, report.changes.map(change => h("li", {}, change)))),
     direct && h("label", { class: "direct-confirm", for: "direct-only-confirm" }, confirmed, "我确认仅直连接管，不使用上游代理；这不会自动添加代理规则。"),
   ), [button("返回检查", closeDialog, "ghost", false), direct ? button("确认仅直连并重新检查", async () => {
@@ -3096,39 +3110,6 @@ function renderSettingsEditor() {
         "div",
         { class: "button-row" },
         button("导入 TOML 设置", importConfig),
-        button(
-          "恢复默认设置",
-          () =>
-            dialog(
-              "恢复默认设置",
-              "将保存默认入站、DNS、规则与出站，TUN 入口设为启用；保存不会自动启用或重启接管。",
-              note(
-                "自定义规则与代理将从已保存设置中移除；需要时可撤销最近一次配置变更。",
-                "warning",
-              ),
-              [
-                button("取消", closeDialog, "ghost", false),
-                button(
-                  "确认保存默认设置",
-                  () => {
-                    closeDialog();
-                    action(async () => {
-                      await request("/config/defaults", "POST", {
-                        base_version: model.config.version,
-                      });
-                      await loadConfig(true);
-                      notice(
-                        "默认设置已保存，TUN 入口已启用。请检查出站与规则，明确确认模式后再启用接管。",
-                        "warning",
-                      );
-                    });
-                  },
-                  "danger",
-                ),
-              ],
-            ),
-          "danger",
-        ),
       ),
     ),
     card(
@@ -3144,26 +3125,26 @@ function renderSettingsEditor() {
               ? "接管中"
               : "未记录恢复失败",
         ],
-        ["所有权判断", network.ownership || "尚无遗留记录"],
+        ["所有权判断", ({ not_configured: "尚未配置网络，可清除中断记录", recorded: "已记录实际设备", unverified: "所有权待核实", none: "无遗留记录" }[network.ownership] || network.ownership || "尚无遗留记录")],
         [
           "下一步",
-          network.next_action ||
+          explainError(network.next_action ||
             network.message ||
-            "正常暂停与退出会走同一清理路径。",
+            "正常暂停与退出会走同一清理路径。"),
         ],
       ]),
-      list(network.items).length &&
+      list(network.items).length ?
         h(
           "div",
           { class: "panel-list" },
           list(network.items).map((item) =>
             row(
               item.kind,
-              `${item.identity || ""} ${item.message}`,
+              `${item.identity || ""} ${explainError(item.message)}`,
               badge(item.status),
             ),
           ),
-        ),
+        ) : null,
       model.recoveryError && note(model.recoveryError, "error"),
       h(
         "div",
@@ -3762,6 +3743,80 @@ async function exportData() {
   }
 }
 
+function openPasswordChange() {
+  if (!canManage() || model.authBusy) return;
+  const current = h("input", { id: "current-password", type: "password", autocomplete: "current-password", required: true });
+  const next = h("input", { id: "new-password", type: "password", autocomplete: "new-password", required: true });
+  const confirm = h("input", { id: "confirm-new-password", type: "password", autocomplete: "new-password", required: true });
+  const errors = h("div", { role: "alert" });
+  const submit = button("确认修改密码", () => form.requestSubmit(), "primary", false);
+  const cancel = button("取消", closeDialog, "ghost", false);
+  const form = h("form", { onsubmit: async event => {
+    event.preventDefault();
+    if (!canManage() || model.authBusy) return;
+    errors.replaceChildren();
+    if (Array.from(next.value).length < 8 || new TextEncoder().encode(next.value).length > 128 || !next.value.trim()) {
+      errors.replaceChildren(note("密码至少 8 个字符，UTF-8 长度不超过 128 字节，不能全为空白。", "error"));
+      return;
+    }
+    if (next.value !== confirm.value) {
+      errors.replaceChildren(note("两次输入的密码不一致。", "error"));
+      return;
+    }
+    const epoch = changeAuthEpoch();
+    model.busy = true;
+    model.authBusy = true;
+    for (const control of [current, next, confirm, submit, cancel]) control.disabled = true;
+    updateShell();
+    try {
+      const result = await endpoints.changePassword({ current_password: current.value, password: next.value, confirm_password: confirm.value });
+      if (!currentAuth(epoch)) return;
+      form.reset();
+      setSession(result);
+      closeDialog();
+      await refreshAll();
+      if (currentAuth(epoch)) notice("管理密码已修改，其他登录和待用配对代码已失效。", "success");
+    } catch (error) {
+      if (!currentAuth(epoch) || error.details?.session_changed) return;
+      if (error.status === 401) failure(error);
+      else errors.replaceChildren(note(error.message, "error"));
+    } finally {
+      if (epoch === model.authEpoch) {
+        model.busy = false;
+        model.authBusy = false;
+        for (const control of [current, next, confirm, submit, cancel]) control.disabled = false;
+        renderPreserving();
+      }
+    }
+  } }, h("div", { class: "form-grid" }, ...[["当前管理密码", current], ["新管理密码", next], ["再次输入新密码", confirm]].map(([text, input]) => h("div", { class: "field" }, h("label", { for: input.id }, text), input))), errors);
+  dialog("修改管理密码", "请输入当前密码验证身份。修改成功后保留本页登录，其他登录和配对代码失效。", form, [cancel, submit]);
+  current.focus();
+}
+
+function confirmResetConfiguration() {
+  if (!canManage() || captureLocked() || model.state.remote_session || ["preflight", "recovery_required", "recovery_failed"].includes(runtime()) || model.recovery?.required) return;
+  const baseVersion = model.config?.version;
+  dialog("重置所有配置", "重置入站、代理、规则、DNS、日志、GeoIP 和局域网访问，撤销配对代码与远程登录；管理密码与本机登录保留。", note("自定义配置将被默认值替换，接管保持暂停。重置前可先导出脱敏配置；导出不包含代理密码。", "warning"), [
+    button("取消", closeDialog, "ghost", false),
+    button("确认重置所有配置", () => action(async () => {
+      try {
+        await request("/config/defaults", "POST", { base_version: baseVersion });
+      } catch (error) {
+        // Keep the server's safety or version reason visible inside this confirmation.
+        const errors = h("div", { "data-dialog-notice": "", role: "alert" }, note(error.message, "error"));
+        document.querySelector("#detail-content").append(errors);
+        return;
+      }
+      closeDialog();
+      model.versionConflict = false;
+      await loadConfig(true);
+      await loadPageData();
+      model.outboundHealth = [];
+      notice("所有配置已恢复默认，接管保持暂停。启用前请重新检查设置并确认接管模式。", "success");
+    }), "danger"),
+  ]);
+}
+
 async function logout() {
   if (!model.authenticated || model.authBusy) return;
   // Keep the current CSRF token only long enough to revoke this cookie. Old
@@ -4039,6 +4094,7 @@ function renderDiagnostics() {
   return [card("连通性诊断", "从任务和失败证据判断问题；新诊断由你明确发起。", button("新建诊断", openDiagnosticForm, "primary")), ...renderDiagnosticsEditor().filter(node => node?.getAttribute?.("data-card-title") !== "对比直连与代理")];
 }
 const configurationPages = createConfigurationPages({ model, h, card, note, button, badge, detailPairs, empty, readonlyNote, time, canManage, runtime,
+  changePassword: openPasswordChange, logout, resetConfiguration: confirmResetConfiguration,
   stateLabel: () => stateLabels[runtime()] || runtime(), edit: openEditor, addOutbound, addRule, deleteOutbound, deleteRule, moveRule: moveSavedRule, outboundDetails, testOutbound: openOutboundTest,
   refreshHealth: () => refreshOutboundHealth().then(renderPreserving), preflight: () => action(async () => showResult("接管预检", await endpoints.lifecycle("preflight"))),
   simulateRules: () => dialog("模拟规则匹配", "使用已保存版本，不发起业务连接。", h("div", {}, ...selectCards(renderRulesEditor(), ["模拟一次规则匹配"]))),
@@ -4067,12 +4123,8 @@ function render() {
     main.replaceChildren(renderAuth());
     return;
   }
-  const actions = [
-    button("刷新", () => refreshAll().catch(failure), "ghost compact", false),
-    button("退出登录", logout, "ghost compact", !model.online || model.authBusy),
-  ];
   main.replaceChildren(
-    pageHeader(actions),
+    pageHeader(),
     h(
       "div",
       { id: "page-notice" },
@@ -4229,10 +4281,10 @@ setInterval(async () => {
   try {
     if (!await refreshState() || !currentAuth(epoch)) return;
     if (!await refreshTraffic() || !currentAuth(epoch)) return;
-    if (["dns", "diagnostics", "outbounds"].includes(model.page)) await loadPageData();
+    if (["dns", "diagnostics", "outbounds", "settings"].includes(model.page)) await loadPageData();
     if (!currentAuth(epoch)) return;
     if (
-      (["home", "connections", "dns", "diagnostics", "outbounds"].includes(model.page) || !wasOnline) &&
+      (["home", "connections", "dns", "diagnostics", "outbounds", "settings", "inbounds", "rules"].includes(model.page) || !wasOnline) &&
       !document.querySelector("#detail-dialog").open && !document.querySelector("#editor-dialog")?.open
     )
       renderPreserving();

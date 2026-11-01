@@ -2,6 +2,7 @@
 
 ## Features
 
+- Change the management password and reset all settings while capture is paused from Settings and Recovery.
 - Require a management password on first use and password authentication on later logins.
 - Guide first-time capture setup with ready-to-use defaults and explicit direct-only confirmation.
 - Show configuration as status lists with focused editors, outbound connection tests and live rule/outbound updates.
@@ -30,6 +31,7 @@
 
 ## Bugfixes
 
+- Unblock recovery after capture stops before network setup, and show the actual reason when capture cannot start.
 - Keep signed-out sessions closed and resume first-time password setup after refreshing the page.
 - Show capture failures from the tray and open diagnostics without closing management.
 - Keep management usable when capture telemetry is temporarily unavailable instead of reporting a lost connection.
@@ -47,6 +49,7 @@
 
 ## Changes
 
+- Update console status automatically and group account actions and recovery controls in Settings, with About at the end.
 - Remove legacy HTTP management and `general.manager-addr`; use the password-protected Web console.
 - Speed up CI while preserving platform and release validation.
 - Simplify setup, development, checks, builds and packaging into a few just commands.

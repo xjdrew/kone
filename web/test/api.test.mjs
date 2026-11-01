@@ -22,6 +22,24 @@ test("disabled TUN errors explain the required saved inbound setting", async () 
   assert.equal(explainError("other failure"), "other failure");
 });
 
+test("password changes use an authenticated update and replace the session CSRF", async () => {
+  setSession({ csrf_token: "original-csrf" });
+  const calls = [];
+  globalThis.fetch = async (path, options) => {
+    calls.push({ path, ...options });
+    return new Response(JSON.stringify({ csrf_token: "replacement-csrf" }), { status: 200 });
+  };
+  const body = { current_password: "current-password", password: "new-password", confirm_password: "new-password" };
+  await endpoints.changePassword(body);
+  assert.equal(calls[0].method, "PUT");
+  assert.equal(calls[0].path, "/api/v1/auth/password");
+  assert.deepEqual(JSON.parse(calls[0].body), body);
+  assert.equal(calls[0].headers["X-CSRF-Token"], "original-csrf");
+  await endpoints.logout();
+  assert.equal(calls[1].headers["X-CSRF-Token"], "replacement-csrf");
+  assert.match(explainError("Current management password is incorrect"), /当前管理密码不正确/);
+});
+
 test("rule shortcuts retain exact domain, address, port and known transport scope", () => {
   assert.deepEqual(exactRuleTarget("Example.COM.:443", "udp"), {
     type: "DOMAIN", pattern: "example.com", protocol: "udp", ports: [443], source: "one-click",

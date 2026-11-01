@@ -163,3 +163,30 @@ func TestReadinessHTTPAndRuntimeLockedErrorsProvideActions(t *testing.T) {
 	require.Equal(t, 409, response.Code)
 	require.Contains(t, response.Body.String(), "capture_locked")
 }
+
+func TestReadinessIncludesRecoveryEvidenceAndNextAction(t *testing.T) {
+	c := testController(t, Options{})
+	enable(t, c)
+	require.NoError(t, c.writeRecoveryJournal(c.doc.Config, "interrupted-run-1234"))
+	c.state = "recovery_required"
+	report := c.Readiness(t.Context())
+	require.False(t, report.Ready)
+	require.NotNil(t, report.Recovery)
+	require.True(t, report.Recovery.CanClear)
+	require.Equal(t, "not_configured", report.Recovery.Items[0].Status)
+	require.Len(t, report.Blockers, 1)
+	require.Equal(t, report.Recovery.NextAction, report.Blockers[0].Message)
+
+	require.NoError(t, os.WriteFile(c.journalPath(), []byte("invalid"), 0600))
+	report = c.Readiness(t.Context())
+	require.False(t, report.Recovery.CanClear)
+	require.Contains(t, report.Blockers[0].Message, "recovery journal is invalid")
+	require.Equal(t, "invalid", report.Recovery.Items[0].Status)
+
+	require.NoError(t, os.Remove(c.journalPath()))
+	report = c.Readiness(t.Context())
+	require.False(t, report.Recovery.Required)
+	require.Contains(t, report.Blockers[0].Message, "acknowledge")
+	require.NoError(t, c.Recover(t.Context()))
+	require.True(t, c.Readiness(t.Context()).Ready)
+}

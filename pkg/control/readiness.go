@@ -28,6 +28,7 @@ type ReadinessReport struct {
 	Blockers            []ReadinessCheck `json:"blockers"`
 	Warnings            []ReadinessCheck `json:"warnings"`
 	Changes             []string         `json:"changes"`
+	Recovery            *RecoveryReport  `json:"recovery,omitempty"`
 }
 
 func directOnly(cfg *kone.KoneConfig) bool {
@@ -79,7 +80,16 @@ func (c *Controller) readiness(ctx context.Context, doc Document, state, configE
 		add(ReadinessCheck{"configuration", "configuration", "error", "error", configError, "settings", "config", "repair_configuration"})
 	}
 	if state == "recovery_required" || state == "recovery_failed" {
-		add(ReadinessCheck{"recovery", "recovery", "error", "error", "Inspect and repair the previous capture before enabling", "settings", "recovery", "inspect_recovery"})
+		recovery, err := c.InspectRecovery(ctx)
+		report.Recovery = &recovery
+		message := recovery.NextAction
+		if message == "" {
+			message = "Inspect and acknowledge the previous capture before enabling"
+		}
+		if err != nil {
+			message += ": " + safeMessage(err, doc.Config)
+		}
+		add(ReadinessCheck{"recovery", "recovery", "error", "error", message, "settings", "recovery", "inspect_recovery"})
 	}
 	if report.DirectOnly {
 		check := ReadinessCheck{"direct_only", "direct_only", "warning", "warning", "Current rules use no proxy outbound. Capture will only use direct/reject policies; adding a proxy alone does not change these rules.", "outbounds", "rules", "configure_rules"}

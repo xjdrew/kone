@@ -30,6 +30,8 @@ On macOS, management and the native menu bar run as the ordinary desktop user. E
 
 Use the tray/menu or management interface to pause capture or exit. Normal shutdown releases owned resources. Forced process termination cannot run cleanup; recovery only restores resources whose ownership can be verified. See [runtime reliability](runtime.md).
 
+Console pages update automatically. **Settings and Recovery** contains password changes, logout and a confirmed reset of all settings. Password changes require the current password and revoke other sessions and pairing codes. A full reset is available only locally while capture is paused with no pending network recovery; it restores capture settings, GeoIP and LAN access defaults, preserves the management password and local login, and leaves capture paused. Historical backups are retained; undo can restore previously confirmed capture settings, but cannot guarantee recovery of never-started edits. Exported TOML omits proxy credentials.
+
 ## Traffic and diagnostics
 
 Management shows business connections, traffic paths, DNS history, routing decisions and connection failures. Only traffic entering KONE is observable. DNS queries, diagnostic probes and business flows are different measurements; opening management does not make KONE observe all host traffic.
