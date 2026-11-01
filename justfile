@@ -119,6 +119,12 @@ test-mixed:
 test-pe:
     go test -race -count=1 github.com/sagernet/sing-tun/internal/wintun github.com/sagernet/sing-tun/internal/wintun/memmod
 
+# Exercise ZIP, extraction and temporary installation with Windows PowerShell 5.1.
+[group('windows maintenance')]
+[windows]
+test-windows-package:
+    node --test "$KONE_TASK_ROOT/test/integration/windows-package.test.mjs"
+
 [group('go')]
 test-macos-desktop:
     go test -v -count=1 ./pkg/desktop -run '^TestDarwin(NativeTray(Selectors|PipeEOF)|AuthenticatedPrivateHelperLifecycleWithoutNetworkChanges)$'

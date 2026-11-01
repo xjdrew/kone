@@ -26,6 +26,8 @@ Linux/macOS 使用 `just build` 后运行 `./dist/kone`；macOS 在桌面会话�
 
 `just package-local` 构建页面、七个二进制目标，并在 `release-assets/` 生成当前主机平台的本地安装包；它校验原生架构的程序版本，不发布 Release。Windows 便携 ZIP 随附按用户安装的 `install.ps1`。macOS 的便携包和未签名 `.pkg` 安装的是命令行程序及资源，并不是已签名、公证的 `.app`。托盘、菜单、助手和真实 TUN 已有 CI 验收；真实鼠标交互、授权弹窗、干净机器升级/卸载、手机证书信任以及签名/公证仍需目标设备验收。打包范围和信任边界见 [发布说明](releases.md)、[Windows 使用](windows/README.md) 与 [macOS 权限](macos-helper.md)。
 
+Windows 打包使用系统自带的 Windows PowerShell 5.1，无需另装 PowerShell 7（`pwsh`）；可用 `just test-windows-package` 验证压缩、解压和临时安装流程。
+
 ## 常用任务
 
 | 任务 | 用途 |

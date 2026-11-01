@@ -123,6 +123,9 @@ jobs:
       - name: Regress upstream PE loader pointer bounds
         if: ${{ matrix.os == 'windows-latest' }}
         run: just test-pe
+      - name: Regress Windows packaging without PowerShell 7
+        if: ${{ matrix.os == 'windows-latest' }}
+        run: just test-windows-package
       - name: Validate macOS AppKit and private helper boundaries
         if: matrix.os == 'macos-latest'
         run: just test-macos-desktop
