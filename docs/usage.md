@@ -26,6 +26,8 @@ Double-click `kone.exe` on Windows or open `Kone.app` on macOS. These desktop en
 
 Settings persist in an independent profile in your user configuration directory. Managed mode does not read the working directory's `config.toml` or import terminal proxy settings. With the console entrypoint (`kone-cli.exe` on Windows, `kone-cli` on macOS, `kone` on Linux), `-manage` explicitly selects managed mode, `-data-dir` selects its profile and `-listen` selects the loopback listener. Console `-no-browser` prints the local entry URL. On first use it includes a one-time password-setup proof: keep it private. Once a password is set, local links require password authentication; the browser uses an HttpOnly cookie. Desktop entrypoints discard bootstrap output and use the tray's explicit browser action instead.
 
+Management password hashing uses Argon2id with 19 MiB, two passes and one lane. Older `auth.json` files are incompatible: exit KONE, back up the profile, move that file aside and set a new password through the local tray entry. Retain `settings.json` to keep proxy and routing settings. KONE does not automatically migrate or delete the old authentication file.
+
 Windows keeps management at ordinary user privileges and requests a separate UAC network helper when capture needs elevation. Wintun is included; no separate TAP installation is required. Use an explicit `kone.exe` path when working beside an older extensionless binary. See [Windows setup and application trust](windows/README.md).
 
 On macOS, management and the native menu bar run as the ordinary desktop user. Enabling capture requests authorization for a separate network helper. See [macOS permissions](macos-helper.md) and [menu bar behavior](macos-tray.md).

@@ -67,6 +67,7 @@
 
 ## Changes
 
+- Reduce management password hashing cost; exit KONE and move the old `auth.json` aside to set a new password, while retaining `settings.json` and other configuration.
 - Keep the infrequently used log time filter behind one control and omit routine network-refresh command logs.
 - Compact the outbound list, show built-in targets first and display saved-rule reference counts.
 - Keep FINAL in a fixed group below ordinary rules and edit its fallback outbound separately.

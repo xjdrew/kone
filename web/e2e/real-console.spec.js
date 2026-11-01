@@ -73,12 +73,12 @@ async function assertNoCaptureJournal(directory) {
   } catch (error) { if (error.code !== "ENOENT") throw error; }
 }
 
-async function openManagement(browser, manager, ownedContexts) {
+async function openManagement(browser, manager, ownedContexts, password = "browser-fixture-management-password", rejectedPassword = "") {
   const context = await browser.newContext();
   ownedContexts.push(context);
   const page = await context.newPage();
   const forbidden = [], states = [], pending = new Set();
-  const allowed = new Set(["POST /api/v1/session", "POST /api/v1/auth/password", "POST /api/v1/config/validate", "PUT /api/v1/config", "POST /api/v1/rules/simulate"]);
+  const allowed = new Set(["POST /api/v1/session", "POST /api/v1/auth/password", "PUT /api/v1/auth/password", "POST /api/v1/config/validate", "PUT /api/v1/config", "POST /api/v1/rules/simulate"]);
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request(), url = new URL(request.url());
     const key = `${request.method()} ${url.pathname}`;
@@ -108,11 +108,19 @@ async function openManagement(browser, manager, ownedContexts) {
   if (await page.locator("#setup-password").isVisible()) {
     await page.reload(); // The one-use URL is gone; the limited setup cookie must resume safely.
     await expect(page.locator("#setup-password")).toBeVisible();
-    await page.locator("#setup-password").fill("browser-fixture-management-password");
-    await page.locator("#setup-password-confirm").fill("browser-fixture-management-password");
+    await page.locator("#setup-password").fill(password);
+    await page.locator("#setup-password-confirm").fill(password);
     await page.getByRole("button", { name: "设置管理密码", exact: true }).click();
   } else {
-    await page.locator("#login-password").fill("browser-fixture-management-password");
+    if (rejectedPassword) {
+      await page.locator("#login-password").fill(rejectedPassword);
+      const rejected = page.waitForResponse(response => new URL(response.url()).pathname === "/api/v1/session" && response.request().method() === "POST");
+      await page.getByRole("button", { name: "登录管理", exact: true }).click();
+      expect((await rejected).status()).toBe(401);
+      await expect(page.locator("#auth-error")).not.toHaveText("");
+      await expect(page.locator("#login-password")).toBeVisible();
+    }
+    await page.locator("#login-password").fill(password);
     await page.getByRole("button", { name: "登录管理", exact: true }).click();
   }
   await expect(page.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
@@ -138,7 +146,7 @@ async function openManagement(browser, manager, ownedContexts) {
   return { context, page, assertPaused };
 }
 
-test("@real genuine management cookie, save, reload and restart stay capture-paused", async ({ browser }) => {
+test("@real genuine management cookie, password rotation, save, reload and restart stay capture-paused", async ({ browser }) => {
   test.setTimeout(60000);
   const binary = process.env.KONE_MANAGEMENT_TEST_BINARY;
   if (process.env.CI && process.platform === "linux") expect(Boolean(binary), "CI must supply the real management binary").toBe(true);
@@ -243,11 +251,63 @@ test("@real genuine management cookie, save, reload and restart stay capture-pau
       expect(descendants.trim()).toBe("");
     };
     await verifySaved();
+    const originalPassword = "browser-fixture-management-password";
+    const replacementPassword = "browser-fixture-replacement-password";
+    const originalCookie = (await ui.context.cookies(manager.url.origin)).find(cookie => cookie.name === "kone_session");
+    expect(Boolean(originalCookie)).toBe(true);
+    const sessionEvidence = () => ui.page.evaluate(async () => {
+      const response = await fetch("/api/v1/state", { credentials: "same-origin" });
+      if (!response.ok) throw new Error("The current genuine management session is unavailable");
+      const value = await response.json();
+      return { csrf: value.csrf_token, id: value.session_id, version: value.saved_version };
+    });
+    const beforePasswordChange = await sessionEvidence();
+    await ui.page.locator(".nav-link[data-page=settings]").click();
+    await ui.page.locator('[data-settings-link="account"]').click();
+    await ui.page.locator("#current-password").fill(originalPassword);
+    await ui.page.locator("#new-password").fill(replacementPassword);
+    await ui.page.locator("#confirm-new-password").fill(replacementPassword);
+    const changed = ui.page.waitForResponse(response => new URL(response.url()).pathname === "/api/v1/auth/password" && response.request().method() === "PUT");
+    await ui.page.getByRole("button", { name: "确认修改密码", exact: true }).click();
+    expect((await changed).status()).toBe(200);
+    await expect(ui.page.locator("#page-notice")).toContainText("管理密码已修改");
+    expect(await ui.page.evaluate(() => ["#current-password", "#new-password", "#confirm-new-password"].every(selector => document.querySelector(selector)?.value === ""))).toBe(true);
+    const afterPasswordChange = await sessionEvidence();
+    const replacementCookie = (await ui.context.cookies(manager.url.origin)).find(cookie => cookie.name === "kone_session");
+    // Compare private session material only as booleans so an assertion failure
+    // cannot print cookies, CSRF tokens or password inputs.
+    expect(Boolean(replacementCookie && originalCookie && replacementCookie.value !== originalCookie.value)).toBe(true);
+    expect(Boolean(beforePasswordChange.csrf && afterPasswordChange.csrf && beforePasswordChange.csrf !== afterPasswordChange.csrf)).toBe(true);
+    expect(Boolean(beforePasswordChange.id && afterPasswordChange.id && beforePasswordChange.id !== afterPasswordChange.id)).toBe(true);
+    expect(afterPasswordChange.version).toBe(beforePasswordChange.version);
+    await ui.assertPaused();
+    await verifySaved();
+    const retiredContext = await browser.newContext();
+    contexts.push(retiredContext);
+    await retiredContext.addCookies([originalCookie]);
+    const retiredPage = await retiredContext.newPage();
+    let retiredWrite = false;
+    await retiredPage.route("**/api/v1/**", route => {
+      const request = route.request();
+      if (request.method() !== "GET" || new URL(request.url()).searchParams.has("token")) {
+        retiredWrite = true;
+        return route.abort("blockedbyclient");
+      }
+      return route.continue();
+    });
+    await retiredPage.goto(manager.url.origin + "/");
+    await expect(retiredPage.locator("#login-password")).toBeVisible();
+    expect(await retiredPage.evaluate(async () => (await fetch("/api/v1/state", { credentials: "same-origin" })).status)).toBe(401);
+    expect(retiredWrite).toBe(false);
+    await retiredContext.close();
+    await ui.context.close();
+    ui = await openManagement(browser, { ...manager, url: new URL(manager.url.origin + "/") }, contexts, replacementPassword, originalPassword);
+    await verifySaved();
     await ui.context.close();
     await manager.stop();
     manager = await startManager(binary, directory);
     managers.push(manager);
-    ui = await openManagement(browser, manager, contexts);
+    ui = await openManagement(browser, manager, contexts, replacementPassword);
     await verifySaved();
     await ui.page.locator(".nav-link[data-page=rules]").click();
     await ui.page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();

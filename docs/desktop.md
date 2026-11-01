@@ -14,7 +14,7 @@ Web 管理使用用户目录下的独立 profile，首次启动不会读取项�
 
 登录、首次设置密码与配对授权使用独立的全屏页面。确认管理会话前及退出或会话失效后，主界面的导航、状态栏和操作控件均隐藏，登录成功后才显示。
 
-密码以随机盐加 Argon2id 哈希保存在 profile 的 `auth.json`，不进入 TOML 导出或日志；认证与具体参数见 [Argon2 官方说明](https://pkg.go.dev/golang.org/x/crypto/argon2)。忘记密码时，退出 KONE、备份 profile 并将 `auth.json` 移出该目录，再从本机托盘重新设置；保留 `settings.json` 即可保留代理和规则。能修改 profile 的本机账户属于主机信任边界。
+密码以随机盐加 Argon2id 哈希保存在 profile 的 `auth.json`，不进入 TOML 导出或日志。当前使用 19 MiB 内存、2 轮、1 个并行通道，采用 [OWASP 的 Argon2id 基准参数](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#argon2id) 降低交互等待；算法见 [Argon2 官方说明](https://pkg.go.dev/golang.org/x/crypto/argon2)。旧版认证文件不兼容，也不会自动迁移或删除：升级前退出 KONE、备份 profile 并将 `auth.json` 移出该目录，再从本机托盘重新设置。忘记密码也可按相同步骤操作；保留 `settings.json` 即可保留代理和规则。能修改 profile 的本机账户属于主机信任边界。
 
 1. 首次创建的管理配置准备好 TUN 入站、默认规则和系统 DNS 发现，接管仍保持暂停。已有配置保持原样；需要调整时，在“入站”查看摘要并选择**编辑入站**。
 2. 在“出站”添加代理，选择协议并填写服务器地址、端口及所需认证信息；名称自动生成，也可以修改。保存会自动校验，并在成功后建议**测试连接**；测试由你点击发起，列表下方会展开详情并持续更新过程、连接状态和延迟。规则默认保持直连；需要代理的目标请在“规则”显式指定出站，不会因添加代理自动改变已有策略。

@@ -77,6 +77,7 @@ func TestPasswordPersistsAsSaltedHashAndBootstrapCannotBypassLogin(t *testing.T)
 	require.False(t, bytes.Contains(data, []byte("control-test-password")))
 	var persisted passwordCredentials
 	require.NoError(t, json.Unmarshal(data, &persisted))
+	require.Equal(t, passwordVersion, persisted.Version)
 	require.Len(t, persisted.Salt, 16)
 	require.Len(t, persisted.Hash, 32)
 	if runtime.GOOS != "windows" {
