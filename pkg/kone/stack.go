@@ -115,6 +115,16 @@ type singStack struct {
 	err  error
 }
 
+func (s *singStack) Start() error {
+	if err := s.packetStack.Start(); err != nil {
+		return err
+	}
+	if s.tun != nil {
+		s.tun.activateEndpoint()
+	}
+	return nil
+}
+
 func (s *singStack) Wait() {
 	if s.tun != nil {
 		s.tun.waitEndpoint()

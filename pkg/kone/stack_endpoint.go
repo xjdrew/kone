@@ -24,6 +24,7 @@ type supervisedEndpoint struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	mu      sync.Mutex
+	active  bool
 	started bool
 	stopped bool
 	workers sync.WaitGroup
@@ -45,7 +46,24 @@ func (e *supervisedEndpoint) Attach(dispatcher stack.NetworkDispatcher) {
 		return
 	}
 	e.Endpoint.Attach(dispatcher)
-	if !e.started {
+	e.startLocked()
+}
+
+// CreateNIC attaches its dispatcher before sing-tun finishes installing TCP/
+// UDP handlers. Publish them completely before any queued TUN packet can enter
+// netstack. Starting the workers after Start returns supplies happens-before.
+func (e *supervisedEndpoint) activate() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.stopped {
+		return
+	}
+	e.active = true
+	e.startLocked()
+}
+
+func (e *supervisedEndpoint) startLocked() {
+	if e.active && !e.started && e.Endpoint.IsAttached() {
 		e.started = true
 		e.workers.Add(2)
 		go e.readLoop()

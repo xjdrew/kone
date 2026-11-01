@@ -28,14 +28,16 @@ if (-not [string]::IsNullOrEmpty($env:KONE_TEST_STACK)) {
   $stacks = @($env:KONE_TEST_STACK)
 }
 $binary = Join-Path $env:RUNNER_TEMP 'kone-windows-system.test.exe'
-go test -tags with_gvisor -race -c -o $binary ./test/integration
+. (Join-Path $PSScriptRoot 'windows-test-arguments.ps1')
+$buildArguments = @('test', '-tags', 'with_gvisor', '-race', '-c', '-o', $binary, './test/integration')
+& go @buildArguments
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 # Separate test processes, one at a time, so Wintun/routes never overlap stacks.
 foreach ($stack in $stacks) {
   $env:KONE_TEST_STACK = $stack
-  $pattern = '^TestSystemWindows(Wintun|IPv6Wintun)$/^' + $stack + '$'
   $output = "native-windows-$stack.jsonl"
-  go tool test2json -t -p github.com/xjdrew/kone/test/integration $binary -test.run $pattern -test.v=test2json -test.failfast -test.count=1 -test.timeout 12m | Tee-Object -FilePath $output
+  $testArguments = Get-KoneWindowsTestArguments -Binary $binary -Stack $stack
+  & go @testArguments | Tee-Object -FilePath $output
   $result = $LASTEXITCODE
   $events = Get-Content -LiteralPath $output | ConvertFrom-Json
   $events | Where-Object Output | ForEach-Object { Write-Host -NoNewline $_.Output }

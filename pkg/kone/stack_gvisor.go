@@ -49,6 +49,14 @@ func (t *gvisorTun) closeEndpoint() {
 	}
 }
 
+func (t *gvisorTun) activateEndpoint() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.endpoint != nil {
+		t.endpoint.activate()
+	}
+}
+
 func (t *gvisorTun) waitEndpoint() {
 	t.mu.Lock()
 	endpoint := t.endpoint

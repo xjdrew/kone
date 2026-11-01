@@ -256,12 +256,14 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
   assert.match(nativeMacRun, /stacks=\(system gvisor mixed\)/);
   assert.match(nativeMacRun, /--- PASS: TestSystemDarwinUTUN\/\$stack\/\$case/);
   assert.match(nativeMacRun, /--- PASS: TestSystemDarwinDNSGuidance\/\$stack\/late-failure=\$failure/);
+  assert.match(nativeMacRun, /-test\.timeout 8m 2>&1 \| tee/, "archive native race diagnostics with the actual pass evidence");
   assert.match(await taskImplementation("ci-macos-session"), /-test\.run '\^TestDarwinOwnedSystemDNSSessionDeath\$' -test\.v/);
   for (const recipe of ["ci-linux-build", "ci-linux-tun", "ci-linux-dns-tools", "ci-linux-dns", "ci-ss", "docker-build", "docker-check"])
     invokesTask(jobs.test, recipe);
   assert.match(await taskImplementation("ci-linux-tun"), /stacks=\(system gvisor mixed\)/);
   assert.match(await taskImplementation("ci-linux-tun"), /-f pkg\/kone\/stack_modes\.go/);
   assert.match(await taskImplementation("ci-linux-tun"), /--- PASS: \$test/);
+  assert.match(await taskImplementation("ci-linux-tun"), /"\$stack" 2>&1 \| tee/, "keep the race detector's stderr in per-stack artifacts");
   assert.match(await taskImplementation("ci-linux-dns"), /scripts\/test-system-dns\.sh/);
   assert.match(await taskImplementation("ci-ss"), /scripts\/test-shadowsocks-interop\.sh/);
   assert.match(await taskImplementation("docker-build"), /docker build/);
@@ -274,12 +276,15 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
   invokesTask(jobs.test, "ci-windows-tun");
   assert.doesNotMatch(jobs.test, /KONE_TEST_STACK:/, "the Windows job must run every supported stack, without a matrix override");
   const nativeWindows = await taskImplementation("ci-windows-tun");
-  assert.match(nativeWindows, /go test -tags with_gvisor -race -c/);
-  assert.equal((nativeWindows.match(/go test -tags/g) || []).length, 1, "compile the native acceptance binary once");
+  assert.match(nativeWindows, /\$buildArguments = @\('test', '-tags', 'with_gvisor', '-race', '-c'/);
+  assert.equal((nativeWindows.match(/& go @buildArguments/g) || []).length, 1, "compile the native acceptance binary once");
   assert.match(nativeWindows, /@\('system', 'gvisor', 'mixed'\)/);
   assert.match(nativeWindows, /foreach \(\$stack in \$stacks\)/);
-  assert.match(nativeWindows, /go tool test2json/);
-  assert.match(nativeWindows, /-test\.count=1/);
+  assert.match(nativeWindows, /& go @testArguments/);
+  const nativeArguments = await readFile(join(taskRoot, "scripts/ci/windows-test-arguments.ps1"), "utf8");
+  assert.match(nativeArguments, /'tool', 'test2json'/);
+  assert.match(nativeArguments, /'-test\.v=test2json'/);
+  assert.match(nativeArguments, /'-test\.count=1'/);
   for (const name of ["traffic", "udp6_rollback", "tcp6_rollback", "route_rollback"])
     assert.ok(nativeWindows.includes(`'${name}'`));
   assert.match(nativeWindows, /\$passed -notcontains "TestSystemWindowsIPv6Wintun\/\$stack\/\$case"/);

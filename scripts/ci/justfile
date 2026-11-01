@@ -252,7 +252,7 @@ test-windows-package *args:
     task_arguments test-windows-package "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    node --test "$KONE_TASK_ROOT/test/integration/windows-package.test.mjs"
+    node --test "$KONE_TASK_ROOT/test/integration/windows-package.test.mjs" "$KONE_TASK_ROOT/test/integration/windows-native-argv.test.mjs"
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]

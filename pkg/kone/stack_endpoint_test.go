@@ -95,6 +95,7 @@ func endpointFixture(t *testing.T, configure func(*stackPacketTun)) (*stackPacke
 	e := endpoint.(*supervisedEndpoint)
 	packets := make(chan dispatchedPacket, 8)
 	e.Attach(packetDispatcher{packets})
+	adapter.activateEndpoint()
 	t.Cleanup(func() {
 		cancel()
 		adapter.closeEndpoint()
@@ -306,4 +307,53 @@ func TestFullGVisorStackStartupAndDeviceFailure(t *testing.T) {
 	stack.(interface{ Wait() }).Wait()
 	require.NoError(t, stack.Close())
 	require.Equal(t, int32(1), native.closes.Load())
+}
+
+func TestGVisorAdmissionWaitsForCompleteStackInitialization(t *testing.T) {
+	for _, startupErr := range []error{nil, errors.New("initialization failed after NIC attachment")} {
+		t.Run(map[bool]string{true: "success", false: "failure"}[startupErr == nil], func(t *testing.T) {
+			native := &stackPacketTun{stubTun: &stubTun{memoryDevice: newMemoryDevice()}, packets: make(chan []byte, 1), written: make(chan []byte, 1)}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			io := &supervisedTun{Tun: native, ctx: ctx, fail: make(chan error, 1)}
+			adapter := &gvisorTun{supervisedTun: io, native: native, full: true}
+			e := newSupervisedEndpoint(adapter)
+			adapter.endpoint = e
+			delivered := make(chan dispatchedPacket, 1)
+			attached, initialize := make(chan struct{}), make(chan struct{})
+			delegate := &fixtureStack{start: func() error {
+				e.Attach(packetDispatcher{delivered})
+				close(attached)
+				<-initialize
+				return startupErr
+			}, close: func() error { e.Attach(nil); return nil }}
+			stack := &singStack{packetStack: delegate, io: io, tun: adapter}
+			defer func() { cancel(); stack.Close(); native.Close(); stack.Wait() }()
+			done := make(chan error, 1)
+			go func() { done <- stack.Start() }()
+			<-attached
+			// Packets may already be waiting on a gateway when CreateNIC
+			// attaches. They cannot enter partially initialized TCP handlers.
+			native.packets <- append(make([]byte, singtun.PacketOffset), 0x45)
+			select {
+			case <-delivered:
+				t.Error("packet admitted before transport handler initialization")
+			case <-time.After(20 * time.Millisecond):
+			}
+			close(initialize)
+			require.ErrorIs(t, <-done, startupErr)
+			if startupErr == nil {
+				select {
+				case <-delivered:
+				case <-time.After(time.Second):
+					t.Fatal("fully initialized stack did not admit queued packet")
+				}
+			} else {
+				require.NoError(t, stack.Close())
+				native.Close()
+				stack.Wait()
+				require.Empty(t, delivered, "failed startup must never activate packet admission")
+			}
+		})
+	}
 }

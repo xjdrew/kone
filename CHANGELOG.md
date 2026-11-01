@@ -31,6 +31,7 @@
 
 ## Bugfixes
 
+- Keep gateway capture stable when using the gVisor stack.
 - Keep signed-out sessions closed and resume first-time password setup after refreshing the page.
 - Show capture failures from the tray and open diagnostics without closing management.
 - Keep management usable when capture telemetry is temporarily unavailable instead of reporting a lost connection.

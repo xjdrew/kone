@@ -21,7 +21,7 @@ DNS 服务、sing-tun 协议栈、流处理器和出站执行器属于同一数�
 
 同一安装包通过 `core.stack` 选择三种运行模式：`system`（默认）使用系统 TCP 和 sing-tun UDP；`gvisor` 使用 gVisor netstack 处理 TCP/UDP；`mixed` 使用系统 TCP 和 gVisor UDP。这里只使用 gVisor 的 Go 网络栈，不运行容器或沙箱。更换协议栈不会增加代理协议能力或自动启用 IPv6，需要暂停后重新启用接管。
 
-完整 `gvisor` 模式通过有界 channel endpoint 将 IP 报文交给 netstack，TUN 读写仍经过 KONE 的故障监督；断设备会进入同一停止/恢复链路。该桥接增加报文复制和固定容量队列，不代表比其他模式更快。system/mixed 的既有透明 TCP 路径和网关捕获能力保留。当前固定依赖仍是较早的三栈实现，不包含 sing-box 1.15 引入的新自有 TCP/IP 栈，见 [依赖与模式边界](sing-tun.md)。
+完整 `gvisor` 模式通过有界 channel endpoint 将 IP 报文交给 netstack，仅在协议栈初始化完成后开始投递报文，TUN 读写仍经过 KONE 的故障监督；断设备会进入同一停止/恢复链路。该桥接增加报文复制和固定容量队列，不代表比其他模式更快。system/mixed 的既有透明 TCP 路径和网关捕获能力保留。当前固定依赖仍是较早的三栈实现，不包含 sing-box 1.15 引入的新自有 TCP/IP 栈，见 [依赖与模式边界](sing-tun.md)。
 
 旧的自建报文分发器、NAT、TCP/UDP relay 和 `pkg/tcpip` 已删除。生产入口只沿 [stack.go](../pkg/kone/stack.go) → [flow.go](../pkg/kone/flow.go) → [outbounds.go](../pkg/kone/outbounds.go) 阅读；Fake-IP 地址池和 CIDR 匹配使用 `net/netip`。
 
