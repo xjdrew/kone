@@ -23,6 +23,10 @@ if ($env:KONE_WINDOWS_SYSTEM_TEST -cne '1') {
 $stacks = @('system', 'mixed')
 # Source-relative capability marker: older release SHAs support two stacks.
 if (Test-Path -LiteralPath 'pkg/kone/stack_modes.go') { $stacks = @('system', 'gvisor', 'mixed') }
+if ($env:KONE_TEST_STACK -ceq 'gvisor' -and $stacks -cnotcontains 'gvisor') {
+  Write-Host 'Historical source has no gvisor runtime mode; this matrix entry is not applicable.'
+  exit 0
+}
 if (-not [string]::IsNullOrEmpty($env:KONE_TEST_STACK)) {
   if ($env:KONE_TEST_STACK -cnotin $stacks) { throw 'Unsupported KONE_TEST_STACK for this source.' }
   $stacks = @($env:KONE_TEST_STACK)

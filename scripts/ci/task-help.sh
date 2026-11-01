@@ -51,7 +51,7 @@ task_arguments() {
     ci-linux-dns-tools) description='CI only: verify tools needed by the private system-DNS acceptance harness.' ;;
     ci-linux-dns) description='Disposable Linux CI with sudo/unshare only: test DNS in private mount/network/D-Bus contexts.' ;;
     ci-ss) description='Disposable CI only: test Shadowsocks against a digest-pinned isolated official server container.' ;;
-    ci-windows-tun) description='Administrator Windows CI only: compile once and test source-supported stacks sequentially; requires KONE_WINDOWS_SYSTEM_TEST=1.' ;;
+    ci-windows-tun) description='Administrator Windows CI only: test KONE_TEST_STACK on its own disposable runner; requires KONE_WINDOWS_SYSTEM_TEST=1.' ;;
     docker-build) description='Build the container image from source; requires a running Docker daemon.' ;;
     docker-check) description='Validate the container configuration without enabling capture; requires the built image and Docker.' ;;
     windows-firewall-check) description='Windows only: inspect existing KONE firewall entries without changing them.' ;;

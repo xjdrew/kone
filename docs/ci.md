@@ -10,40 +10,54 @@ PR 使用其根 justfile。`workflow_call` 重放历史提交时，额外把 `gi
 
 PR 覆盖率基线也复用这一入口：精确 base SHA 已检出到 `.coverage-base` 后执行 `just ci test-coverage .coverage-base ../coverage-base.out`，再用 `just ci coverage-check` 比较；输出路径相对于被测模块。不会要求旧 base 自带新任务文件，也不换成当前 PR 的应用代码。
 
-## 6 个执行检查
+## 9 个执行检查
 
 | 分组 | 合并后的职责 | 保留的验收 |
 | --- | --- | --- |
 | Web 管理与浏览器 | 前端、发布脚本及数据转换单测、离线构建、三种浏览器 | 真实管理服务的 Cookie/CSRF、保存/刷新/重启闭环；全程接管暂停 |
 | Linux 平台 | 模块校验、vet、全包 race/覆盖率、原生网络、互操作与容器 | 三种协议栈的 TUN/网关/IPv6/恢复、私有 resolver、固定官方 SS 镜像和 Docker 检查 |
 | macOS 平台与安装包 | 全包 race/覆盖率、AppKit/权限助手、UTUN/DNS 及 PKG | 三种协议栈的真实 UTUN/系统 DNS/退出恢复；复用交叉构建工件，临时安装/版本验证 |
-| Windows 平台与安装包 | 全包 race/覆盖率、PE 加载器、PowerShell 打包、Wintun 及 ZIP | PR 精确 base 覆盖率；三种协议栈各 6 个 IPv4/IPv6/TCP/UDP/故障恢复叶子用例；临时安装/版本验证 |
+| Windows 平台与安装包 | 全包 race/覆盖率、PE 加载器、PowerShell 参数/打包及 ZIP | PR 精确 base 覆盖率；复用发行程序并验证临时安装/版本 |
+| Windows 原生 system | 独立 runner 的 Wintun system 用例 | IPv4/IPv6、TCP/UDP、端口/路由失败及清理，共 6 个叶子用例 |
+| Windows 原生 gvisor | 独立 runner 的 Wintun gvisor 用例 | 同样 6 个叶子用例，包含完整用户态 TCP/UDP 栈 |
+| Windows 原生 mixed | 独立 runner 的 Wintun mixed 用例 | 同样 6 个叶子用例，包含系统 TCP 与 gVisor UDP |
 | 质量与性能 | 原 fuzz/漏洞检查及性能任务 | fuzz、govulncheck、核心/GeoIP 三样本基线及一组画像 |
 | 跨平台构建与 Linux 交付 | 六目标构建、对应源码及 Linux DEB | Linux/macOS/Windows 的 amd64/arm64，共 10 个 GUI/CLI 程序；Linux 临时安装验证 |
 
-工作流只有 `web`、`test`、`build`、`quality` 四个验收组，`test` 展开为三个 OS，因此 PR 实际执行六个检查。发布调用另加一个汇总检查任务，只有四组全部成功才产生标记；该任务不在 PR 中执行。ARMv7 保留为显式开发构建，不属于默认发行矩阵。
+工作流包含 `web`、`test`、`build`、`quality`、`windows-native` 五个验收组；`test` 展开为三个 OS，`windows-native` 展开为三种运行栈，因此 PR 实际执行九个检查。发布调用另加一个汇总检查任务，只有五组全部成功才产生标记；该任务不在 PR 中执行。ARMv7 保留为显式开发构建，不属于默认发行矩阵。
 
 覆盖率门禁位于 Windows 平台任务中。每个 PR 重新执行目标分支精确 base SHA 的全包测试，使用相同 Go、`with_gvisor`、race、atomic 覆盖模式及包枚举方式；不使用历史比例或缓存 profile 代替测量。
 
-普通程序统一包含 `system`、`gvisor`、`mixed`；全包 race 只测这一种构建，不再重复执行整套 mixed 构建测试。Windows 原生测试只编译一次，再在同一 runner 中依次启动三次独立测试进程；各栈结束并清理后才运行下一栈，不并发修改系统网络。门禁逐栈核对共 18 个叶子用例实际通过，空匹配、跳过或运行错误的栈不能算成功。
+普通程序统一包含 `system`、`gvisor`、`mixed`；全包 race 只测这一种构建，不再重复执行整套 mixed 构建测试。Windows 原生三栈各使用独立 runner 并行，每个 runner 编译一次 race 测试程序并只运行指定栈；不在同一主机并发修改路由或适配器。门禁逐栈核对共 18 个叶子用例实际通过，空匹配、跳过或运行错误的栈不能算成功。
 
 Linux 系统验收共享编译好的测试程序，但逐栈的 TUN/网关与 resolved 隔离环境仍分开创建。权限操作仅作用于 CI 的临时网络/挂载命名空间；SS 对端继续使用隔离容器。macOS 在平台 runner 中顺序验收三栈，并逐栈核对四个 UTUN 和两个 DNS 叶子用例及物理 DNS/默认路由恢复。原生测试不会在用户开发主机运行。
 
-重放历史源码时，编排脚本按被测目录内的 `pkg/kone/stack_modes.go` 能力标记决定协议栈范围：新源码必须通过三栈，尚无该能力的旧 SHA 保留原来的 system/mixed 验收，不能把新源码失败当作兼容跳过。
+重放历史源码时，编排脚本按被测目录内的 `pkg/kone/stack_modes.go` 能力标记决定协议栈范围：新源码必须通过三栈，尚无该能力的旧 SHA 保留原来的 system/mixed 验收，gvisor 分支明确记录不适用且不上传通过工件，不能把新源码失败当作兼容跳过。
 
 ## 去掉重复工作
 
 - 核心规则、DNS 缓存、观察器和 GeoIP 基准没有协议栈实现分支，只测一轮；保留 `-cpu=1,2`、`-count=3` 和画像。真实 TUN 性能采样仍逐栈执行，见 [性能基线](performance.md)。
-- 同平台单元、原生和打包任务共享检出、工具链和编译缓存；三平台任务与交叉构建同时开始。
+- 同平台短任务共享检出、工具链和编译缓存；三平台、交叉构建与独立 Windows 原生任务同时开始，优先缩短等待。
 - macOS/Windows 只在打包阶段等待本次 run、attempt 和源码 SHA 对应的交叉构建成功，再下载同一份 `binaries`；不重复编译发行程序，也不因前置 `needs: build` 延迟单元和原生验收。构建失败不能复用旧 attempt 的工件。
 - 交叉构建和质量基线分别使用独立编译缓存：前者依赖 `go.sum`、工作流和构建身份脚本，后者依赖 `go.sum`、工作流和核心基准源码，与其他 Linux Go 任务的默认缓存分开。这样跨架构和 fuzz/基准编译结果不会始终被较早完成的普通任务缓存替代。缓存只加速编译，所有测试与构建命令仍执行。
 - `master` 的完整资格检查由发布流程调用同一个工作流执行，避免同一 SHA 再跑一份普通 master CI。PR 与 master 发布资格仍使用同一套必需检查；开发分支 push 不触发。
 
-每个 first-parent master 提交仍独立验收，工件、版本及源码固定到该 SHA。新资格标记使用 schema 2 的完整四组；历史 schema 1 仅接受原来的完整七组或十二组，不能拼接缺失门禁。PR 不发布 Release。详见 [发布流程](releases.md)。
+每个 first-parent master 提交仍独立验收，工件、版本及源码固定到该 SHA。新资格标记使用 schema 2 的完整五组；历史 schema 1 仅接受原来的完整七组或十二组，不能拼接缺失门禁。PR 不发布 Release。详见 [发布流程](releases.md)。
+
+## 未采用的六任务实验
+
+曾在 [运行 41282388544](https://github.com/xjdrew/kone/actions/runs/41282388544) 对 PR 提交 `27180cbfae689a818e5778d9c388c15fd4f5d9c9`（被测合并 SHA `3c5ea6eb1855943dbb3e78bc8b72d584579d5d1b`）将 Windows 三栈原生验收顺序并入平台任务。六项全绿，但等待时间明显增加，因此最终改用九任务并行方案。
+
+| 样本 | 执行任务 | 无排队等待 | 原始 runner 时间合计 |
+| --- | --- | --- | --- |
+| [前一 master](https://github.com/xjdrew/kone/actions/runs/41278800665)，`ae59375cc7cc96bb88ac6a660748d5db44370266` | 11 | 288 秒 | 1652 秒 |
+| 未采用的六任务实验 | 6 | 667 秒 | 1654 秒 |
+
+两者不是严格同负载比较：新版本增加 gvisor 原生验收，PR 另含 53 秒精确 base 覆盖率测量，而旧 master 不执行该 PR 步骤。六任务实验的 Windows 平台共 666 秒，其中三栈原生步骤 441 秒，成为关键路径；减少任务数量没有测得等待提速。runner 时间不按平台计费权重换算，也不代表账单成本。九任务方案的实际耗时须另取对应 SHA 的 CI 结果，不沿用本表推断收益。
 
 ## 历史测量：17 个检查收敛到 11 个
 
-下表只描述当时 SHA 的旧版 17→11 分组，不代表当前六检查、统一三栈程序的性能。当前改动需另取对应 SHA 的首次运行及暖缓存样本，分别比较等待时间和 runner 时间，不能沿用旧样本宣称提速。旧版优化前采用 [成功运行 41237028594](https://github.com/xjdrew/kone/actions/runs/41237028594) 为参照，提交为 `e81114f213875790083c9315ca25e424a4587f6d`。优化后在同一提交 `63f225229624ebaf7f3eb2b249733e4f7d046063` 执行 [首轮](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/1) 与 [暖缓存重跑](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/2)，两轮全部检查通过。
+下表只描述当时 SHA 的旧版 17→11 分组，不代表当前九检查、统一三栈程序的性能。当前改动需另取对应 SHA 的首次运行及暖缓存样本，分别比较等待时间和 runner 时间，不能沿用旧样本宣称提速。旧版优化前采用 [成功运行 41237028594](https://github.com/xjdrew/kone/actions/runs/41237028594) 为参照，提交为 `e81114f213875790083c9315ca25e424a4587f6d`。优化后在同一提交 `63f225229624ebaf7f3eb2b249733e4f7d046063` 执行 [首轮](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/1) 与 [暖缓存重跑](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/2)，两轮全部检查通过。
 
 等待时间取首个执行任务开始至最后一个任务完成，不含启动前排队；runner 秒数是各执行任务耗时之和，包含检出、工具链、测试和工件步骤，未按平台计费权重换算。
 

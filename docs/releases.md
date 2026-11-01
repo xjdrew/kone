@@ -15,15 +15,16 @@ The execution groups are:
 | Group | Runners | Checks |
 | --- | --- | --- |
 | Web | 1 Linux | Frontend, three browser engines and genuine paused management persistence |
-| Platform tests | 3 | Native unit/race and all supported stacks, each OS's package installation and privileged acceptance; Linux DNS/Shadowsocks/container checks; fresh Windows PR coverage comparison |
-| Build | 1 Linux | Six default binary targets, matching source/licenses |
+| Platform tests | 3 | Native unit/race and macOS/Windows package installation; Linux/macOS privileged stack acceptance; Linux DNS/Shadowsocks/container checks; fresh Windows PR coverage comparison |
+| Build | 1 Linux | Six default binary targets, matching source/licenses and Linux package installation |
 | Quality | 1 Linux | Fuzzing, vulnerability checks and shared core performance baseline |
+| Windows native | 3 Windows | Separate `system`, `gvisor` and `mixed` Wintun acceptance on independent runners |
 
-These are six execution checks, plus the release-only verification marker. Grouping reuses setup, compiler caches and compatible test binaries; it does not remove platform, protocol or failure assertions. PR coverage still measures the exact target-branch SHA afresh with the same Windows toolchain and flags. The three-platform package checks and every native-stack subcheck must all succeed before release evidence is emitted.
+These are nine execution checks, plus the release-only verification marker. Windows native stacks run in parallel so one stack does not wait for another stack's acceptance; each runner must report all six required leaf tests as genuinely passed. Grouping reuses setup, compiler caches and compatible test binaries; it does not remove platform, protocol or failure assertions. PR coverage still measures the exact target-branch SHA afresh with the same Windows toolchain and flags. The three-platform package checks and every native-stack subcheck must all succeed before release evidence is emitted. Runner availability and setup time still affect elapsed time; execution count alone does not establish a speedup.
 
 All development and CI tasks enter through [just](development.md). Daily builds and local packages use the short root commands; detailed qualification and publication tasks use `just ci <task>`. PRs use their root justfile. For `workflow_call` qualification of a historical SHA, the workflow checks out trusted orchestration tools from `github.workflow_sha` into `.ci-tools`, sets `JUST_JUSTFILE` to that revision's root justfile and `JUST_WORKING_DIRECTORY` to the tested source. Application code, configuration, tests and packaging remain bound to the target SHA; task orchestration and release planning/evidence/publication use the fixed workflow revision. An older source checkout need not contain the newer justfile. Exact PR-base coverage similarly uses `just ci test-coverage .coverage-base ../coverage-base.out` from the current task entrypoint.
 
-New evidence uses marker schema 2 with exactly the four current logical groups (`web`, `test`, `build`, `quality`). Previously published schema-1 evidence remains valid only with its complete original 12-gate or subsequent seven-group list. Missing, extra, duplicate or mixed groups are rejected; a partial old list cannot qualify merely because it contains the smaller current list. SHA, version, run/attempt and the actual latest successful verification job remain required for every supported schema.
+New evidence uses marker schema 2 with exactly the five current logical groups (`web`, `test`, `build`, `quality`, `windows-native`). Previously published schema-1 evidence remains valid only with its complete original 12-gate or subsequent seven-group list. Missing, extra, duplicate or mixed groups are rejected; a partial old list cannot qualify merely because it contains the smaller current list. SHA, version, run/attempt and the actual latest successful verification job remain required for every supported schema.
 
 ## Packages and trust
 

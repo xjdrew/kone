@@ -176,7 +176,7 @@ test("historical qualification accepts only whole gate sets and new evidence use
     });
     const generated = JSON.parse(await readFile(join(directory, "verification/verification.json"), "utf8"));
     assert.deepEqual(generated.required_jobs, requiredJobs);
-    assert.equal(generated.required_jobs.length, 4);
+    assert.equal(generated.required_jobs.length, 5);
     assert.equal(generated.schema, 2);
     verifyMarker(generated, expected);
   } finally {
@@ -229,7 +229,8 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
   assert.match(release, /if: github\.ref == 'refs\/heads\/master'/);
   const jobs = jobSections(go);
   assert.deepEqual(flowList(jobs.test, "os"), ["macos-latest", "ubuntu-latest", "windows-latest"]);
-  assert.equal(requiredJobs.length - 1 + flowList(jobs.test, "os").length, 6, "matrix expansion has six active qualification jobs");
+  assert.deepEqual(flowList(jobs["windows-native"], "stack"), ["gvisor", "mixed", "system"]);
+  assert.equal(requiredJobs.length - 2 + flowList(jobs.test, "os").length + flowList(jobs["windows-native"], "stack").length, 9, "matrix expansion has nine active qualification jobs");
   assert.doesNotMatch(jobs.test, /^    needs:/m, "unit/native checks must not wait for cross-builds to start");
   assert.ok(jobs.test.includes("github.event.pull_request.base.sha"), "coverage must measure the exact PR base");
   for (const recipe of ["go-verify", "vet", "test-coverage", "test-pe", "test-macos-desktop", "coverage-check", "ci-macos-build", "ci-macos-tun", "ci-macos-session", "wait-build", "package"])
@@ -237,7 +238,8 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
   assert.doesNotMatch(jobs.test, /just ci test-mixed/, "the unified binary must avoid repeating the full race suite per stack");
   assert.match(jobs.test, /steps\.package-input\.outcome == 'success'/);
   assert.match(jobs.test, /steps\.package-download\.outcome == 'success'/);
-  assert.ok(jobs.test.indexOf("just ci wait-build") > jobs.test.indexOf("just ci ci-windows-tun"));
+  assert.ok(jobs.test.indexOf("just ci wait-build") > jobs.test.indexOf("just ci ci-macos-session"));
+  assert.doesNotMatch(jobs.test, /just ci ci-windows-tun|name: .*windows-native/);
   const waitBuild = await taskImplementation("wait-build");
   assert.match(waitBuild, /attempts\/\$\{env\.GITHUB_RUN_ATTEMPT\}\/jobs/);
   assert.match(waitBuild, /buildJobName\(env\.KONE_BUILD_SHA\)/);
@@ -273,8 +275,13 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
   assert.match(await taskImplementation("vuln"), /govulncheck/);
   assert.match(await taskImplementation("fuzz"), /-fuzz/);
   assert.match(await taskImplementation("benchmark"), /-bench/);
-  invokesTask(jobs.test, "ci-windows-tun");
-  assert.doesNotMatch(jobs.test, /KONE_TEST_STACK:/, "the Windows job must run every supported stack, without a matrix override");
+  invokesTask(jobs["windows-native"], "ci-windows-tun");
+  assert.doesNotMatch(jobs["windows-native"], /^    needs:/m, "native modes start independently of unit coverage and cross-builds");
+  assert.ok(jobs["windows-native"].includes("KONE_TEST_STACK: ${{ matrix.stack }}"));
+  assert.ok(jobs["windows-native"].includes("name: ${{ inputs.artifact-prefix }}windows-native-${{ matrix.stack }}"));
+  assert.ok(jobs["windows-native"].includes("path: native-windows-${{ matrix.stack }}.jsonl"));
+  assert.ok(jobs["windows-native"].includes("matrix.stack != 'gvisor' || hashFiles('pkg/kone/stack_modes.go') != ''"));
+  assert.doesNotMatch(jobs.test, /KONE_TEST_STACK:/, "native opt-ins must not leak into ordinary Windows unit or coverage tests");
   const nativeWindows = await taskImplementation("ci-windows-tun");
   assert.match(nativeWindows, /\$buildArguments = @\('test', '-tags', 'with_gvisor', '-race', '-c'/);
   assert.equal((nativeWindows.match(/& go @buildArguments/g) || []).length, 1, "compile the native acceptance binary once");
@@ -290,6 +297,8 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
   assert.match(nativeWindows, /\$passed -notcontains "TestSystemWindowsIPv6Wintun\/\$stack\/\$case"/);
   assert.match(nativeWindows, /\$passed -notcontains "TestSystemWindowsWintun\/\$stack\/occupied=\$occupied"/);
   assert.match(nativeWindows, /Unexpected stack executed in this test process/);
+  assert.match(nativeWindows, /KONE_TEST_STACK -ceq 'gvisor' -and \$stacks -cnotcontains 'gvisor'/);
+  assert.match(nativeWindows, /Historical source has no gvisor runtime mode/);
 });
 
 test("the container uses checksum-pinned task bootstrap and keeps task tools out of the runtime image", async () => {

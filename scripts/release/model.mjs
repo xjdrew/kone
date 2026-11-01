@@ -16,6 +16,7 @@ export const requiredJobs = [
   "test",
   "build",
   "quality",
+  "windows-native",
 ];
 // Published development releases retain their original complete gate set.
 // New markers use requiredJobs; compatibility never fills missing current

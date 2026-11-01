@@ -56,7 +56,7 @@
 - Publish Windows ZIP, macOS PKG and Linux DEB for amd64/arm64; keep ARMv7 gateway builds as an explicit option.
 - Update console status automatically and group account actions and recovery controls in Settings, with About at the end.
 - Remove legacy HTTP management and `general.manager-addr`; use the password-protected Web console.
-- Speed up CI while preserving platform and release validation.
+- Run Windows stack checks in parallel while preserving platform and release validation.
 - Simplify setup, development, checks, builds and packaging into a few just commands.
 - Keep local packaging limited to creating files without running or installing the program.
 

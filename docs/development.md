@@ -85,7 +85,9 @@ just ci coverage-check
 
 第二条要求精确目标 SHA 已检出到 `.coverage-base`，输出路径相对于该被测模块；旧 base 不需要自带 justfile。测试与覆盖率不以缓存结果代替实际测量，KONE 全包语句覆盖率不得低于 PR base。
 
-前端浏览器、数据转换、画像分析、Windows 防火墙维护及发布编排的细分入口也通过 `just ci` 调用；这些高级命令不应成为每次构建的前置步骤。浏览器验收使用回环临时配置并保持接管暂停；涉及系统 TUN/DNS 的原生任务只允许临时 GitHub CI runner，不能在个人开发机伪造 CI 标记绕过检查。Windows 原生 system/gvisor/mixed 在同一临时 runner 顺序执行，每栈核对六个真实通过的叶子用例。
+前端浏览器、数据转换、画像分析、Windows 防火墙维护及发布编排的细分入口也通过 `just ci` 调用；这些高级命令不应成为每次构建的前置步骤。浏览器验收使用回环临时配置并保持接管暂停；涉及系统 TUN/DNS 的原生任务只允许临时 GitHub CI runner，不能在个人开发机伪造 CI 标记绕过检查。Windows 原生 `system`、`gvisor`、`mixed` 各用独立临时 runner 并行验收，每栈均核对六个真实通过的叶子用例，不与普通 Windows 单元、覆盖率和安装包检查串行等待。
+
+当前 CI 共九项执行检查：Web 一项、三平台测试三项、跨平台构建一项、质量与性能一项、Windows 原生三栈三项。发布还需通过精确 SHA 的全门禁标记；任务数量或并行度本身不代表已经测得提速，耗时应以同等验收范围的实际运行比较。
 
 历史 `workflow_call` 将 `github.workflow_sha` 的任务定义检出到 `.ci-tools`，由 `JUST_JUSTFILE` 定位该根文件，`JUST_WORKING_DIRECTORY` 定位被测源目录；应用源码、测试、构建和打包绑定目标 SHA，发布编排使用这份固定的工作流工具。当前检查分组与注明版本的历史测量样本见 [CI 说明](ci.md)，发布操作见 [发行说明](releases.md)。
 

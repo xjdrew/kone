@@ -201,18 +201,6 @@ jobs:
       - name: Validate container configuration without privileges
         if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' && steps.container-build.outcome == 'success' }}
         run: just ci docker-check
-      - name: Exercise Windows stacks sequentially and require every native case
-        if: ${{ !cancelled() && matrix.os == 'windows-latest' }}
-        env:
-          KONE_WINDOWS_SYSTEM_TEST: '1'
-        run: just ci ci-windows-tun
-      - uses: actions/upload-artifact@v7.0.2
-        if: ${{ !cancelled() && matrix.os == 'windows-latest' }}
-        with:
-          name: ${{ inputs.artifact-prefix }}windows-native
-          overwrite: true
-          path: native-windows-*.jsonl
-          if-no-files-found: error
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -351,10 +339,50 @@ jobs:
           overwrite: true
           path: baseline/
 
+  windows-native:
+    name: Windows Wintun (${{ matrix.stack }})
+    strategy:
+      fail-fast: false
+      matrix:
+        stack: [system, gvisor, mixed]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: '1'
+      KONE_WINDOWS_SYSTEM_TEST: '1'
+      KONE_TEST_STACK: ${{ matrix.stack }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Check out workflow task definitions
+        if: ${{ inputs.ref != '' }}
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Require the selected stack's six real native cases
+        run: just ci ci-windows-tun
+      - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !cancelled() && (matrix.stack != 'gvisor' || hashFiles('pkg/kone/stack_modes.go') != '') }}
+        with:
+          name: ${{ inputs.artifact-prefix }}windows-native-${{ matrix.stack }}
+          overwrite: true
+          path: native-windows-${{ matrix.stack }}.jsonl
+          if-no-files-found: error
+
   verified:
     name: Required gates verified (${{ inputs.ref || github.sha }})
-    if: ${{ !cancelled() && inputs.ref != '' && needs.web.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success' && needs.quality.result == 'success' }}
-    needs: [web, test, build, quality]
+    if: ${{ !cancelled() && inputs.ref != '' && needs.web.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success' && needs.quality.result == 'success' && needs.windows-native.result == 'success' }}
+    needs: [web, test, build, quality, windows-native]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
