@@ -284,10 +284,7 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 	defer h.remove(remote)
 	observation.Decision(target.decision, policy, target.realDestination, true)
 	observation.Stage("transfer")
-	upload, download := relayConnections(&observedConn{Conn: conn, flow: observation}, &observedConn{Conn: remote, flow: observation, upload: true})
-	if h.one.manager != nil {
-		h.one.manager.Record(ConnData{Src: source.AddrString(), Dst: addr, Proxy: policy, Upload: upload, Download: download})
-	}
+	relayConnections(&observedConn{Conn: conn, flow: observation}, &observedConn{Conn: remote, flow: observation, upload: true})
 }
 
 // Each UDP session retains one snapshot. Check policy/capability before any

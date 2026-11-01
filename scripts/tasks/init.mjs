@@ -1,4 +1,5 @@
 import { ensureWebDependencies, main, npm } from "./common.mjs";
+import { showHelp } from "./help.mjs";
 
 export async function initialize(ctx) {
   ctx.log("[1/3] Checking development tools…");
@@ -30,4 +31,7 @@ export async function initialize(ctx) {
   ctx.log("Ready. Use just dev, just build, or just package.");
 }
 
-await main(import.meta.url, initialize);
+await main(import.meta.url, (ctx) => {
+  if (showHelp("init", process.argv.slice(2))) return;
+  return initialize(ctx);
+});

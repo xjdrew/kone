@@ -166,5 +166,7 @@ func TestImportExportRoundTripAndSafeDefaults(t *testing.T) {
 	require.Equal(t, 400, request(t, c, token, "POST", "/api/v1/config/import", body).Code)
 	require.Equal(t, 200, request(t, c, token, "POST", "/api/v1/config/defaults", map[string]any{"base_version": c.doc.Version}).Code)
 	require.Empty(t, c.doc.Config.Outbounds)
-	require.False(t, c.doc.Inbound.Enabled)
+	require.True(t, c.doc.Inbound.Enabled)
+	require.False(t, c.doc.DirectOnlyConfirmed)
+	require.Equal(t, "paused", c.State().State)
 }

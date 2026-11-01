@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/http"
 	"net/netip"
 	"reflect"
 	"slices"
@@ -60,7 +59,6 @@ type One struct {
 	dnsTable             *DnsTable
 	dnsTable6            *DnsTable
 	dns                  *Dns
-	manager              *Manager
 	captureRecorder      func(string, int) error
 	captureIdentity      captureDeviceIdentity
 	initialGeoIP         *geoip.Database
@@ -202,7 +200,6 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	}
 	one.dns.setDialer(dialer)
 	p.dial = one.endpointDialer(dialer)
-	one.manager = NewManager(one, cfg)
 	return one, nil
 }
 
@@ -301,7 +298,6 @@ func (one *One) Run(parent context.Context) (result error) {
 	var undo undoStack
 	var dnsConn net.PacketConn
 	var dnsTCP net.Listener
-	var manager net.Listener
 	var stack packetStack
 	var restoreSystemDNS Cleanup
 	var wg sync.WaitGroup
@@ -325,9 +321,6 @@ func (one *One) Run(parent context.Context) (result error) {
 			cleanup = append(cleanup, restoreSystemDNS(dnsCleanupCtx))
 			dnsStop()
 		}
-		if manager != nil {
-			cleanup = append(cleanup, manager.Close())
-		}
 		one.flows.close()
 		if dnsConn != nil {
 			dnsConn.Close()
@@ -344,10 +337,6 @@ func (one *One) Run(parent context.Context) (result error) {
 		}
 		if one.dns.tcpStarted.Load() {
 			cleanup = append(cleanup, one.dns.tcpServer.ShutdownContext(cleanupCtx))
-		}
-		if one.manager != nil && one.manager.server != nil {
-			cleanup = append(cleanup, one.manager.server.Shutdown(cleanupCtx))
-			one.manager.server.Close()
 		}
 		cleanup = append(cleanup, undo.restore(cleanupCtx))
 		if device != nil {
@@ -429,13 +418,6 @@ func (one *One) Run(parent context.Context) (result error) {
 	dnsTCP = &ownedListener{Listener: dnsTCP}
 	if err := one.dns.openIPv6Listeners(ctx, lc); err != nil {
 		return err
-	}
-	if one.manager != nil {
-		if manager, err = lc.Listen(ctx, "tcp", one.manager.listen); err != nil {
-			return fmt.Errorf("manager listener: %w", err)
-		}
-		manager = &ownedListener{Listener: manager}
-		one.manager.server = &http.Server{Handler: one.manager.Handler(), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	}
 	seen := make(map[string]bool)
 	if cfg.Core.AutoRoute {
@@ -551,9 +533,6 @@ func (one *One) Run(parent context.Context) (result error) {
 		}
 	}
 	start("DNS cache", func() error { return one.dns.Maintain(ctx) })
-	if one.manager != nil {
-		start("manager", func() error { return one.manager.server.Serve(manager) })
-	}
 	close(one.ready)
 	select {
 	case err := <-errorsCh:

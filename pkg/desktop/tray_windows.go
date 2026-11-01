@@ -157,7 +157,11 @@ func runTray(ctx context.Context, actions TrayActions, notify trayNotify) error 
 	trayWindows.states[hwnd] = &trayState{actions: actions, notify: notify}
 	trayWindows.Unlock()
 	defer func() { trayWindows.Lock(); delete(trayWindows.states, hwnd); trayWindows.Unlock() }()
-	icon, _, _ := trayUser32.NewProc("LoadIconW").Call(0, 32512)
+	icon, err := loadTrayIcon(module)
+	if err != nil {
+		return err
+	}
+	defer trayUser32.NewProc("DestroyIcon").Call(icon)
 	data := trayIconData{Size: uint32(unsafe.Sizeof(trayIconData{})), Window: hwnd, ID: 1, Flags: 1 | 2 | 4, Callback: 0x8001, Icon: icon}
 	copy(data.Tip[:], windows.StringToUTF16(trayTooltip(actions)))
 	data.Tip[len(data.Tip)-1] = 0

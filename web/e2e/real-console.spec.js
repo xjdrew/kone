@@ -34,7 +34,7 @@ async function startManager(binary, directory) {
   child.stderr.on("data", (chunk) => { diagnostics = (diagnostics + chunk.toString()).slice(-8192); });
   child.stdout.on("data", (chunk) => {
     output = (output + chunk.toString()).slice(-16384);
-    const match = output.match(/KONE management \(capture paused\): (http:\/\/127\.0\.0\.1:\d+\/#token=[a-f0-9]{64})/);
+    const match = output.match(/KONE management \(capture paused\): (http:\/\/127\.0\.0\.1:\d+\/(?:#token=[a-f0-9]{64})?)\r?\n/);
     if (match) accept(match[1]);
   });
   let stopping;
@@ -78,7 +78,7 @@ async function openManagement(browser, manager, ownedContexts) {
   ownedContexts.push(context);
   const page = await context.newPage();
   const forbidden = [], states = [], pending = new Set();
-  const allowed = new Set(["POST /api/v1/session", "POST /api/v1/config/validate", "PUT /api/v1/config"]);
+  const allowed = new Set(["POST /api/v1/session", "POST /api/v1/auth/password", "POST /api/v1/config/validate", "PUT /api/v1/config"]);
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request(), url = new URL(request.url());
     const key = `${request.method()} ${url.pathname}`;
@@ -103,8 +103,20 @@ async function openManagement(browser, manager, ownedContexts) {
     }
   }, { origin: manager.url.origin, fragment: manager.url.hash });
   await page.goto(manager.url.origin + "/");
+  const secretInput = page.locator("#setup-password, #login-password").first();
+  await expect(secretInput).toBeVisible();
+  if (await page.locator("#setup-password").isVisible()) {
+    await page.reload(); // The one-use URL is gone; the limited setup cookie must resume safely.
+    await expect(page.locator("#setup-password")).toBeVisible();
+    await page.locator("#setup-password").fill("browser-fixture-management-password");
+    await page.locator("#setup-password-confirm").fill("browser-fixture-management-password");
+    await page.getByRole("button", { name: "设置管理密码", exact: true }).click();
+  } else {
+    await page.locator("#login-password").fill("browser-fixture-management-password");
+    await page.getByRole("button", { name: "登录管理", exact: true }).click();
+  }
   await expect(page.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
-  await expect(page).toHaveURL(/#home$/);
+  await expect(page).toHaveURL(/(?:\/|#home)$/);
   const cookies = await context.cookies(manager.url.origin);
   const session = cookies.find((cookie) => cookie.name === "kone_session");
   expect(Boolean(session?.httpOnly)).toBe(true);
@@ -144,6 +156,15 @@ test("@real genuine management cookie, save, reload and restart stay capture-pau
     managers.push(manager);
     let ui = await openManagement(browser, manager, contexts);
     await ui.assertPaused();
+    await ui.page.locator(".nav-link[data-page=diagnostics]").click();
+    await expect(ui.page.getByRole("heading", { name: "运行日志", exact: true })).toBeVisible();
+    const logs = await ui.page.evaluate(async () => {
+      const response = await fetch("/api/v1/logs?limit=100&min_level=info", { credentials: "same-origin" });
+      const value = await response.json();
+      return { ok: response.ok, records: Array.isArray(value.records), cursor: typeof value.next_cursor, helperConnected: value.helper?.connected };
+    });
+    expect(logs).toEqual({ ok: true, records: true, cursor: "string", helperConnected: false });
+    await ui.assertPaused();
     await ui.page.locator(".nav-link[data-page=outbounds]").click();
     await ui.page.getByRole("button", { name: "＋ 添加代理", exact: true }).click();
     await ui.page.locator("#outbound-name-0").fill("BrowserReal");
@@ -152,6 +173,7 @@ test("@real genuine management cookie, save, reload and restart stay capture-pau
     await ui.page.locator("#outbound-username-0").fill("browser-fixture-user");
     await ui.page.locator("#outbound-password-0").fill("not-a-real-proxy-password");
     await ui.page.getByRole("button", { name: "保存", exact: true }).click();
+    await ui.page.locator("#outbound-save-untested").click();
     await expect(ui.page.locator("#page-notice")).toContainText("已保存");
     await ui.assertPaused();
     await ui.page.locator(".nav-link[data-page=rules]").click();
@@ -163,15 +185,20 @@ test("@real genuine management cookie, save, reload and restart stay capture-pau
     await ui.page.getByRole("button", { name: "保存", exact: true }).click();
     await expect(ui.page.locator("#page-notice")).toContainText("已保存");
     await ui.page.reload();
+    await ui.page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
     await expect(ui.page.locator("#rule-pattern-0")).toHaveValue("saved-browser.example");
     await expect(ui.page.locator("#rule-outbound-0")).toHaveValue("BrowserReal");
+    await ui.page.getByRole("button", { name: "取消编辑", exact: true }).click();
     const verifySaved = async () => {
       await ui.page.locator(".nav-link[data-page=outbounds]").click();
+      await expect(ui.page.locator("#outbound-name-0")).toHaveCount(0);
+      await ui.page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
       await expect(ui.page.locator("#outbound-name-0")).toHaveValue("BrowserReal");
       const value = await ui.page.locator("#outbound-url-0").inputValue();
       expect(value.includes("REDACTED")).toBe(true);
       expect(value.includes("browser-fixture-user") || value.includes("not-a-real-proxy-password")).toBe(false);
       await expect(ui.page.locator("#outbound-password-0")).toHaveCount(0);
+      await ui.page.getByRole("button", { name: "取消编辑", exact: true }).click();
       await ui.assertPaused();
       await assertNoCaptureJournal(directory);
       const persisted = JSON.parse(await readFile(join(directory, "settings.json"), "utf8"));
@@ -190,6 +217,7 @@ test("@real genuine management cookie, save, reload and restart stay capture-pau
     ui = await openManagement(browser, manager, contexts);
     await verifySaved();
     await ui.page.locator(".nav-link[data-page=rules]").click();
+    await ui.page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
     await expect(ui.page.locator("#rule-pattern-0")).toHaveValue("saved-browser.example");
     await expect(ui.page.locator("#rule-outbound-0")).toHaveValue("BrowserReal");
     await expect(ui.page.locator("#rule-protocol-0")).toHaveValue("tcp");

@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/xjdrew/kone/pkg/geoip"
 	"github.com/xjdrew/kone/pkg/kone"
+	"github.com/xjdrew/kone/pkg/logstore"
 	"github.com/xjdrew/kone/pkg/process"
 )
 
@@ -41,6 +43,7 @@ type Options struct {
 	Probe            func(context.Context, *kone.KoneConfig, string, string, bool) ProbeResult
 	Now              func() time.Time
 	ConfigureLogging func(kone.GeneralConfig) error
+	LogStore         *logstore.Store
 }
 type Controller struct {
 	mu                            sync.Mutex
@@ -76,6 +79,9 @@ type Controller struct {
 	ctx                           context.Context
 	requestRates                  map[string]rateWindow
 	configureLogging              func(kone.GeneralConfig) error
+	logs                          *logstore.Store
+	health                        *outboundHealthStore
+	credentials                   *passwordCredentials
 }
 type State struct {
 	ControlState     string         `json:"control_state"`
@@ -91,6 +97,7 @@ type State struct {
 	Scope            string         `json:"scope"`
 	Capabilities     map[string]any `json:"capabilities"`
 	Time             time.Time      `json:"time"`
+	CaptureLocked    bool           `json:"capture_locked"`
 }
 type Operation struct {
 	ID       string     `json:"id"`
@@ -135,11 +142,19 @@ func New(options Options) (*Controller, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Controller{directory: options.Directory, version: options.Version, factory: options.Factory, preflight: options.Preflight, probe: options.Probe, now: options.Now, state: "paused", bootstrap: randomToken(), bootstrapExpiry: options.Now().Add(5 * time.Minute), sessions: map[string]*Session{}, pairs: map[string]Pairing{}, operations: map[string]*Operation{}, requestKeys: map[string]string{}, probeSlots: make(chan struct{}, 4), ctx: ctx, cancel: cancel}
+	if err := c.initAuthentication(); err != nil {
+		cancel()
+		return nil, err
+	}
 	c.requestRates = map[string]rateWindow{}
+	c.logs = options.LogStore
+	if c.logs == nil {
+		c.logs = logstore.New()
+	}
 	c.observer = kone.NewTrafficObserver(kone.ObservationOptions{Capacity: 2048, Retention: time.Hour})
 	doc, err := readDocument(c.settingsPath())
 	if errors.Is(err, os.ErrNotExist) {
-		doc = Document{Version: 1, Config: managementDefaults(), Inbound: Inbound{"tun-main", "TUN", false}}
+		doc = Document{Version: 1, Config: managementDefaults(), Inbound: Inbound{"tun-main", "TUN", true}}
 		assignIDs(doc.Config)
 		if err = writeDocument(c.settingsPath(), doc); err != nil {
 			cancel()
@@ -179,6 +194,7 @@ func (c *Controller) settingsPath() string { return filepath.Join(c.directory, "
 
 func managementDefaults() *kone.KoneConfig {
 	cfg := kone.DefaultConfig()
+	cfg.Rule = []kone.RuleConfig{{ID: "rule-default-direct", Source: "default", Schema: "FINAL", Outbound: kone.BuiltinDirect}}
 	cfg.DNS.System = kone.SupportsSystemDNS()
 	return cfg
 }
@@ -187,12 +203,17 @@ func (c *Controller) journalPath() string    { return filepath.Join(c.directory,
 func (c *Controller) BootstrapToken() string { c.mu.Lock(); defer c.mu.Unlock(); return c.bootstrap }
 
 // LocalAccessURL is for trusted native UI actions, never an HTTP route.
-// Renew the single-use fragment so opening a second browser remains possible.
+// Initial setup renews its one-use fragment. Configured profiles open a clean
+// login URL; a native shortcut never bypasses the management password.
 func (c *Controller) LocalAccessURL() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed || c.address == "" {
 		return "", errors.New("local management is unavailable")
+	}
+	if len(c.credentials.Hash) != 0 {
+		c.bootstrap = ""
+		return "http://" + c.address + "/", nil
 	}
 	c.bootstrap = randomToken()
 	c.bootstrapExpiry = c.now().Add(5 * time.Minute)
@@ -218,7 +239,7 @@ func (c *Controller) State() State {
 		"process_attribution": process.Supported(), "process_scope": "best effort for local IPv4 sockets; IPv6 and unverified owners remain unknown; remote sources remain remote",
 		"tls_lan": true, "persistent_config": true, "statistics": "business payload bytes", "temporary_rules": true, "temporary_rule_scope": "domain rules only",
 	}
-	return State{ControlState: control, DataState: c.state, State: c.state, Version: c.version, SavedVersion: c.doc.Version, RunningVersion: c.runningVersion, ConfirmedVersion: c.confirmed.Version, LastError: c.lastError, ConfigError: c.configError, Host: host, Scope: "Only traffic entering KONE; DNS, diagnostics and business traffic are separate", Capabilities: capabilities, Time: c.now()}
+	return State{ControlState: control, DataState: c.state, State: c.state, Version: c.version, SavedVersion: c.doc.Version, RunningVersion: c.runningVersion, ConfirmedVersion: c.confirmed.Version, LastError: c.lastError, ConfigError: c.configError, Host: host, Scope: "Only traffic entering KONE; DNS, diagnostics and business traffic are separate", Capabilities: capabilities, Time: c.now(), CaptureLocked: c.captureLocked()}
 }
 
 func (c *Controller) Document() map[string]any {
@@ -228,7 +249,12 @@ func (c *Controller) Document() map[string]any {
 	for _, o := range c.doc.Config.Outbounds {
 		credentials[o.Name] = map[string]any{"configured": hasCredentials(o.URL)}
 	}
-	return map[string]any{"version": c.doc.Version, "config": jsonConfig(c.doc.Config), "inbound": c.doc.Inbound, "credential_state": credentials, "confirmed_version": c.confirmed.Version, "running_version": c.runningVersion, "config_error": c.configError}
+	return map[string]any{"version": c.doc.Version, "config": jsonConfig(c.doc.Config), "inbound": c.doc.Inbound, "credential_state": credentials, "confirmed_version": c.confirmed.Version, "running_version": c.runningVersion, "config_error": c.configError, "capture_locked": c.captureLocked(), "direct_only_confirmed": c.doc.DirectOnlyConfirmed}
+}
+
+// Caller holds c.mu; startup is locked even while privilege authorization is pending.
+func (c *Controller) captureLocked() bool {
+	return c.engine != nil || c.state == "starting" || c.state == "pausing"
 }
 
 func (c *Controller) Validate(request SaveRequest) (map[string]any, error) {
@@ -239,8 +265,12 @@ func (c *Controller) Validate(request SaveRequest) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	restart := !reflect.DeepEqual(next.Config.Core, current.Config.Core) || !reflect.DeepEqual(next.Config.DNS, current.Config.DNS) || !reflect.DeepEqual(next.Config.General, current.Config.General) || cidrChanges(next.Config, current.Config)
+	restart := restartRequired(next, current)
 	return map[string]any{"valid": true, "restart_required": restart, "issues": []any{}, "impact": map[string]any{"established_flows": "retain their current snapshot", "new_flows": "use the new version after apply", "restart_interrupts_connections": restart}}, nil
+}
+
+func restartRequired(next, current Document) bool {
+	return next.Inbound != current.Inbound || !reflect.DeepEqual(next.Config.Core, current.Config.Core) || !reflect.DeepEqual(next.Config.DNS, current.Config.DNS) || !reflect.DeepEqual(next.Config.General, current.Config.General) || cidrChanges(next.Config, current.Config)
 }
 
 func cidrChanges(a, b *kone.KoneConfig) bool {
@@ -263,6 +293,7 @@ func (c *Controller) Save(request SaveRequest) (map[string]any, error) {
 	current := cloneDocument(c.doc)
 	repair := c.configError != ""
 	closed := c.closed
+	engine := c.engine
 	c.mu.Unlock()
 	if closed {
 		return nil, errors.New("application is stopping")
@@ -270,6 +301,9 @@ func (c *Controller) Save(request SaveRequest) (map[string]any, error) {
 	next, err := prepareDocument(request, current)
 	if err != nil {
 		return nil, err
+	}
+	if engine != nil && restartRequired(next, current) {
+		return nil, ErrCaptureLocked
 	}
 	// Check disk revision as well as browser revision to reject external edits.
 	if disk, e := readDocument(c.settingsPath()); e == nil && !sameDocument(disk, current) {
@@ -293,12 +327,27 @@ func (c *Controller) Save(request SaveRequest) (map[string]any, error) {
 	c.doc = next
 	c.configError = ""
 	c.mu.Unlock()
-	return c.Document(), nil
+	value := c.Document()
+	value["applied"] = false
+	if engine != nil {
+		if directOnly(next.Config) && !next.DirectOnlyConfirmed {
+			value["apply_error"] = "Saved, but confirm direct-only capture before applying"
+			return value, nil
+		}
+		applyCtx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
+		err = c.applyLocked(applyCtx)
+		cancel()
+		value = c.Document()
+		value["applied"] = c.State().RunningVersion == next.Version
+		if err != nil {
+			value["apply_error"] = safeMessage(err, next.Config)
+		}
+	}
+	return value, nil
 }
 
 func engineConfig(doc Document) *kone.KoneConfig {
 	cfg := cloneDocument(doc).Config
-	cfg.General.ManagerAddr = ""
 	return cfg
 }
 
@@ -336,12 +385,13 @@ func (c *Controller) Start(ctx context.Context) error {
 	if bad {
 		return errors.New("repair configuration or recovery state before enabling capture")
 	}
-	if !doc.Inbound.Enabled {
-		return errors.New("enable the TUN inbound before starting capture")
-	}
-	check := c.preflight(ctx, engineConfig(doc))
+	check := c.readiness(ctx, doc, "paused", "")
 	if !check.Ready {
-		return c.startFailure(errors.New("preflight failed; inspect blocking issues"), doc.Config)
+		messages := make([]string, 0, len(check.Blockers))
+		for _, issue := range check.Blockers {
+			messages = append(messages, issue.Message)
+		}
+		return c.startFailure(errors.New(strings.Join(messages, "; ")), doc.Config)
 	}
 	if c.configureLogging != nil {
 		if err := c.configureLogging(doc.Config.General); err != nil {
@@ -357,6 +407,12 @@ func (c *Controller) Start(ctx context.Context) error {
 		return c.startFailure(err, doc.Config)
 	}
 	observer := kone.NewTrafficObserver(kone.ObservationOptions{Capacity: 2048, Retention: time.Hour})
+	if logged, ok := engine.(interface{ SetLogStore(*logstore.Store) error }); ok {
+		if err = logged.SetLogStore(c.logs); err != nil {
+			engine.Close()
+			return c.startFailure(err, doc.Config)
+		}
+	}
 	if err = engine.SetTrafficObserver(observer); err != nil {
 		engine.Close()
 		return c.startFailure(err, doc.Config)
@@ -480,6 +536,7 @@ func (c *Controller) startFailure(err error, cfg *kone.KoneConfig) error {
 		c.state = "paused"
 	}
 	c.mu.Unlock()
+	c.logs.Append(logstore.Record{Level: "ERROR", Source: "management", Message: "Capture startup failed", Attrs: map[string]any{"stage": "start", "error": safeMessage(err, cfg)}})
 	return err
 }
 
@@ -521,6 +578,10 @@ func (c *Controller) pauseLocked(ctx context.Context) error {
 func (c *Controller) Apply(ctx context.Context) error {
 	c.actions.Lock()
 	defer c.actions.Unlock()
+	return c.applyLocked(ctx)
+}
+
+func (c *Controller) applyLocked(ctx context.Context) error {
 	c.mu.Lock()
 	engine := c.engine
 	doc := cloneDocument(c.doc)
@@ -531,6 +592,9 @@ func (c *Controller) Apply(ctx context.Context) error {
 	if !doc.Inbound.Enabled {
 		return c.pauseLocked(ctx)
 	}
+	if directOnly(doc.Config) && !doc.DirectOnlyConfirmed {
+		return errors.New("confirm direct-only capture before applying")
+	}
 	var err error
 	if versioned, ok := engine.(interface {
 		ReloadVersion(*kone.KoneConfig, uint64) error
@@ -540,10 +604,14 @@ func (c *Controller) Apply(ctx context.Context) error {
 		err = engine.Reload(engineConfig(doc))
 	}
 	if err != nil {
+		c.mu.Lock()
+		c.lastError = safeMessage(err, doc.Config)
+		c.mu.Unlock()
 		return err
 	}
 	c.mu.Lock()
 	c.runningVersion = doc.Version
+	c.lastError = ""
 	c.mu.Unlock()
 	if err := c.confirm(doc); err != nil {
 		return errors.New("runtime updated, but confirmation could not be saved")

@@ -61,6 +61,8 @@ func (c *Controller) importConfiguration(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		if errors.Is(err, ErrConflict) {
 			apiError(w, 409, "version_conflict", ErrConflict.Error())
+		} else if errors.Is(err, ErrCaptureLocked) {
+			apiError(w, 409, "capture_locked", ErrCaptureLocked.Error())
 		} else {
 			apiError(w, 400, "configuration", "Import could not be validated; masked credentials require a matching saved endpoint")
 		}

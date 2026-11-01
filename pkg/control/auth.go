@@ -50,14 +50,18 @@ func (c *Controller) allowRequest(r *http.Request, login bool) bool {
 			delete(c.requestRates, k)
 		}
 	}
-	v := c.requestRates[key]
+	v, exists := c.requestRates[key]
+	capacity := 256
+	if !localRemote(r) {
+		capacity -= 4
+	} // Keep local owner login reachable under remote load.
+	if !exists && len(c.requestRates) >= capacity {
+		return false
+	}
 	if now.Sub(v.start) >= period {
 		v = rateWindow{start: now}
 	}
 	if v.count >= limit {
-		return false
-	}
-	if len(c.requestRates) >= 256 && v.count == 0 {
 		return false
 	}
 	v.count++
@@ -81,6 +85,9 @@ func (c *Controller) newSession(role string, remote bool) (string, *Session) {
 func (c *Controller) claim(token, code string, remote bool) (string, *Session, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.closed {
+		return "", nil, errors.New("management is stopped")
+	}
 	now := c.now()
 	for key, s := range c.sessions {
 		if now.After(s.Expires) {
@@ -91,11 +98,15 @@ func (c *Controller) claim(token, code string, remote bool) (string, *Session, e
 		return "", nil, errors.New("session limit reached; revoke an old session")
 	}
 	if !remote && token != "" && tokenHash(token) == tokenHash(c.bootstrap) && now.Before(c.bootstrapExpiry) && c.bootstrap != "" {
+		if len(c.credentials.Hash) != 0 {
+			return "", nil, errors.New("management password required")
+		}
 		c.bootstrap = ""
-		t, s := c.newSession("admin", false)
+		t, s := c.newSession("setup", false)
+		s.Expires = now.Add(5 * time.Minute)
 		return t, s, nil
 	}
-	if pair, ok := c.pairs[code]; code != "" && ok && now.Before(pair.Expires) {
+	if pair, ok := c.pairs[code]; len(c.credentials.Hash) != 0 && code != "" && ok && now.Before(pair.Expires) {
 		delete(c.pairs, code)
 		t, s := c.newSession(pair.Role, remote)
 		return t, s, nil
@@ -108,6 +119,9 @@ func (c *Controller) pair(role string) (Pairing, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if len(c.credentials.Hash) == 0 {
+		return Pairing{}, errors.New("set a management password before pairing devices")
+	}
 	for code, p := range c.pairs {
 		if c.now().After(p.Expires) {
 			delete(c.pairs, code)

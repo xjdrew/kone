@@ -271,6 +271,7 @@ type DNSRuntimeStatus struct {
 	CacheEntries            int              `json:"cache_entries"`
 	CacheLimit              int              `json:"cache_limit"`
 	TCP                     bool             `json:"tcp"`
+	UpstreamTCP             bool             `json:"upstream_tcp"`
 	IPv6                    bool             `json:"ipv6"`
 	SystemSource            string           `json:"system_source"`
 	SearchDomains           []string         `json:"search_domains"`
@@ -325,5 +326,6 @@ func (one *One) DNSStatus() DNSRuntimeStatus {
 		d.cache.mu.Unlock()
 	}
 	status.TCP = d.tcpStarted.Load()
+	status.UpstreamTCP = d.forceTCP
 	return status
 }

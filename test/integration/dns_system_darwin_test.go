@@ -169,25 +169,6 @@ func darwinOriginalDNSFixture(t *testing.T) string {
 	return endpoint
 }
 
-type darwinFailedManagerListener struct{ net.Listener }
-
-func (l darwinFailedManagerListener) Accept() (net.Conn, error) {
-	return nil, errors.New("injected late manager admission failure")
-}
-
-type darwinFailedManagerSockets struct {
-	net.ListenConfig
-	manager string
-}
-
-func (s *darwinFailedManagerSockets) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	listener, err := s.ListenConfig.Listen(ctx, network, address)
-	if err == nil && address == s.manager {
-		return darwinFailedManagerListener{listener}, nil
-	}
-	return listener, err
-}
-
 func TestSystemDarwinDNSGuidance(t *testing.T) {
 	if os.Getenv("KONE_DARWIN_DNS_SYSTEM_TEST") != "1" {
 		t.Skip("requires disposable macOS system DNS acceptance")
@@ -219,9 +200,9 @@ func TestSystemDarwinDNSGuidance(t *testing.T) {
 				cfg.Outbounds = []kone.OutboundConfig{{Name: "offline", URL: "http://127.0.0.1:1"}}
 				cfg.Rule = []kone.RuleConfig{{Schema: "DOMAIN", Pattern: name, Outbound: "offline"}, {Schema: "FINAL", Outbound: kone.BuiltinDirect}}
 				var options []kone.Option
+				injected := newFailedDNSAdmissionSockets()
 				if failure {
-					cfg.General.ManagerAddr = fmt.Sprintf("127.0.0.1:%d", darwinDNSPort(t))
-					options = append(options, kone.WithSockets(&darwinFailedManagerSockets{manager: cfg.General.ManagerAddr}))
+					options = append(options, kone.WithSockets(injected))
 				}
 				one, err := kone.FromConfig(cfg, options...)
 				require.NoError(t, err)
@@ -239,9 +220,18 @@ func TestSystemDarwinDNSGuidance(t *testing.T) {
 				wait := func() error { once.Do(func() { result = darwinWait(t, done) }); return result }
 				t.Cleanup(func() { cancel(); _ = one.Close(); _ = wait() })
 				if failure {
+					select {
+					case <-one.Ready():
+					case err := <-done:
+						once.Do(func() { result = err })
+						t.Fatalf("DNS guidance did not become ready: %v", err)
+					case <-time.After(10 * time.Second):
+						t.Fatal("DNS guidance startup timed out")
+					}
+					injected.Trigger()
 					runErr := wait()
 					darwinLogDNSDiagnostic(t, runErr)
-					require.ErrorContains(t, runErr, "manager")
+					require.ErrorContains(t, runErr, "injected late DNS TCP admission failure")
 				} else {
 					select {
 					case <-one.Ready():

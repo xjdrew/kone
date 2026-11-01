@@ -21,7 +21,9 @@ fi
 
 case "$1" in
   build)
-    go build -tags with_gvisor -race -o "$RUNNER_TEMP/kone-system-cli" ./cmd/kone
+    entry=./cmd/kone
+    if [[ -d cmd/kone-cli ]]; then entry=./cmd/kone-cli; fi
+    go build -tags with_gvisor -race -o "$RUNNER_TEMP/kone-system-cli" "$entry"
     go test -tags with_gvisor -race -c -o "$RUNNER_TEMP/kone-system.test" ./test/integration
     ;;
   tun)

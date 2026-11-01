@@ -84,9 +84,7 @@ func TestSystemWindowsWintun(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/occupied=%t", stack, fail), func(t *testing.T) {
 				dnsPort := availableWindowsDNSFixturePort(t, false)
 				name := fmt.Sprintf("kone-ci-%d", os.Getpid())
-				cfg, err := kone.ParseConfig([]byte(fmt.Sprintf(`[general]
-manager-addr=""
-[core]
+				cfg, err := kone.ParseConfig([]byte(fmt.Sprintf(`[core]
 tun="%s"
 stack="%s"
 network="10.204.0.1/24"

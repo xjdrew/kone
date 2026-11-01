@@ -174,7 +174,16 @@ function run(argv) {
       return;
     }
     item.menu = menu;
-    koneTrayObjects = [target, menu, item];
+    var imageData = $.NSData.alloc.initWithBase64EncodedStringOptions(
+      $("__KONE_TRAY_ICON_BASE64__"), 0,
+    );
+    var image = $.NSImage.alloc.initWithData(imageData);
+    if (image.isNil()) throw new Error("Kone tray image is unavailable");
+    image.setSize($.NSMakeSize(22, 22));
+    image.setTemplate(true);
+    item.button.image = image;
+    item.button.title = "";
+    koneTrayObjects = [target, menu, item, image];
     function update(input) {
       state = normalizeTrayState(input);
       var labels = {
@@ -188,7 +197,6 @@ function run(argv) {
       };
       var label = labels[state.status];
       if (typeof label !== "string") label = state.status;
-      item.button.title = "KONE " + (state.status === "running" ? "●" : "○");
       item.button.toolTip =
         "KONE · " + label + (state.detail ? " · " + state.detail : "");
       entries.status.title = "KONE · " + label;
@@ -205,6 +213,7 @@ function run(argv) {
       function check(value) {
         if (!value) throw new Error("AppKit tray self-test failed");
       }
+      check(!item.button.image.isNil() && Boolean(image.isTemplate));
       update({
         status: "paused",
         can_start: true,

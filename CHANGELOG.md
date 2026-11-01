@@ -2,6 +2,13 @@
 
 ## Features
 
+- Require a management password on first use and password authentication on later logins.
+- Guide first-time capture setup with ready-to-use defaults and explicit direct-only confirmation.
+- Show configuration as status lists with focused editors, outbound connection tests and live rule/outbound updates.
+- Protect TUN and other restart-required settings while capture is running.
+- Add application and tray icons, terminal-free Windows/macOS desktop launch, and a separate console CLI.
+- View filtered, redacted recent runtime logs in Diagnostics.
+- Show defaults, options and examples with `-h` or `--help` on every daily just command.
 - Open a local management interface without preparing a configuration file.
 - Manage capture, outbounds, rules and DNS through a responsive desktop and mobile interface.
 - Inspect live TCP/UDP traffic, failed connections and Sankey paths.
@@ -23,6 +30,9 @@
 
 ## Bugfixes
 
+- Keep signed-out sessions closed and resume first-time password setup after refreshing the page.
+- Show capture failures from the tray and open diagnostics without closing management.
+- Keep management usable when capture telemetry is temporarily unavailable instead of reporting a lost connection.
 - Build Windows installation packages without installing PowerShell 7.
 - Keep management available while capture is paused or fails to start.
 - Preserve active Fake-IP mappings and prevent private DNS fallback to public resolvers.
@@ -37,6 +47,7 @@
 
 ## Changes
 
+- Remove legacy HTTP management and `general.manager-addr`; use the password-protected Web console.
 - Speed up CI while preserving platform and release validation.
 - Simplify setup, development, checks, builds and packaging into a few just commands.
 - Keep local packaging limited to creating files without running or installing the program.

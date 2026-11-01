@@ -7,6 +7,12 @@ export class ApiError extends Error {
   }
 }
 
+export function explainError(message) {
+  return message === "enable the TUN inbound before starting capture"
+    ? "请先在“入站”启用 TUN 入口并保存，再启用接管。"
+    : message;
+}
+
 export function targetWithPort(value, port) {
   const target = String(value).trim();
   if (/^\[[^\]]+\]:\d+$/.test(target) || /^[^:]+:\d+$/.test(target))
@@ -41,12 +47,18 @@ export function flowQueryChunks(base, pathIDs, flowIDs) {
 
 let bearer = "";
 let csrf = "";
+let sessionEpoch = 0;
+export function invalidateSession({ clear = false } = {}) {
+  sessionEpoch++;
+  if (clear) { bearer = ""; csrf = ""; }
+}
 export function setSession(data = {}) {
   csrf = data.csrf_token || data.csrfToken || csrf;
   if (data.token) bearer = data.token;
 }
 
 export async function request(path, method = "GET", body, options = {}) {
+  const epoch = sessionEpoch;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeout || 15000);
   const headers = { Accept: "application/json" };
@@ -81,17 +93,23 @@ export async function request(path, method = "GET", body, options = {}) {
         throw new ApiError("服务返回了无法读取的响应。", response.status);
       }
     }
+    // Responses from an earlier login must neither restore its CSRF token nor
+    // reach callers that could restore private UI state after logout.
+    if (epoch !== sessionEpoch)
+      throw new ApiError("管理会话已变更，请重新执行操作。", 0, { session_changed: true });
     if (!response.ok)
       throw new ApiError(
-        data.error?.message ||
+        explainError(data.error?.message ||
           data.message ||
-          (typeof data.error === "string" ? data.error : "操作未完成。"),
+          (typeof data.error === "string" ? data.error : "操作未完成。")),
         response.status,
         data.error || data,
       );
     if (typeof data === "object") setSession(data);
     return data;
   } catch (error) {
+    if (epoch !== sessionEpoch)
+      throw new ApiError("管理会话已变更，请重新执行操作。", 0, { session_changed: true });
     if (error.name === "AbortError")
       throw new ApiError(
         "请求已超时，操作可能仍在主机上执行。请先刷新状态，勿重复提交。",
@@ -118,7 +136,8 @@ export async function bootstrap() {
     );
     bearer = token;
     try {
-      await request("/session", "POST", { token });
+      const session = await request("/session", "POST", { token });
+      if (session.setup_required) return { ...session, setup_authorized: true, authenticated: false };
     } finally {
       // One-use bootstrap credentials must never shadow a newly paired cookie,
       // including when their initial exchange expired or was rejected.
@@ -130,6 +149,13 @@ export async function bootstrap() {
 
 export const endpoints = {
   state: () => request("/state"),
+  readiness: () => request("/readiness"),
+  auth: () => request("/auth"),
+  passwordLogin: (password) => request("/session", "POST", { password }),
+  setPassword: (body) => request("/auth/password", "POST", body),
+  logout: () => request("/session/logout", "POST", {}),
+  outboundHealth: () => request("/outbounds/health"),
+  outboundTest: (body) => request("/outbounds/test", "POST", body),
   config: () => request("/config"),
   validate: (body) => request("/config/validate", "POST", body),
   save: (body) => request("/config", "PUT", body),
@@ -142,6 +168,7 @@ export const endpoints = {
   dns: () => request("/dns"),
   simulate: (body) => request("/rules/simulate", "POST", body),
   diagnostics: () => request("/diagnostics"),
+  logs: (query) => request(`/logs?${new URLSearchParams(query || {})}`),
   diagnose: (body) => request("/diagnostics", "POST", body),
   cancel: (id) =>
     request(`/diagnostics/${encodeURIComponent(id)}/cancel`, "POST", {}),

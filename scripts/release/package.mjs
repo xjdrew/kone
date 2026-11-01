@@ -18,8 +18,9 @@ import {
   validSHA,
 } from "./model.mjs";
 import { runWindowsScript } from "./windows-powershell.mjs";
-import { packagePlan } from "./targets.mjs";
+import { entryDefinitions, packagePlan } from "./targets.mjs";
 import { createPortableArchive } from "./portable.mjs";
+import { createMacApplication, verifyMacApplication, verifyWindowsRole } from "./desktop.mjs";
 
 const input = resolve(process.env.RELEASE_INPUT || "release-input");
 const output = resolve(process.env.RELEASE_OUTPUT || "release-assets");
@@ -50,13 +51,23 @@ try {
     )
       throw new Error(`Binary integrity failed: ${target}`);
     const binary = join(input, metadata.name);
+    const expectedEntries = entryDefinitions(target);
+    if (!Array.isArray(metadata.entries) || metadata.entries.length !== expectedEntries.length)
+      throw new Error(`Missing executable roles: ${target}`);
+    for (const expected of expectedEntries) {
+      const entry = metadata.entries.find(value => value.role === expected.role);
+      if (!entry || entry.name !== expected.name || await hashFile(join(input, entry.name)) !== entry.sha256)
+        throw new Error(`Executable identity mismatch: ${target}/${expected.role}`);
+      if (targetOS === "windows") verifyWindowsRole(await readFile(join(input, entry.name)), entry.role);
+    }
+    const cli = metadata.entries.find(entry => entry.role === "cli");
     const native = target === plan.native;
     const nativeChecked = native && plan.mode === "ci";
     const installer = plan.installers.includes(target);
-    if (nativeChecked && platform !== "win32") await chmod(binary, 0o755);
+    if (nativeChecked && platform !== "win32") await chmod(join(input, cli.name), 0o755);
     if (nativeChecked)
       assertVersion(
-        execFileSync(binary, ["-version"], {
+        execFileSync(join(input, cli.name), ["-version"], {
           encoding: "utf8",
           timeout: 15000,
         }),
@@ -65,7 +76,17 @@ try {
     const base = `kone-${version}-${target}`;
     const stage = join(scratch, base);
     await mkdir(stage);
-    await cp(binary, join(stage, targetOS === "windows" ? "kone.exe" : "kone"));
+    if (targetOS === "darwin") {
+      if (metadata.icon?.name !== "kone.icns" || await hashFile(join(input, "kone.icns")) !== metadata.icon.sha256)
+        throw new Error("macOS application icon identity mismatch");
+      await createMacApplication({ binary, output: join(stage, "Kone.app"), version, sha, icon: join(input, "kone.icns") });
+      await verifyMacApplication(join(stage, "Kone.app"), { version, sha, binarySHA: metadata.sha256, iconSHA: metadata.icon.sha256 });
+      await mkdir(join(stage, "bin"));
+      await cp(join(input, cli.name), join(stage, "bin/kone-cli"));
+    } else {
+      await cp(binary, join(stage, targetOS === "windows" ? "kone.exe" : "kone"));
+      if (targetOS === "windows") await cp(join(input, cli.name), join(stage, "kone-cli.exe"));
+    }
     for (const filename of [
       "LICENSE",
       "LICENSE-MIT",
@@ -83,7 +104,7 @@ try {
     );
     await writeFile(
       join(stage, "README.txt"),
-      `KONE ${version}\nCommit: ${sha}\n\nRun kone${targetOS === "windows" ? ".exe" : ""} without arguments to open local management with capture paused.\nPortable installer copies files only; no autostart, firewall, routes, DNS or certificate trust changes.\nTUN capture requires host privileges and explicit enablement after preflight.\nSettings live separately in the user configuration directory; back them up before upgrading or rolling back.\nThis package is unsigned${targetOS === "darwin" ? " and not notarized" : ""}. Verify SHA256SUMS before use.\n${nativeChecked ? "The packaged executable passed -version on this architecture; required CI validates driver/lifecycle separately." : "This package was built without executing or installing its executable. Runtime and driver behavior require separate acceptance; treat as experimental."}\nIncluded stacks: ${metadata.stack}.\nCorresponding source, vendored dependencies and licenses are included in this release.\n`,
+      `KONE ${version}\nCommit: ${sha}\n\n${targetOS === "darwin" ? "Open Kone.app for desktop management; use bin/kone-cli for terminal commands." : targetOS === "windows" ? "Open kone.exe for desktop management; use kone-cli.exe for terminal commands." : "Run kone without arguments for local management."} Capture starts paused.\nPortable installer copies files only; no autostart, firewall, routes, DNS or certificate trust changes.\nTUN capture requires host privileges and explicit enablement after preflight.\nSettings live separately in the user configuration directory; back them up before upgrading or rolling back.\nThis package is unsigned${targetOS === "darwin" ? " and not notarized" : ""}. Verify SHA256SUMS before use.\n${nativeChecked ? "The packaged CLI passed -version on this architecture; required CI validates driver/lifecycle separately. The desktop entry was checked without launching it." : "This package was built without executing or installing its executable. Runtime and driver behavior require separate acceptance; treat as experimental."}\nIncluded stacks: ${metadata.stack}.\nCorresponding source, vendored dependencies and licenses are included in this release.\n`,
     );
     const record = async (filename) =>
       assets.push({
@@ -93,6 +114,7 @@ try {
         native_version_checked: nativeChecked,
         signed: false,
         experimental: !nativeChecked,
+        entries: metadata.entries,
       });
     if (targetOS === "windows") {
       const archive = `${base}.zip`;
@@ -119,16 +141,19 @@ try {
           { stdio: "inherit" },
         );
         assertVersion(
-          execFileSync(join(installed, "kone.exe"), ["-version"], {
+          execFileSync(join(installed, "kone-cli.exe"), ["-version"], {
             encoding: "utf8",
             timeout: 15000,
           }),
           version,
         );
+        if (await hashFile(join(installed, "kone.exe")) !== metadata.sha256) throw new Error("Installed Windows GUI identity mismatch");
+        verifyWindowsRole(await readFile(join(installed, "kone.exe")), "gui");
       }
       await record(archive);
     } else {
-      await chmod(join(stage, "kone"), 0o755);
+      await chmod(join(stage, targetOS === "darwin" ? "Kone.app/Contents/MacOS/kone" : "kone"), 0o755);
+      if (targetOS === "darwin") await chmod(join(stage, "bin/kone-cli"), 0o755);
       await chmod(join(stage, "install.sh"), 0o755);
       const archive = `${base}.tar.gz`;
       await createPortableArchive({ stage, base, destination: join(output, archive), unix: true });
@@ -144,12 +169,13 @@ try {
           stdio: "inherit",
         });
         assertVersion(
-          execFileSync(join(installed, "bin/kone"), ["-version"], {
+          execFileSync(join(installed, targetOS === "darwin" ? "bin/kone-cli" : "bin/kone"), ["-version"], {
             encoding: "utf8",
             timeout: 15000,
           }),
           version,
         );
+        if (targetOS === "darwin") await verifyMacApplication(join(installed, "Applications/Kone.app"), { version, sha, binarySHA: metadata.sha256, iconSHA: metadata.icon.sha256 });
       }
       if (!installer) continue;
       const packageRoot = join(scratch, `${base}-root`);
@@ -158,8 +184,14 @@ try {
         targetOS === "linux" ? "usr/bin" : "usr/local/bin",
       );
       await mkdir(executableDir, { recursive: true });
-      await cp(join(stage, "kone"), join(executableDir, "kone"));
-      await chmod(join(executableDir, "kone"), 0o755);
+      if (targetOS === "darwin") {
+        await cp(join(stage, "Kone.app"), join(packageRoot, "Applications/Kone.app"), { recursive: true });
+        await cp(join(stage, "bin/kone-cli"), join(executableDir, "kone-cli"));
+        await chmod(join(executableDir, "kone-cli"), 0o755);
+      } else {
+        await cp(join(stage, "kone"), join(executableDir, "kone"));
+        await chmod(join(executableDir, "kone"), 0o755);
+      }
       const docs = join(
         packageRoot,
         targetOS === "linux" ? "usr/share/doc/kone" : "usr/local/share/kone",
@@ -228,12 +260,13 @@ try {
           );
           assertVersion(
             execFileSync(
-              join(extracted, "Payload/usr/local/bin/kone"),
+              join(extracted, "Payload/usr/local/bin/kone-cli"),
               ["-version"],
               { encoding: "utf8", timeout: 15000 },
             ),
             version,
           );
+          await verifyMacApplication(join(extracted, "Payload/Applications/Kone.app"), { version, sha, binarySHA: metadata.sha256, iconSHA: metadata.icon.sha256 });
         }
       }
     }

@@ -59,24 +59,14 @@ func systemConfig(t *testing.T) *kone.KoneConfig {
 	for _, key := range []string{"http_proxy", "https_proxy", "socks_proxy", "HTTP_PROXY", "HTTPS_PROXY", "SOCKS_PROXY"} {
 		t.Setenv(key, "")
 	}
-	port := func() int {
-		listener, err := net.Listen("tcp4", "0.0.0.0:0")
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer listener.Close()
-		return listener.Addr().(*net.TCPAddr).Port
-	}
 	dnsPort := availableSystemDNSPort(t)
-	cfg, err := kone.ParseConfig([]byte(fmt.Sprintf(`[general]
-manager-addr="127.0.0.1:%d"
-[core]
+	cfg, err := kone.ParseConfig([]byte(fmt.Sprintf(`[core]
 tun="kone-e2e"
 network="10.203.0.1/24"
 [dns]
 servers=["127.0.0.1:5353"]
 listen-port=%d
-`, port(), dnsPort)))
+`, dnsPort)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,18 +121,18 @@ func systemStart(t *testing.T, cfg *kone.KoneConfig) (*kone.One, context.CancelF
 }
 
 func TestSystemLifecyclePortFailure(t *testing.T) {
-	for _, kind := range []string{"dns", "manager"} {
+	for _, kind := range []string{"dns", "dns-tcp"} {
 		t.Run(kind, func(t *testing.T) {
 			cfg := systemConfig(t)
 			var occupied io.Closer
-			if kind == "manager" {
+			if kind == "dns-tcp" {
 				ln, err := net.Listen("tcp4", "0.0.0.0:0")
 				if err != nil {
 					t.Fatal(err)
 				}
 				occupied = ln
 				port := ln.Addr().(*net.TCPAddr).Port
-				cfg.General.ManagerAddr = fmt.Sprintf("127.0.0.1:%d", port)
+				cfg.DNS.ListenPort = uint16(port)
 			} else {
 				conn, err := net.ListenUDP("udp4", &net.UDPAddr{})
 				if err != nil {
@@ -218,22 +208,17 @@ func TestSystemLifecycleExclusiveDevice(t *testing.T) {
 	noSystemInterface(t, cfg)
 }
 
-func TestSystemLifecycleManagerConcurrentClose(t *testing.T) {
+func TestSystemLifecycleConcurrentClose(t *testing.T) {
 	for range 3 {
 		cfg := systemConfig(t)
+		cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Outbound: kone.BuiltinReject}}
 		one, _, done := systemStart(t, cfg)
-		transport := &http.Transport{DisableKeepAlives: true}
-		client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
-		// Ensure HTTP Serve owns the live listener before concurrent cleanup.
-		response, err := client.Get("http://" + cfg.General.ManagerAddr + "/")
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = io.Copy(io.Discard, response.Body)
-		response.Body.Close()
-		transport.CloseIdleConnections()
-		if err != nil {
-			t.Fatal(err)
+		// Exercise a live DNS TCP listener before concurrent cleanup.
+		query := new(dns.Msg)
+		query.SetQuestion("shutdown.example.", dns.TypeA)
+		answer, _, err := (&dns.Client{Net: "tcp", Timeout: time.Second}).Exchange(query, fmt.Sprintf("10.203.0.1:%d", cfg.DNS.ListenPort))
+		if err != nil || answer == nil || answer.Rcode != dns.RcodeRefused {
+			t.Fatalf("DNS TCP admission: %v %v", err, answer)
 		}
 		results := make(chan error, 8)
 		var workers sync.WaitGroup
@@ -244,16 +229,16 @@ func TestSystemLifecycleManagerConcurrentClose(t *testing.T) {
 		workers.Wait()
 		for range cap(results) {
 			if err := <-results; err != nil {
-				t.Fatalf("concurrent manager shutdown: %v", err)
+				t.Fatalf("concurrent DNS shutdown: %v", err)
 			}
 		}
 		if err := systemWait(t, done); err != nil {
 			t.Fatal(err)
 		}
 		noSystemInterface(t, cfg)
-		listener, err := net.Listen("tcp4", cfg.General.ManagerAddr)
+		listener, err := net.Listen("tcp4", fmt.Sprintf("0.0.0.0:%d", cfg.DNS.ListenPort))
 		if err != nil {
-			t.Fatalf("management listener leaked: %v", err)
+			t.Fatalf("DNS TCP listener leaked: %v", err)
 		}
 		listener.Close()
 	}
@@ -349,6 +334,14 @@ func TestSystemLifecycleTrafficAndReload(t *testing.T) {
 
 func TestSystemLifecycleCLISignal(t *testing.T) {
 	cfg := systemConfig(t)
+	cfg.Rule = []kone.RuleConfig{{Schema: "FINAL", Outbound: kone.BuiltinReject}}
+	// File mode must not bind its former unauthenticated HTTP default. Owning
+	// that port independently must have no effect on real capture or cleanup.
+	legacy, err := net.Listen("tcp4", "127.0.0.1:9200")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Close()
 	path := os.Getenv("KONE_SYSTEM_CLI")
 	if path == "" {
 		t.Fatal("KONE_SYSTEM_CLI is missing")
@@ -371,12 +364,13 @@ func TestSystemLifecycleCLISignal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { cmd.Process.Kill() }()
-	client := &http.Client{Timeout: 100 * time.Millisecond}
+	client := &dns.Client{Net: "tcp", Timeout: 100 * time.Millisecond}
+	query := new(dns.Msg)
+	query.SetQuestion("cli-ready.example.", dns.TypeA)
 	ready := false
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		response, err := client.Get("http://" + cfg.General.ManagerAddr + "/")
-		if err == nil {
-			response.Body.Close()
+		response, _, err := client.Exchange(query, fmt.Sprintf("10.203.0.1:%d", cfg.DNS.ListenPort))
+		if err == nil && response != nil && response.Rcode == dns.RcodeRefused {
 			ready = true
 			break
 		}

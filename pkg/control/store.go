@@ -21,6 +21,7 @@ import (
 )
 
 var ErrConflict = errors.New("configuration changed; reload the latest version before saving")
+var ErrCaptureLocked = errors.New("capture is running; pause capture before changing TUN, core, DNS or capture routes")
 
 type Inbound struct {
 	ID      string `json:"id"`
@@ -28,14 +29,16 @@ type Inbound struct {
 	Enabled bool   `json:"enabled"`
 }
 type Document struct {
-	Version uint64           `json:"version"`
-	Config  *kone.KoneConfig `json:"-"`
-	Inbound Inbound          `json:"inbound"`
+	Version             uint64           `json:"version"`
+	Config              *kone.KoneConfig `json:"-"`
+	Inbound             Inbound          `json:"inbound"`
+	DirectOnlyConfirmed bool             `json:"direct_only_confirmed"`
 }
 type storedDocument struct {
-	Version uint64  `json:"version"`
-	TOML    string  `json:"toml"`
-	Inbound Inbound `json:"inbound"`
+	Version             uint64  `json:"version"`
+	TOML                string  `json:"toml"`
+	Inbound             Inbound `json:"inbound"`
+	DirectOnlyConfirmed *bool   `json:"direct_only_confirmed,omitempty"`
 }
 type CredentialAction struct {
 	Action       string `json:"action"`
@@ -44,10 +47,11 @@ type CredentialAction struct {
 	OriginalName string `json:"original_name"`
 }
 type SaveRequest struct {
-	BaseVersion       uint64                      `json:"base_version"`
-	Config            map[string]any              `json:"config"`
-	Inbound           Inbound                     `json:"inbound"`
-	CredentialActions map[string]CredentialAction `json:"credential_actions,omitempty"`
+	BaseVersion         uint64                      `json:"base_version"`
+	Config              map[string]any              `json:"config"`
+	Inbound             Inbound                     `json:"inbound"`
+	CredentialActions   map[string]CredentialAction `json:"credential_actions,omitempty"`
+	DirectOnlyConfirmed *bool                       `json:"direct_only_confirmed,omitempty"`
 }
 
 func randomToken() string {
@@ -122,11 +126,11 @@ func cloneDocument(doc Document) Document {
 	}
 	data, _ := toml.Marshal(doc.Config)
 	cfg, _ := kone.ParseManagedConfig(data)
-	return Document{Version: doc.Version, Config: cfg, Inbound: doc.Inbound}
+	return Document{Version: doc.Version, Config: cfg, Inbound: doc.Inbound, DirectOnlyConfirmed: doc.DirectOnlyConfirmed}
 }
 
 func sameDocument(a, b Document) bool {
-	if a.Version != b.Version || a.Inbound != b.Inbound {
+	if a.Version != b.Version || a.Inbound != b.Inbound || a.DirectOnlyConfirmed != b.DirectOnlyConfirmed {
 		return false
 	}
 	left, errA := toml.Marshal(a.Config)
@@ -251,7 +255,14 @@ func prepareDocument(request SaveRequest, current Document) (Document, error) {
 	if len(inbound.Name) > 80 || strings.ContainsAny(inbound.Name, "\x00\r\n") {
 		return Document{}, errors.New("invalid inbound name")
 	}
-	return Document{Version: current.Version + 1, Config: cfg, Inbound: inbound}, nil
+	confirmed := current.DirectOnlyConfirmed
+	if !directOnly(current.Config) && directOnly(cfg) {
+		confirmed = false
+	}
+	if request.DirectOnlyConfirmed != nil {
+		confirmed = *request.DirectOnlyConfirmed
+	}
+	return Document{Version: current.Version + 1, Config: cfg, Inbound: inbound, DirectOnlyConfirmed: confirmed}, nil
 }
 
 func atomicWrite(path string, data []byte) error {
@@ -285,7 +296,7 @@ func writeDocument(path string, doc Document) error {
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(storedDocument{doc.Version, string(configuration), doc.Inbound}, "", "  ")
+	data, err := json.MarshalIndent(storedDocument{Version: doc.Version, TOML: string(configuration), Inbound: doc.Inbound, DirectOnlyConfirmed: &doc.DirectOnlyConfirmed}, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -306,12 +317,16 @@ func readDocument(path string) (Document, error) {
 	if decoder.Decode(&stored) != nil || decoder.Decode(new(any)) != io.EOF || stored.Version == 0 {
 		return Document{}, errors.New("saved configuration is damaged; restore a backup or save a corrected configuration")
 	}
-	cfg, err := kone.ParseManagedConfig([]byte(stored.TOML))
+	cfg, err := readProfileConfig(path, data, []byte(stored.TOML))
 	if err != nil {
 		return Document{}, errors.New("saved configuration is invalid; restore a backup or save a corrected configuration")
 	}
 	assignReadIDs(cfg)
-	return Document{stored.Version, cfg, stored.Inbound}, nil
+	confirmed := true // Preserve the established intent of pre-confirmation profiles.
+	if stored.DirectOnlyConfirmed != nil {
+		confirmed = *stored.DirectOnlyConfirmed
+	}
+	return Document{Version: stored.Version, Config: cfg, Inbound: stored.Inbound, DirectOnlyConfirmed: confirmed}, nil
 }
 
 func DefaultDirectory() (string, error) {

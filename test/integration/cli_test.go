@@ -29,7 +29,7 @@ func buildBinary(t *testing.T, pkg string) (string, string) {
 }
 
 func TestCLI(t *testing.T) {
-	root, binary := buildBinary(t, "./cmd/kone")
+	root, binary := buildBinary(t, "./cmd/kone-cli")
 	configs := t.TempDir()
 	for name, content := range map[string]string{
 		"builtins": `

@@ -17,3 +17,4 @@ cmd/kone/local.ini
 /baseline/
 /release-assets/
 /release-input/
+**/node_modules/

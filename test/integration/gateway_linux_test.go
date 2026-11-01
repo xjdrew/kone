@@ -105,16 +105,18 @@ func TestSystemGatewayLANFullCapture(t *testing.T) {
 			t.Fatalf("LAN forwarding (udp-fallback=%q): %v\n%s", fallback, err, out)
 		}
 	}
-	// Management must retain the LAN client's identity, rather than loopback or
+	// Observation must retain the LAN client's identity, rather than loopback or
 	// the TUN listener's rewritten source address.
-	response, err := http.Get("http://" + cfg.General.ManagerAddr + "/host/")
-	if err != nil {
-		t.Fatal(err)
+	traffic := one.TrafficSnapshot(kone.TrafficQuery{})
+	clientObserved := false
+	for _, flow := range traffic.Records {
+		host, _, _ := net.SplitHostPort(flow.Source)
+		if host == "192.0.2.2" {
+			clientObserved = true
+		}
 	}
-	data, err := io.ReadAll(response.Body)
-	response.Body.Close()
-	if err != nil || !strings.Contains(string(data), "192.0.2.2") {
-		t.Fatalf("LAN source not retained: %v %s", err, data)
+	if !clientObserved || traffic.Totals.Upload == 0 || traffic.Totals.Download == 0 {
+		t.Fatalf("LAN source or payload statistics not retained: %+v", traffic)
 	}
 	stop()
 	if err := systemWait(t, done); err != nil {

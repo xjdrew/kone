@@ -41,15 +41,27 @@ func request(t *testing.T, c *Controller, token, method, path string, body any) 
 }
 func owner(t *testing.T, c *Controller) string {
 	t.Helper()
+	if c.passwordConfigured() {
+		response := request(t, c, "", "POST", "/api/v1/session", map[string]any{"password": "control-test-password"})
+		require.Equal(t, 200, response.Code, response.Body.String())
+		return response.Result().Cookies()[0].Value
+	}
 	token, _, err := c.claim(c.BootstrapToken(), "", false)
 	require.NoError(t, err)
-	return token
+	response := request(t, c, token, "POST", "/api/v1/auth/password", map[string]any{"password": "control-test-password", "confirm_password": "control-test-password"})
+	require.Equal(t, 200, response.Code, response.Body.String())
+	return response.Result().Cookies()[0].Value
 }
 func TestManagementAuthorizationAndReadOnlyRoles(t *testing.T) {
 	c := testController(t, Options{})
 	require.Equal(t, 401, request(t, c, "", "GET", "/api/v1/config", nil).Code)
 	r := request(t, c, "", "POST", "/api/v1/session", map[string]any{"token": c.BootstrapToken()})
 	require.Equal(t, 200, r.Code)
+	var setup map[string]any
+	require.NoError(t, json.Unmarshal(r.Body.Bytes(), &setup))
+	require.Equal(t, true, setup["setup_required"])
+	r = request(t, c, r.Result().Cookies()[0].Value, "POST", "/api/v1/auth/password", map[string]any{"password": "control-test-password", "confirm_password": "control-test-password"})
+	require.Equal(t, 200, r.Code, r.Body.String())
 	require.Len(t, r.Result().Cookies(), 1)
 	cookie := r.Result().Cookies()[0]
 	require.True(t, cookie.HttpOnly)

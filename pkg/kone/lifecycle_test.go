@@ -114,9 +114,8 @@ type loopSockets struct {
 func (s *loopSockets) Listen(ctx context.Context, network, address string) (net.Listener, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, port, _ := net.SplitHostPort(address)
 	bind := "127.0.0.1:0"
-	if s.failAt == "manager" && port == "9200" {
+	if s.failAt == "dns-tcp" {
 		bind = s.occupied
 	}
 	ln, err := s.lc.Listen(ctx, network, bind)
@@ -240,7 +239,7 @@ func waitRun(t *testing.T, done <-chan error) error {
 }
 
 func TestLifecycleStartupRollback(t *testing.T) {
-	for _, kind := range []string{"configure", "route", "stack", "dns", "manager"} {
+	for _, kind := range []string{"configure", "route", "stack", "dns", "dns-tcp"} {
 		t.Run(kind, func(t *testing.T) {
 			n, s := newMemoryNetwork(), &loopSockets{}
 			var occupied io.Closer
@@ -251,7 +250,7 @@ func TestLifecycleStartupRollback(t *testing.T) {
 				n.failRoute = true
 			case "stack":
 				s.failAt = kind
-			case "manager":
+			case "dns-tcp":
 				ln, err := net.Listen("tcp", "127.0.0.1:0")
 				require.NoError(t, err)
 				occupied = ln

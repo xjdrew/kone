@@ -2,9 +2,7 @@ package kone
 
 import (
 	"context"
-	"fmt"
 	"net"
-	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -99,35 +97,4 @@ func TestStaleDirectDNSCacheCannotOverrideReload(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, answer.Answer, 1)
 	require.Equal(t, "B", policyFor(one, "example.com"))
-}
-
-func TestManagerConcurrentReadsAndBoundedStatistics(t *testing.T) {
-	cleanProxyEnv(t)
-	one := testEngine(t)
-	m := NewManager(one, one.Snapshot().Config)
-	handler := m.Handler()
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 1200; i++ {
-			m.Record(ConnData{Src: "client", Dst: fmt.Sprint(i), Proxy: "A", Upload: 1, Download: 2})
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 60; i++ {
-			for _, path := range []string{"/", "/host/", "/website/", "/proxy/", "/dns/", "/config/"} {
-				w := httptest.NewRecorder()
-				handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
-				if w.Code != 200 {
-					t.Errorf("%s: %d", path, w.Code)
-				}
-			}
-		}
-	}()
-	wg.Wait()
-	require.LessOrEqual(t, len(m.websites), 1024)
-	require.LessOrEqual(t, len(m.hosts["client"].Details), 64)
-	require.Positive(t, m.dropped.Load())
 }

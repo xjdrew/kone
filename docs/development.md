@@ -15,6 +15,18 @@ just dev
 
 单独执行 `just` 只显示帮助，不下载、构建或启动程序。初始化后，构建和打包复用未变更的依赖及前端资产，只做必要的增量工作。
 
+所有七个日常命令都支持 `-h` / `--help`，显示用法、默认行为、可选参数和示例；帮助不会安装依赖、构建或启动程序。例如：
+
+```sh
+just init --help
+just dev --help
+just quality --help
+just build --help
+just build-all --help
+just package --help
+just package-all --help
+```
+
 ## 日常入口
 
 | 命令 | 用途 |
@@ -40,7 +52,7 @@ just init
 just build
 ```
 
-Windows 输出 `dist/kone.exe`，Linux/macOS 输出 `dist/kone`。双击 Windows 程序或无参数运行相应文件，会打开持久化管理和托盘/菜单，初始接管暂停。日常开发也可以直接用 `just dev`；它会实际启动程序。
+Windows 输出 `dist/kone.exe` 桌面程序和 `dist/kone-cli.exe` 控制台程序；macOS 输出 `dist/Kone.app` 和 `dist/kone-cli`；Linux 保留 `dist/kone` CLI。双击 Windows 程序或打开 macOS app，默认只显示托盘/菜单图标，不弹终端、不自动打开浏览器；通过图标打开管理，接管保持暂停。日常开发可直接用 `just dev`，它会实际启动对应入口。首次接管的设置步骤见 [桌面指南](desktop.md)。
 
 `just build mixed` 编入 gVisor 支持，随后仍须在配置中选择 mixed 协议栈。构建任务只生成本机程序，不因为开发 Windows 桌面就同时编译 Linux/macOS。需要 Raspberry Pi 等其他目标时使用 `just build-all`，从 `dist/` 选择对应文件；Linux ARMv7 使用 system，其余发行目标包含 mixed。
 
@@ -54,7 +66,9 @@ just package mixed
 
 本地清单的 `native_version_checked=false`，保守标为实验、未验收。真实版本、解包和临时安装校验保留在 CI 的 `just ci package` 默认模式；生成本地包不表示已经取得这些验收证据。
 
-Windows ZIP 随附按用户安装的 `install.ps1`，打包使用系统 Windows PowerShell 5.1，无需另装 `pwsh`。macOS 的未签名 `.pkg` 安装 CLI 和资源，并不是已签名、公证的 `.app`。菜单、助手和真实 TUN 已有 CI 验收；真实鼠标、权限弹窗、干净机器升级/卸载以及签名/公证仍需目标设备验收。见 [发布说明](releases.md)、[Windows](windows/README.md) 与 [macOS 权限](macos-helper.md)。
+Windows ZIP 随附按用户安装的 `install.ps1`，同时携带 GUI 和 CLI，打包使用系统 Windows PowerShell 5.1，无需另装 `pwsh`。macOS 的未签名 `.pkg` 安装 `Kone.app`、`kone-cli` 和资源；app 目前未签名、公证。菜单、助手和真实 TUN 已有 CI 验收；新桌面产物的真实双击、权限弹窗、干净机器升级/卸载及系统信任仍需目标设备验收。见 [发布说明](releases.md)、[Windows](windows/README.md) 与 [macOS 权限](macos-helper.md)。
+
+图标源文件及 `just ci icons generate` / `just ci icons check` 的维护流程见 [图标说明](branding.md)。
 
 ## CI 与高级维护
 

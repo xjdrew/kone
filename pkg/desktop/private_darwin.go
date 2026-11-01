@@ -274,5 +274,5 @@ func runDarwinNetworkHelper(parent context.Context, base string, parentPID uint3
 		}
 	}
 	cancel()
-	return ServeHelper(parent, commands, events, factory)
+	return serveProductionHelper(parent, commands, events, factory)
 }

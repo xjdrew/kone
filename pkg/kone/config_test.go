@@ -90,7 +90,6 @@ outbound = 'Proxy1'
 type = 'FINAL'
 outbound = 'direct'
 `)
-	require.Equal(t, "127.0.0.1:9200", cfg.General.ManagerAddr)
 	require.Equal(t, "json", cfg.General.LogFormat)
 	require.Equal(t, []string{"1.1.1.1:53", "[2001:4860:4860::8888]:53"}, cfg.DNS.Servers)
 	require.Len(t, cfg.Rule, 2)
