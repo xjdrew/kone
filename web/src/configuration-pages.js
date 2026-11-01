@@ -34,7 +34,7 @@ export function createConfigurationPages(ui) {
   const saved = () => model.config?.config || {};
   const locked = () => ["starting", "running", "degraded", "pausing", "stopping"].includes(ui.runtime()) || Boolean(model.state.capture_locked ?? model.config?.capture_locked ?? false);
   const actions = (...buttons) => h("div", { class: "button-row resource-actions" }, buttons);
-  const versions = () => h("p", { class: "muted resource-version" }, `已保存 ${model.config?.version ?? "—"} · 运行中 ${model.state.running_version || "尚未启用"}。保存结果与实际接管状态分别显示。`);
+  const versions = () => model.state.running_version && model.state.running_version !== model.config?.version ? note("有已保存的更改等待应用。", "warning") : null;
 
   function inbounds() {
     const core = saved().core || {};
@@ -47,23 +47,38 @@ export function createConfigurationPages(ui) {
         ["IPv6 网段", core["ipv6-network"] || "关闭"], ["真实出口", core["outbound-interface"] || "系统选择"],
         ["接管范围", core["auto-route"] ? "全部 IPv4（更具体路由优先）" : "Fake-IP 与显式规则"],
       ]), locked() && note("接管运行或切换期间，TUN、出口、协议栈和 DNS 设置已锁定；请先暂停接管再编辑。", "warning"),
-      actions(button("编辑入站", () => ui.edit("inbounds"), "primary", !ui.canManage() || locked()), button("运行预检", ui.preflight)),
+      actions(button("编辑入站", () => ui.edit("inbounds"), "primary", !ui.canManage() || locked())),
     )];
   }
 
   function outbounds() {
     const values = saved().outbounds || [];
-    return [readonlyNote(), versions(), card("代理出站", "健康状态来自你明确发起的目标测试；没有测试或结果过期时不会假定可用。",
-      actions(button("＋ 添加代理", () => ui.addOutbound(), "primary"), button("刷新状态", ui.refreshHealth, "ghost", !model.online)),
-      values.length ? h("div", { class: "resource-list" }, values.map((outbound, index) => {
+    return [readonlyNote(), versions(), card("代理出站", "保存后可按需测试；测试会连接代理端点与指定目标，不发送应用请求。",
+      actions(button("＋ 添加代理", () => ui.addOutbound(), "primary")),
+      values.length ? h("div", { class: "resource-list outbound-list" }, values.map((outbound, index) => {
         const health = (model.outboundHealth || []).find(value => (outbound.id && value.id === outbound.id) || value.name === outbound.name);
-        const state = outbound.enabled === false ? "已禁用" : !health || health.stale || health.status === "healthy" && !currentHealth(health) ? "未知 / 待测试" : ({ healthy: "可用", unhealthy: "测试失败", testing: "测试中", unknown: "未知 / 待测试" }[health.status] || "未知");
-        return h("article", { class: "resource-item", "data-outbound-row": index },
-          h("div", { class: "resource-main" }, h("h3", {}, outbound.name), h("p", {}, outboundAddress(outbound.url)), h("small", {}, `${state}${health?.checked_at ? ` · ${time(health.checked_at)}` : ""}`), health?.message && h("p", { class: "muted" }, health.message)),
-          actions(button("详情", () => ui.outboundDetails(index), "ghost", !model.online), button("测试", () => ui.testOutbound(index), "", !ui.canManage() || outbound.enabled === false), button("编辑", () => ui.edit("outbound", index)), button("删除", () => ui.deleteOutbound(index), "danger")),
+        const state = outbound.enabled === false ? "已禁用" : !health || health.stale || health.status === "healthy" && !currentHealth(health) ? "待测试" : ({ healthy: "可用", unhealthy: "测试失败", testing: "测试中", unknown: "待测试" }[health.status] || "待测试");
+        const latency = Number.isFinite(health?.connect_latency_ms) ? health.connect_latency_ms + " ms" : "—";
+        const testing = Boolean(model.outboundTests?.[outbound.id || outbound.name]?.running);
+        return h("article", { class: "resource-item outbound-item", "data-outbound-row": index },
+          h("div", { class: "outbound-row-heading" },
+            h("div", { class: "resource-main" },
+              h("h3", {}, outbound.name),
+              h("p", {}, outboundAddress(outbound.url)),
+              h("div", { class: "outbound-status-line" }, h("span", { class: "tag " + (state === "可用" ? "success" : state === "测试失败" ? "error" : "muted") }, state),
+                h("span", {}, "连接延迟 ", h("b", { "data-outbound-connect-latency": index }, latency)),
+                health?.stale && h("small", {}, "上次结果已过期"),
+              ),
+            ),
+            actions(button("测试", () => ui.testOutbound(index), "", !ui.canManage() || outbound.enabled === false || testing),
+              button("编辑", () => ui.edit("outbound", index), "ghost"),
+              h("details", { class: "resource-more", "data-outbound-more": index }, h("summary", { "aria-label": "更多操作" }, "•••"), button("删除", () => ui.deleteOutbound(index), "danger compact"))),
+          ),
+          health?.protocols && h("div", { class: "outbound-protocol-summary" }, ["tcp", "tls", "udp"].map(protocol => h("span", { class: "tag muted" }, protocol.toUpperCase() + " · " + ({ healthy: "成功", failed: "失败", testing: "测试中", unsupported: "不支持", unknown: "未验证" }[health.protocols[protocol]?.status] || "未验证")))),
+          model.outboundTestOpen === (outbound.id || outbound.name) && ui.outboundTestPanel?.(index),
         );
-      })) : empty("尚未配置代理", "可选择仅直连接管；启动前会明确显示此模式并要求确认。"),
-    ), card("内置出站", "无需添加或编辑。", detailPairs([["direct", "直连 TCP / UDP；不等于使用代理"], ["reject", "拒绝连接；不执行直连回退"]]))];
+      })) : empty("尚未配置代理", "添加已有代理信息，然后按需测试连接。"),
+    ), h("details", { class: "disclosure builtin-summary" }, h("summary", {}, "内置出站"), detailPairs([["direct", "直连 TCP / UDP"], ["reject", "拒绝连接"]]))];
   }
 
   function rules() {

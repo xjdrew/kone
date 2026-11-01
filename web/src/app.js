@@ -15,6 +15,7 @@ import {
 import { aggregatePaths, bytes, nativePaths, renderSankey } from "./graph.js";
 import { mergeLogs } from "./logs.js";
 import { createConfigurationPages, outboundAddress, currentHealth, needsDirectConfirmation, settingsSections } from "./configuration-pages.js";
+import { outboundProtocols, parseOutboundFields, buildOutboundURL, defaultOutboundName, outboundCredentialAction } from "./outbound-editor.js";
 
 const pages = [
   ["home", "首页", "◈", "OVERVIEW", "看清流量，掌握每一次连接。"],
@@ -49,6 +50,9 @@ const model = {
   page: "home",
   settingsSection: "",
   settingsLocalDirty: false,
+  outboundRoute: "",
+  outboundTests: {},
+  outboundTestOpen: null,
   state: {},
   config: null,
   draft: null,
@@ -312,7 +316,7 @@ function revokeAuthentication(clear = true) {
   Object.assign(model, {
     authenticated: false, authPending: false, online: false, busy: false, authBusy: false, state: {},
     config: null, draft: null, inbound: null, editor: null,
-    credentialActions: {}, outboundOrigins: [], outboundHealth: [], dirty: false,
+    credentialActions: {}, outboundOrigins: [], outboundHealth: [], outboundTests: {}, outboundTestOpen: null, dirty: false,
     versionConflict: false, traffic: normalizeTraffic(), trafficError: "",
     dns: null, diagnostics: [], logs: [], logPage: null, logCursor: null,
     logError: "", logLoading: false, lan: {}, sessions: [], geoip: null,
@@ -363,6 +367,7 @@ async function action(work, success) {
   const epoch = model.authEpoch;
   model.busy = true;
   updateShell();
+  syncOutboundEditorAccess();
   try {
     const result = await work();
     if (!currentAuth(epoch)) return;
@@ -380,7 +385,8 @@ async function action(work, success) {
 }
 function pageHeader(actions = []) {
   const section = model.page === "settings" && settingsSections[model.settingsSection];
-  const page = section ? ["settings", section[0], "", "SETTINGS", section[1]] : pages.find((item) => item[0] === model.page) || pages[0];
+  const outboundPage = model.page === "outbounds" && model.outboundRoute;
+  const page = outboundPage ? ["outbounds", model.outboundRoute === "new" ? "添加代理" : "编辑代理", "", "OUTBOUNDS", "填写连接信息，保存后再按需测试。"] : section ? ["settings", section[0], "", "SETTINGS", section[1]] : pages.find((item) => item[0] === model.page) || pages[0];
   return h(
     "div",
     { class: "page-head" },
@@ -505,76 +511,11 @@ function configBody() {
 }
 function configFooter(editorFooter = false) {
   if (model.editor && !editorFooter) return null;
-  return h(
-    "div",
-    {},
-    model.versionConflict &&
-      note(
-        "已保存版本发生变化，草稿仍基于原版本；保存将继续检测冲突。可保留草稿继续检查，或显式重新加载。",
-        "warning",
-      ),
-    h(
-      "div",
-      { class: "form-footer" },
-      h(
-        "div",
-        { class: "form-version" },
-        h(
-          "span",
-          { id: "draft-status" },
-          model.dirty ? "有未保存的修改" : "当前草稿已保存",
-        ),
-        h(
-          "div",
-          {},
-          `草稿基于 ${model.config?.version ?? "—"} · 已保存 ${model.state.saved_version ?? model.config?.version ?? "—"} · 运行中 ${model.state.running_version || "尚未启用"}`,
-        ),
-      ),
-      h(
-        "div",
-        { class: "button-row" },
-        (model.dirty || model.versionConflict) &&
-          button("重新加载设置", () =>
-            dialog(
-              "重新加载已保存设置",
-              "这会放弃本页面保留的未保存草稿，不改变正在运行的网络。",
-              note("如需保留草稿，请先核对修改内容，再取消此操作。", "warning"),
-              [
-                button("保留草稿", closeDialog, "ghost", false),
-                button(
-                  "放弃草稿并重新加载",
-                  () => {
-                    closeDialog();
-                    action(async () => {
-                      await loadConfig(true);
-                      model.versionConflict = false;
-                      model.notice = null;
-                    }, "已加载主机保存的设置");
-                  },
-                  "danger",
-                ),
-              ],
-            ),
-          ),
-        button("校验与预览", validateConfig),
-        button(
-          "保存",
-          () => saveEditor(false),
-          "",
-          !canManage() || !model.dirty || Boolean(model.editor && ["inbounds", "dns", "logs"].includes(model.editor.kind) && captureLocked()),
-          { "data-save": "" },
-        ),
-        button(
-          "保存并应用",
-          () => saveEditor(true),
-          "primary",
-          !canManage() || !model.dirty || Boolean(model.editor && ["inbounds", "dns", "logs"].includes(model.editor.kind) && captureLocked()),
-          { "data-save": "" },
-        ),
-      ),
-    ),
+  return h("div", { class: "compact-save" },
+    button("保存", () => saveEditor(false), "primary", !canManage() || !model.dirty || Boolean(model.editor && ["inbounds", "dns", "logs"].includes(model.editor.kind) && captureLocked()), { "data-save": "", "data-editor-save": "" }),
   );
 }
+
 async function validateConfig() {
   return action(async () => {
     const result = await endpoints.validate(configBody());
@@ -589,10 +530,11 @@ async function validateConfig() {
     return result;
   });
 }
-async function saveConfig(apply) {
+async function saveConfig(apply, prevalidated = null) {
   const editor = model.editor;
-  return action(async () => {
-    const validation = await endpoints.validate(configBody());
+  const savedName = editor?.kind === "outbound" ? model.draft?.outbounds?.[editor.index]?.name : "";
+  const savedResult = await action(async () => {
+    const validation = prevalidated || await endpoints.validate(configBody());
     if (validation.valid === false)
       throw new ApiError("配置未通过校验。", 422, validation);
     const saved = await endpoints.save(configBody());
@@ -626,10 +568,12 @@ async function saveConfig(apply) {
       }
     } else
       notice(
-        validation.restart_required
+        !running()
+          ? "已保存，下次启用接管时生效。"
+          : validation.restart_required
           ? "已保存，等待你确认重启接管。现有连接未被中断。"
-          : "已保存。点击“应用已保存设置”后才会改变新连接策略。",
-        validation.restart_required ? "warning" : "success",
+          : "已保存，当前运行设置尚未更新，请检查运行状态。",
+        !running() ? "success" : "warning",
       );
     await loadConfig(true);
     if (editor && model.editor === editor) finishEditor(true);
@@ -637,6 +581,14 @@ async function saveConfig(apply) {
     render();
     return saved;
   }, "设置已保存");
+  if (savedResult && editor?.kind === "outbound" && model.authenticated) {
+    const index = list(model.config?.config?.outbounds).findIndex(outbound => outbound.name === savedName);
+    if (index >= 0 && model.config.config.outbounds[index].enabled !== false) dialog("代理已保存，建议测试连接", "连接测试可确认端点延迟与代理协议结果；只有点击测试才会发起连接。", h("p", { "data-outbound-test-suggestion": "" }, "稍后也可以从出站列表发起测试。"), [
+      button("稍后", closeDialog, "ghost", false),
+      button("测试连接", () => { closeDialog(); openOutboundTest(index); }, "primary", !canManage()),
+    ]);
+  }
+  return savedResult;
 }
 async function loadConfig(force = false) {
   if (!model.authenticated) return;
@@ -644,8 +596,10 @@ async function loadConfig(force = false) {
   const document = await endpoints.config();
   if (!currentAuth(epoch)) return;
   if (!force && (model.dirty || model.editor)) {
-    if (document.version !== model.config?.version)
+    if (document.version !== model.config?.version) {
       model.versionConflict = true;
+      updateEditorConflict();
+    }
     return;
   }
   model.config = document;
@@ -1885,170 +1839,165 @@ function outboundNames() {
     ...list(model.draft?.outbounds).map((outbound) => outbound.name),
   ];
 }
+function outboundHealthFor(outbound) {
+  return model.outboundHealth.find(value => (outbound?.id && value.id === outbound.id) || value.name === outbound?.name);
+}
+function testedUDPUnsupported(health) {
+  return Boolean(health?.checked_at && !health.stale && (!health.expires_at || Date.parse(health.expires_at) > Date.now()) && health.protocols?.udp?.status === "unsupported");
+}
+function renameOutbound(index, name, custom = true) {
+  const outbound = model.draft.outbounds[index];
+  const previous = outbound.name;
+  outbound.name = name;
+  if (custom && model.editor) model.editor.nameEdited = true;
+  if (previous !== name && model.credentialActions[previous]) {
+    model.credentialActions[name] = model.credentialActions[previous];
+    delete model.credentialActions[previous];
+  }
+  for (const rule of list(model.draft.rules)) if (rule.outbound === previous) rule.outbound = name;
+  markDirty();
+}
+function beginOutboundPageEditor() {
+  if (model.page !== "outbounds" || !model.outboundRoute || !model.draft || model.editor) return;
+  const snapshot = editorSnapshot();
+  const adding = model.outboundRoute === "new";
+  let identifier = "";
+  try { identifier = decodeURIComponent(model.outboundRoute.slice(5)); } catch {}
+  let index = adding ? list(model.draft.outbounds).length : list(model.draft.outbounds).findIndex(item => item.id === identifier);
+  if (!adding && index < 0 && /^index-\d+$/.test(identifier)) index = Number(identifier.slice(6));
+  if (!adding && (!Number.isInteger(index) || index < 0 || index >= list(model.draft.outbounds).length)) {
+    model.outboundRoute = "";
+    history.replaceState({ ...history.state, koneSettingsIndex: settingsHistoryIndex }, "", `${location.pathname}${location.search}#outbounds`);
+    return;
+  }
+  if (adding) {
+    model.draft.outbounds ||= [];
+    model.draft.outbounds.push({ name: defaultOutboundName("http", model.draft.outbounds.map(value => value.name)), url: "", enabled: true, "udp-fallback": "direct" });
+    model.outboundOrigins.push(undefined);
+    markDirty();
+  }
+  const outbound = model.draft.outbounds[index];
+  const original = model.config?.config?.outbounds?.[index];
+  const fields = parseOutboundFields(adding ? "" : outbound.url);
+  model.editor = { kind: "outbound", page: true, index, snapshot, fields, connectionRevision: 0, testKey: "draft:" + crypto.randomUUID(), originalRaw: adding ? "" : outbound.url, originalName: adding ? "" : model.outboundOrigins[index] || outbound.name, adding, nameEdited: !adding, configured: !adding && Boolean(model.config?.credential_state?.[original?.name || outbound.name]?.configured || outbound.url.includes("@")) };
+}
+let outboundEditorElement = null;
+function prepareOutboundEditor() {
+  const editor = model.editor;
+  if (editor?.kind !== "outbound" || !editor.page) return;
+  const outbound = model.draft.outbounds[editor.index];
+  if (!outbound.name.trim()) throw new Error("请填写代理名称。");
+  if (["direct", "reject"].includes(outbound.name.toLowerCase())) throw new Error("direct 和 reject 是保留名称，请使用其他名称。");
+  if (model.draft.outbounds.some((item, index) => index !== editor.index && item.name === outbound.name)) throw new Error("代理名称已存在，请使用不同名称。");
+  const original = parseOutboundFields(editor.originalRaw);
+  const endpointChanged = editor.originalRaw && (original.protocol !== editor.fields.protocol || original.host !== editor.fields.host.trim().replace(/^\[|\]$/g, "") || Number(original.port) !== Number(editor.fields.port));
+  const credential = outboundCredentialAction(editor.fields, { configured: editor.configured, originalName: editor.originalName, endpointChanged });
+  outbound.url = buildOutboundURL({ ...editor.fields, clearAuthentication: credential.action !== "preserve" }, editor.originalRaw);
+  model.credentialActions[outbound.name] = credential;
+}
 function renderOutboundsEditor() {
-  if (!model.draft) return [empty("配置尚未加载", "连接恢复后可查看出站。")];
-  model.draft.outbounds ||= [];
-  const editors = model.draft.outbounds.map((outbound, index) => {
-    if (model.editor?.kind === "outbound" && index !== model.editor.index) return null;
-    const original = model.outboundOrigins[index];
-    const references = list(model.draft.rules).filter(
-      (rule) => rule.outbound === outbound.name,
-    ).length;
-    const actions = model.credentialActions[outbound.name] || {
-      action: "preserve",
-      original_name: original,
-    };
-    const credentials = (values) => {
-      model.credentialActions[outbound.name] = {
-        ...(model.credentialActions[outbound.name] || actions),
-        ...values,
-      };
-      markDirty();
-    };
-    return h(
-      "section",
-      { class: "editor-item", "data-outbound": index },
-      h(
-        "div",
-        { class: "editor-item-head" },
-        h(
-          "div",
-          {},
-          h("h3", {}, outbound.name || "新代理"),
-          h("small", {}, `${references} 条规则引用 · 代理健康需独立检测`),
-        ),
-      ),
-      h(
-        "div",
-        { class: "form-grid" },
-        check(
-          "启用此代理出站",
-          outbound.enabled !== false,
-          (value) => {
-            outbound.enabled = value;
-            markDirty();
-          },
-          "禁用后新连接明确拒绝，不直连或执行 UDP 回退；已有连接保留原快照。",
-          `outbound-enabled-${index}`,
-        ),
-        field(
-          "名称",
-          outbound.name,
-          (value) => {
-            const previous = outbound.name;
-            if (value === previous) return;
-            outbound.name = value;
-            model.credentialActions[value] = {
-              ...model.credentialActions[previous],
-              action: model.credentialActions[previous]?.action || "preserve",
-              original_name: original,
-            };
-            delete model.credentialActions[previous];
-            for (const rule of list(model.draft.rules))
-              if (rule.outbound === previous) rule.outbound = value;
-            markDirty();
-          },
-          {
-            id: `outbound-name-${index}`,
-            hint: "名称区分大小写；direct / reject 及其大小写变体保留。",
-          },
-        ),
-        field(
-          "代理 URL",
-          outbound.url || "",
-          (value) => {
-            outbound.url = value;
-            markDirty();
-          },
-          {
-            id: `outbound-url-${index}`,
-            placeholder: "http://127.0.0.1:8080",
-            hint: "HTTP/HTTPS CONNECT、SOCKS5 或 Shadowsocks AEAD，需显式端口；SS 暂不支持插件与 2022。",
-          },
-        ),
-        field(
-          "UDP 不支持时",
-          outbound["udp-fallback"] || "",
-          (value) => {
-            outbound["udp-fallback"] = value;
-            markDirty();
-          },
-          {
-            id: `outbound-udp-${index}`,
-            options: [
-              { value: "", label: "默认拒绝" },
-              { value: "reject", label: "明确拒绝" },
-              { value: "direct", label: "明确允许直连回退" },
-            ],
-            hint: "直连回退会绕过代理，仅在明确允许时选择。",
-          },
-        ),
-        field(
-          "认证信息",
-          actions.action,
-          (value) => {
-            credentials({ action: value });
-            render();
-          },
-          {
-            id: `outbound-credentials-${index}`,
-            options: [
-              { value: "preserve", label: "保留现有凭据" },
-              { value: "replace", label: "替换凭据" },
-              { value: "clear", label: "清除凭据" },
-            ],
-            hint: "保存时不会把脱敏掩码当作密码；普通页面不回显现有秘密。",
-          },
-        ),
-        actions.action === "replace" &&
-          field(
-            "用户名 / SS 加密方法",
-            actions.username || "",
-            (value) => credentials({ username: value }),
-            { id: `outbound-username-${index}`, autocomplete: "username" },
-          ),
-        actions.action === "replace" &&
-          field(
-            "密码",
-            actions.password || "",
-            (value) => credentials({ password: value }),
-            {
-              id: `outbound-password-${index}`,
-              type: "password",
-              autocomplete: "new-password",
-              hint: "仅发送到已授权 KONE 主机，不写入浏览器地址、日志或脱敏导出。",
-            },
-          ),
-      ),
-      h(
-        "div",
-        { class: "form-section button-row" },
-        tag("TCP 代理", "success"),
-        tag(
-          /^(socks5|ss):/i.test(outbound.url)
-            ? "原生 UDP 代理"
-            : "此协议不支持 UDP",
-          /^(socks5|ss):/i.test(outbound.url) ? "success" : "warning",
-        ),
-        tag("健康状态待诊断", "muted"),
-      ),
-    );
-  });
-  return [
-    readonlyNote(),
-    card(
-      "代理出站",
-      "添加已有代理地址。KONE 不提供或自动寻找代理服务器。",
-      h(
-        "div",
-        { class: "editor-list" },
-        editors.length
-          ? editors
-          : empty("尚未配置代理", "纯直连配置可以保存并使用，无需添加代理。"),
-      ),
-      configFooter(),
+  const editor = model.editor;
+  if (!editor?.page || editor.kind !== "outbound") return [empty("未找到代理", "该出站可能已被其他页面删除。", button("返回出站", () => navigate("outbounds"), "ghost", false))];
+  const index = editor.index;
+  const outbound = model.draft.outbounds[index];
+  const fields = editor.fields;
+  const change = (key, value) => { if (fields[key] !== value) editor.connectionRevision++; fields[key] = value; markDirty(); syncOutboundEditorAccess(); };
+  const protocolChanged = value => {
+    const oldDefault = parseOutboundFields(fields.protocol + "://example.invalid").port;
+    if (String(fields.port) === oldDefault) fields.port = parseOutboundFields(value + "://example.invalid").port;
+    fields.protocol = value;
+    editor.connectionRevision++;
+    fields.clearAuthentication = false;
+    fields.username = "";
+    fields.password = "";
+    fields.methodChanged = false;
+    if (value === "ss" && !fields.method) fields.method = "aes-256-gcm";
+    if (!editor.nameEdited) renameOutbound(index, defaultOutboundName(value, model.draft.outbounds.filter((_, item) => item !== index).map(item => item.name)), false);
+    markDirty();
+    render();
+  };
+  const original = parseOutboundFields(editor.originalRaw);
+  const credentials = fields.protocol === "ss"
+    ? [
+      field("加密方法", fields.method || "", value => { fields.methodChanged = value !== original.method; change("method", value); }, { id: "outbound-method-" + index, options: [...(editor.configured && !fields.method ? [{ value: "", label: "保留已保存方法" }] : []), "aes-128-gcm", "aes-256-gcm", "chacha20-ietf-poly1305"] }),
+      field("密码", fields.password || "", value => change("password", value), { id: "outbound-password-" + index, type: "password", autocomplete: "new-password", placeholder: editor.configured ? "留空保留已保存密码" : "Shadowsocks 密码" }),
+    ] : [
+      field("用户名", fields.username || "", value => change("username", value), { id: "outbound-username-" + index, autocomplete: "off", placeholder: editor.configured ? "留空保留已保存认证" : "可选" }),
+      field("密码", fields.password || "", value => change("password", value), { id: "outbound-password-" + index, type: "password", autocomplete: "new-password", placeholder: editor.configured ? "留空保留已保存认证" : "可选" }),
+    ];
+  const references = list(editor.snapshot.draft?.rules).filter(rule => rule.outbound === editor.originalName).length;
+  const form = h("form", { id: "outbound-form", onsubmit: event => { event.preventDefault(); saveEditor(false); } },
+    h("div", { class: "form-grid" },
+      field("名称", outbound.name, value => renameOutbound(index, value), { id: "outbound-name-" + index }),
+      field("协议", fields.protocol, protocolChanged, { id: "outbound-protocol-" + index, options: outboundProtocols }),
     ),
-  ];
+    h("div", { class: "form-grid outbound-address-grid" },
+      field("服务器地址", fields.host, value => change("host", value), { id: "outbound-host-" + index, placeholder: "proxy.example.com 或 IP 地址" }),
+      field("端口", fields.port, value => change("port", value), { id: "outbound-port-" + index, type: "number", min: 1, max: 65535 }),
+    ),
+    h("div", { class: "outbound-auth-heading" }, h("h2", {}, "认证"), h("small", { class: "muted" }, editor.configured ? "已保存认证；留空保留，填写完整信息才替换。" : fields.protocol === "ss" ? "填写加密方法和密码。" : "未配置认证时可留空。")),
+    h("div", { class: "form-grid" }, credentials),
+    editor.configured && fields.protocol !== "ss" && check("清除已保存认证", Boolean(fields.clearAuthentication), value => { fields.clearAuthentication = value; fields.username = ""; fields.password = ""; editor.connectionRevision++; markDirty(); render(); }, "", "outbound-clear-auth-" + index),
+    h("div", { "data-outbound-udp-wrapper": "" }),
+    button("测试连接", runDraftOutboundTest, "ghost compact", !canManage(), { "data-outbound-draft-test": "" }),
+    editor.testOpen && renderDraftTestPanel(editor),
+    references > 0 && outbound.name !== editor.originalName && note("保存时将同步更新 " + references + " 条规则中的出站名称。"),
+    h("details", { class: "disclosure compact-advanced", open: Boolean(editor.advancedOpen), ontoggle: event => { editor.advancedOpen = event.target.open; }, "data-editor-advanced": "outbound" },
+      h("summary", {}, "高级设置"),
+      check("启用此代理", outbound.enabled !== false, value => { outbound.enabled = value; editor.connectionRevision++; markDirty(); syncOutboundEditorAccess(); }, "禁用后新连接会被拒绝，现有连接不受影响。", "outbound-enabled-" + index),
+      fields.suffix && h("p", { class: "muted" }, "已导入的附加 URL 参数会完整保留。"),
+    ),
+  );
+  const content = h("section", { class: "compact-editor outbound-editor", "data-outbound-editor": index }, readonlyNote(),
+    h("div", { "data-outbound-conflict": "" }),
+    form,
+    h("div", { class: "compact-editor-footer" },
+      button("取消", () => finishEditor(false), "ghost", model.busy, { "data-editor-cancel": "" }),
+      button("保存", () => form.requestSubmit(), "primary", !canManage() || !model.dirty, { "data-editor-save": "", "data-save": "" }),
+    ),
+  );
+  outboundEditorElement = content;
+  return [content];
+}
+function syncOutboundEditorAccess() {
+  if (!model.editor?.page || !outboundEditorElement?.isConnected) return;
+  const editor = model.editor;
+  const view = model.outboundTests[editor.testKey];
+  const live = outboundEditorElement.querySelector("[data-outbound-draft-live]");
+  if (live && view) live.replaceChildren(renderOutboundTestResult(view.result, { ...view, configurationChanged: view.editorRevision !== editor.connectionRevision }));
+  updateOutboundFallback(editor);
+  outboundEditorElement.querySelector("[data-outbound-conflict]")?.replaceChildren(...(model.versionConflict ? [note("已保存配置已变化，当前草稿已保留。请取消后重新打开，或核对版本后再保存。", "warning")] : []));
+  for (const control of outboundEditorElement.querySelectorAll("input,select,textarea,button")) {
+    let disabled = !canManage() || model.authBusy;
+    if (control.matches("[data-editor-cancel]")) disabled = model.busy || model.authBusy;
+    if (control.matches("[data-editor-save]")) disabled ||= !model.dirty;
+    if (control.matches("[data-outbound-draft-test]")) disabled ||= Boolean(view?.running) || model.draft.outbounds[editor.index].enabled === false;
+    if (control.closest("[data-outbound-draft-options]")) disabled ||= Boolean(view?.running);
+    if (model.editor.fields.clearAuthentication && /outbound-(username|password)-/.test(control.id)) disabled = true;
+    control.disabled = disabled;
+  }
+}
+function updateOutboundFallback(editor) {
+  const wrapper = outboundEditorElement.querySelector("[data-outbound-udp-wrapper]");
+  if (!wrapper) return;
+  const fields = editor.fields;
+  const original = parseOutboundFields(editor.originalRaw);
+  const view = model.outboundTests[editor.testKey];
+  const sameEndpoint = original.protocol === fields.protocol && original.host === fields.host.trim().replace(/^\[|\]$/g, "") && Number(original.port) === Number(fields.port) && !fields.password && !fields.username && !fields.clearAuthentication && !fields.methodChanged;
+  const saved = editor.snapshot.draft?.outbounds?.[editor.index];
+  const sameEnabled = (saved?.enabled !== false) === (model.draft.outbounds[editor.index].enabled !== false);
+  const evidence = !model.versionConflict && (sameEndpoint && sameEnabled && testedUDPUnsupported(outboundHealthFor(saved)) || view && view.editorRevision === editor.connectionRevision && testedUDPUnsupported(view.result));
+  if (!evidence) { wrapper.replaceChildren(); return; }
+  if (!wrapper.firstChild) {
+    const outbound = model.draft.outbounds[editor.index];
+    wrapper.append(field("代理不支持 UDP 时", outbound["udp-fallback"] || "reject", value => { outbound["udp-fallback"] = value; markDirty(); }, { id: "outbound-udp-" + editor.index, options: [{ value: "direct", label: "直连回退（不经过代理）" }, { value: "reject", label: "拒绝 UDP" }] }));
+  }
+}
+function clearOutboundEditorSecrets() {
+  if (model.editor?.kind !== "outbound") return;
+  if (model.editor.fields) { model.editor.fields.username = ""; model.editor.fields.password = ""; }
+  if (model.editor.testKey) delete model.outboundTests[model.editor.testKey];
+  for (const input of outboundEditorElement?.querySelectorAll('input[type="password"]') || []) input.value = "";
 }
 
 function addExactRule(target, protocol = "") {
@@ -3884,6 +3833,7 @@ function editorSnapshot() {
   return clone({ draft: model.draft, inbound: model.inbound, credentialActions: model.credentialActions, outboundOrigins: model.outboundOrigins, dirty: model.dirty, versionConflict: Boolean(model.versionConflict) });
 }
 function openEditor(kind, index = null, mutate = null) {
+  if (kind === "outbound") { if (canManage()) navigate(`outbounds/edit/${encodeURIComponent(model.config?.config?.outbounds?.[index]?.id || `index-${index}`)}`); return; }
   if (["logs", "lan", "geoip"].includes(kind)) { navigate(`settings/${kind}`); return; }
   if (!canManage() || !model.draft) return;
   if (["inbounds", "dns", "logs"].includes(kind) && captureLocked()) {
@@ -3894,7 +3844,6 @@ function openEditor(kind, index = null, mutate = null) {
   model.editor = { kind, index, snapshot: editorSnapshot(), testTarget: "example.com:443", testTLS: true, test: null };
   if (mutate) mutate();
   if (kind === "rule") model.editor.item = model.draft.rules[index];
-  if (kind === "outbound") model.editor.baseFingerprint = outboundTestFingerprint();
   renderEditor();
   const modal = document.querySelector("#editor-dialog");
   if (!modal.open) modal.showModal();
@@ -3902,8 +3851,15 @@ function openEditor(kind, index = null, mutate = null) {
 function finishEditor(saved = false) {
   if (!model.editor) return;
   const inline = model.editor.inline;
+  const page = model.editor.page;
+  clearOutboundEditorSecrets();
   if (!saved) Object.assign(model, model.editor.snapshot);
   model.editor = null;
+  if (page) {
+    model.outboundRoute = "";
+    outboundEditorElement = null;
+    history.replaceState({ ...history.state, koneSettingsIndex: settingsHistoryIndex }, "", `${location.pathname}${location.search}#outbounds`);
+  }
   if (inline) { model.settingsLocalDirty = false; settingsDetailElement = null; }
   model.geoFile = null;
   model.geoExpected = "";
@@ -3930,19 +3886,29 @@ let restoringSettingsHistory = null;
 history.replaceState({ ...history.state, koneSettingsIndex: settingsHistoryIndex }, "");
 
 function currentRoute() {
+  if (model.page === "outbounds" && model.outboundRoute) return `outbounds/${model.outboundRoute}`;
   return model.page === "settings" && model.settingsSection ? `settings/${model.settingsSection}` : model.page;
 }
 function resolveRoute(value) {
-  const [page, section, extra] = value.replace(/^#/, "").split("/");
+  const [page, section, extra, trailing] = value.replace(/^#/, "").split("/");
   if (!pages.some(item => item[0] === page)) return null;
+  if (page === "outbounds" && section) {
+    let validID = false;
+    try { validID = Boolean(extra && extra.length <= 512 && decodeURIComponent(extra)); } catch {}
+    const outboundRoute = section === "new" && !extra ? "new" : section === "edit" && validID && !trailing ? `edit/${extra}` : "";
+    return { page, section: "", outboundRoute, key: outboundRoute ? `outbounds/${outboundRoute}` : "outbounds" };
+  }
   if (page !== "settings") return section ? null : { page, section: "", key: page };
   const allowed = section && !extra && Object.hasOwn(settingsSections, section);
   return { page, section: allowed ? section : "", key: allowed ? `settings/${section}` : "settings" };
 }
 function clearSettingsPresentation(restore = false) {
   settingsNavigationGeneration++;
-  if (restore && model.editor?.inline) Object.assign(model, model.editor.snapshot);
-  if (model.editor?.inline) model.editor = null;
+  clearOutboundEditorSecrets();
+  if (restore && model.editor) Object.assign(model, model.editor.snapshot);
+  if (model.editor) model.editor = null;
+  document.querySelector("#editor-dialog")?.close();
+  outboundEditorElement = null;
   settingsDetailElement?.querySelectorAll("form").forEach(form => form.reset());
   settingsDetailElement = null;
   model.settingsLocalDirty = false;
@@ -3955,7 +3921,7 @@ function beginInlineSettingsEditor() {
   model.editor = { kind: model.settingsSection, inline: true, snapshot: editorSnapshot() };
 }
 function settingsHaveChanges() {
-  return model.settingsLocalDirty || Boolean(model.editor?.inline && model.dirty && JSON.stringify(editorSnapshot()) !== JSON.stringify(model.editor.snapshot));
+  return model.settingsLocalDirty || Boolean(model.editor && model.dirty && JSON.stringify(editorSnapshot()) !== JSON.stringify(model.editor.snapshot));
 }
 async function cancelInlineSettingsChanges() {
   if (model.busy || model.settingsLoading) return;
@@ -3972,17 +3938,25 @@ async function cancelInlineSettingsChanges() {
 }
 function requestSettingsNavigation(destination, destinationIndex) {
   const offset = settingsHistoryIndex - destinationIndex;
+  const blocked = model.busy || model.authBusy || model.settingsLoading;
+  if (!blocked && !pendingSettingsNavigation) pendingSettingsNavigation = { key: destination, index: destinationIndex };
   if (offset) {
-    restoringSettingsHistory = { key: currentRoute(), index: settingsHistoryIndex };
+    // Traversal is asynchronous. Present the choice only after the original
+    // entry is restored, so a fast discard cannot race a second history.go().
+    restoringSettingsHistory = { key: currentRoute(), index: settingsHistoryIndex, confirm: !blocked };
     history.go(offset);
+    if (blocked) notice("正在完成操作，请稍候再离开。", "warning");
+    return;
   }
-  if (model.busy || model.authBusy || model.settingsLoading) { notice("正在完成操作，请稍候再离开。", "warning"); return; }
-  if (pendingSettingsNavigation) return;
-  pendingSettingsNavigation = { key: destination, index: destinationIndex };
+  if (blocked) { notice("正在完成操作，请稍候再离开。", "warning"); return; }
+  showPendingSettingsNavigation();
+}
+function showPendingSettingsNavigation() {
+  if (!model.authenticated || !pendingSettingsNavigation) return;
+  const target = pendingSettingsNavigation;
   dialog("放弃未保存的修改？", "离开会丢弃当前页面尚未保存的修改，已保存设置和当前接管不会改变。", null, [
     button("继续编辑", () => { pendingSettingsNavigation = null; closeDialog(); }, "ghost", false),
     button("放弃修改并离开", () => {
-      const target = pendingSettingsNavigation;
       closeDialog();
       clearSettingsPresentation(true);
       if (target) history.go(target.index - settingsHistoryIndex);
@@ -4050,6 +4024,7 @@ function renderEditor() {
   if (!model.authenticated) return;
   const editor = model.editor;
   if (!editor) return;
+  if (editor.page) { syncOutboundEditorAccess(); return; }
   if (editor.inline) { syncSettingsAccess(); return; }
   let modal = document.querySelector("#editor-dialog");
   if (!modal) {
@@ -4065,68 +4040,218 @@ function renderEditor() {
   if (editor.kind === "logs") content = selectCards(renderSettingsEditor(), ["日志设置"]);
   if (editor.kind === "lan") content = selectCards(renderSettingsEditor(), ["手机与平板访问"]);
   if (editor.kind === "geoip") content = [renderGeoIP()];
+  if (["inbounds", "rule", "dns"].includes(editor.kind)) content = compactEditorContent(editor, content);
   if (["inbounds", "dns", "logs"].includes(editor.kind) && captureLocked()) {
     for (const node of content) node.querySelectorAll("input,select,textarea,button").forEach(input => { input.disabled = true; });
     content.unshift(note("接管已进入运行或切换状态；这些设置不能热改，请暂停后再编辑。", "warning"));
   }
   modal.replaceChildren(
-    h("div", { class: "dialog-head" }, h("div", {}, h("h2", { id: "editor-title" }, titles[editor.kind]), h("p", {}, "取消将丢弃本次未保存修改；保存结果与运行状态分别确认。")), button("×", requestCloseEditor, "ghost compact", model.busy, { "aria-label": "关闭编辑" })),
+    h("div", { class: "dialog-head" }, h("div", {}, h("h2", { id: "editor-title" }, titles[editor.kind]), h("p", {}, "修改后保存，高级设置按需展开。")), button("×", requestCloseEditor, "ghost compact", model.busy, { "aria-label": "关闭编辑" })),
     h("div", { id: "editor-notice", role: "status" }, model.notice && note(model.notice.message, model.notice.kind)),
-    h("div", { class: "editor-content" }, content, editor.kind === "outbound" && renderOutboundTest()),
-    h("div", { class: "editor-footer" }, button(["lan", "geoip"].includes(editor.kind) ? "关闭面板" : "取消编辑", requestCloseEditor, "ghost", model.busy, { "data-editor-cancel": "" }), !["lan", "geoip"].includes(editor.kind) && configFooter(true)),
+    h("div", { "data-editor-conflict": "" }),
+    h("div", { class: "editor-content compact-editor-content" }, content),
+    h("div", { class: "editor-footer" }, button("取消", () => finishEditor(false), "ghost", model.busy, { "data-editor-cancel": "" }), configFooter(true)),
+  );
+  updateEditorConflict();
+}
+function updateEditorConflict() {
+  for (const node of document.querySelectorAll("[data-editor-conflict]")) node.replaceChildren(...(model.versionConflict ? [note("已保存设置已变化，当前草稿仍保留。请取消后重新打开，或核对后再保存。", "warning")] : []));
+}
+function compactEditorContent(editor, content) {
+  const root = content[0];
+  if (!root) return content;
+  root.querySelector(".card-head")?.remove();
+  root.querySelector(".editor-item-head")?.remove();
+  const advancedIDs = editor.kind === "inbounds" ? ["inbound-tun", "inbound-network", "inbound-ipv6-network", "inbound-auto-route6", "inbound-stack"]
+    : editor.kind === "rule" ? [`rule-protocol-${editor.index}`, `rule-ports-${editor.index}`]
+    : ["dns-port", "dns-ttl", "dns-read-timeout", "dns-write-timeout", "dns-packet-size", "dns-history-limit", "dns-history-retention", "dns-cache-limit"];
+  const advancedGrid = h("div", { class: "form-grid" });
+  for (const id of advancedIDs) {
+    const field = root.querySelector(`#${id}`)?.closest(".field");
+    if (field) advancedGrid.append(field);
+  }
+  const advanced = h("details", { class: "disclosure compact-advanced", "data-editor-advanced": editor.kind, open: Boolean(editor.advancedOpen), ontoggle: event => { editor.advancedOpen = event.target.open; } }, h("summary", {}, editor.kind === "rule" ? "高级匹配条件" : "高级设置"), advancedGrid);
+  if (editor.kind === "rule") {
+    const lifetime = root.querySelector("details");
+    if (lifetime) advanced.append(lifetime);
+  }
+  if (editor.kind === "dns") {
+    for (const details of root.querySelectorAll("details")) details.remove();
+    for (const metadata of root.querySelectorAll(".form-section")) if (metadata.querySelector("dl") && !metadata.querySelector("input,select,button")) metadata.remove();
+    if (content[1]) advanced.append(content[1]);
+    content = [root];
+  }
+  root.append(advanced);
+  return content;
+}
+function outboundTestKey(outbound) { return outbound?.id || outbound?.name || ""; }
+function outboundTestView(index, draftEditor = null) {
+  const outbound = model.config?.config?.outbounds?.[index];
+  const key = draftEditor ? draftEditor.testKey : outboundTestKey(outbound);
+  return model.outboundTests[key] ||= { target: "example.com:443", tls: true, running: false, stages: [], result: null, error: "" };
+}
+const testStageLabels = { queued: "等待主机", connect: "连接代理端点", proxy_handshake: "验证代理协议", target_tls: "验证目标 TLS", complete: "测试完成" };
+function protocolResultLabel(result) {
+  return { healthy: "成功", failed: "失败", testing: "测试中", unsupported: "不支持", unknown: "未验证" }[result?.status] || "未验证";
+}
+function renderOutboundTestResult(result, view = {}) {
+  const stage = result?.progress?.stage || result?.stage || (view.running ? "queued" : "complete");
+  const protocols = result?.protocols || {};
+  const optionsChanged = Boolean(result?.target && typeof view.target === "string" && (result.target !== view.target || typeof result.tls === "boolean" && typeof view.tls === "boolean" && result.tls !== view.tls));
+  const expired = result?.stale || result?.expires_at && Date.parse(result.expires_at) <= Date.now();
+  return h("div", {},
+    h("div", { class: "test-progress", "data-outbound-test-progress": "", role: "status", "aria-live": "polite" },
+      view.running && h("span", { class: "spinner", "aria-hidden": true }),
+      testStageLabels[stage] || (view.running ? "等待主机" : "测试结果"),
+      result?.progress?.total > 0 && h("small", {}, result.progress.completed + "/" + result.progress.total)),
+    view.stages?.length > 0 && h("ol", { class: "test-stage-history" }, view.stages.map(value => h("li", {}, testStageLabels[value] || value))),
+    (optionsChanged || view.configurationChanged) && note("配置或测试选项已更改，下方是之前的测试结果，请重新测试当前内容。", "warning"),
+    expired && note("此测试结果已过期，请重新测试。", "warning"),
+    result && h("div", { class: "test-result-grid" },
+      detailPairs([
+        ["代理端点", result.host?.address || "—"],
+        ["测试目标", result.target || "尚未返回"],
+        ["连接延迟", Number.isFinite(result.connect_latency_ms) ? result.connect_latency_ms + " ms" : "尚未取得"],
+        ["总耗时", result.duration_ms > 0 ? result.duration_ms + " ms" : "—"],
+        ["测试时间", time(result.checked_at)],
+        ["有效期", result.expires_at ? time(result.expires_at) : "尚未取得"],
+      ]),
+      h("div", { class: "protocol-results" }, ["tcp", "tls", "udp"].map(protocol => h("div", { class: "protocol-result", "data-outbound-protocol": protocol },
+        h("strong", {}, { tcp: "TCP 代理", tls: "目标 TLS", udp: "UDP" }[protocol]),
+        h("span", { class: "tag " + (protocols[protocol]?.status === "healthy" ? "success" : protocols[protocol]?.status === "failed" ? "error" : "muted") }, protocolResultLabel(protocols[protocol])),
+        h("small", {}, protocols[protocol]?.message || "尚无验证结果"),
+      ))),
+    ),
+    result?.message && h("p", { class: "muted test-result-message" }, result.message),
+    view.error && note(view.error, "error"),
   );
 }
-function outboundTestFingerprint() {
-  const outbound = model.draft?.outbounds?.[model.editor?.index] || {};
-  const credential = model.credentialActions[outbound.name] || { action: "preserve", original_name: model.outboundOrigins[model.editor?.index] };
-  return JSON.stringify({ url: outbound.url, enabled: outbound.enabled !== false, fallback: outbound["udp-fallback"] || "", credential: { action: credential.action, username: credential.username || "", password: credential.password || "", original_name: credential.original_name || "" } });
-}
-function renderOutboundTest() {
-  const editor = model.editor;
-  const result = editor.test;
-  return card("保存前测试", "目标由你明确指定；只验证代理连接与可选 TLS，不发送应用请求，不启用接管。",
-    h("div", { class: "form-grid" }, field("测试目标（主机:端口）", editor.testTarget, value => { editor.testTarget = value; editor.test = null; }, { id: "outbound-test-target" }), check("验证目标 TLS", editor.testTLS, value => { editor.testTLS = value; editor.test = null; }, "HTTPS 目标可开启；其他服务请按协议选择。", "outbound-test-tls")),
-    button("测试连接", runEditorOutboundTest, "primary", !canManage()),
-    h("div", { id: "outbound-test-result", role: "status" }, result && healthResult(result)),
+function healthResult(result) { return renderOutboundTestResult(result); }
+function renderDraftTestPanel(editor) {
+  const view = outboundTestView(editor.index, editor);
+  return h("section", { class: "outbound-test-panel", "data-outbound-draft-panel": "" },
+    h("h3", {}, "草稿连接测试"), h("small", { class: "muted" }, "测试当前填写内容，不保存设置或启用接管。"),
+    h("div", { "data-outbound-draft-live": "" }, renderOutboundTestResult(view.result, view)),
+    h("details", { class: "disclosure compact-advanced", "data-outbound-draft-options": "" }, h("summary", {}, "测试目标与选项"),
+      h("div", { class: "form-grid" },
+        field("测试目标（主机:端口）", view.target, value => { view.target = value; syncOutboundEditorAccess(); }, { id: "outbound-test-target", disabled: !canManage() || view.running }),
+        check("验证目标 TLS", view.tls, value => { view.tls = value; syncOutboundEditorAccess(); }, "只发送连接与 TLS 握手，不发送应用请求。", "outbound-test-tls", !canManage() || view.running),
+      ),
+    ),
   );
 }
-function healthResult(result) {
-  return h("div", { class: "form-section" }, badge(result.status === "healthy" ? "succeeded" : result.status === "unhealthy" ? "failed" : result.status), detailPairs([["目标", result.target || "—"], ["阶段", result.stage || "未知"], ["结果", result.message || "传输测试完成，不代表应用业务成功"], ["时间", time(result.checked_at || result.time)], ["有效期", time(result.expires_at)]]));
-}
-async function runEditorOutboundTest() {
+function runDraftOutboundTest() {
   const editor = model.editor;
-  if (!editor || editor.kind !== "outbound") return;
-  const outbound = model.draft.outbounds[editor.index];
-  const fingerprint = outboundTestFingerprint();
-  await action(async () => {
-    try {
-      const operation = await watchOperation(await endpoints.outboundTest({ base_version: model.config.version, draft: clone(outbound), credential_action: model.credentialActions[outbound.name] || { action: "preserve", original_name: model.outboundOrigins[editor.index] }, target: editor.testTarget, tls: editor.testTLS }));
-      if (model.editor === editor) editor.test = { ...(operation.result || operation), fingerprint };
-    } catch (error) {
-      if (model.editor === editor) editor.test = { status: "unhealthy", message: error.message, target: editor.testTarget, fingerprint };
-    }
-    await refreshOutboundHealth();
-  });
+  if (!canManage() || !editor?.page || editor.kind !== "outbound") return;
+  try { prepareOutboundEditor(); } catch (error) { notice(error.message, "error"); return; }
+  editor.testOpen = true;
+  render();
+  runSavedOutboundTest(editor.index, editor);
 }
-async function saveEditor(apply) {
+function renderOutboundTestPanel(index) {
+  const outbound = model.config.config.outbounds[index];
+  const key = outboundTestKey(outbound);
+  const view = outboundTestView(index);
+  const result = view.result || outboundHealthFor(outbound);
+  const panel = h("section", { class: "outbound-test-panel", "data-outbound-test-panel": index },
+    h("div", { class: "outbound-test-heading" }, h("h3", {}, "连接测试"), button("收起", () => { model.outboundTestOpen = null; renderPreserving(); }, "ghost compact", false)),
+    h("div", { "data-outbound-test-live": index }, renderOutboundTestResult(result, view)),
+    testedUDPUnsupported(result) && field("UDP 不支持时", outbound["udp-fallback"] || "reject", value => saveResourceChange(() => { model.draft.outbounds[index]["udp-fallback"] = value; }, false), { id: "outbound-udp-policy-" + index, options: [{ value: "direct", label: "直连回退（不经过代理）" }, { value: "reject", label: "拒绝 UDP" }] }),
+    h("details", { class: "disclosure compact-advanced", "data-outbound-test-options": "", open: Boolean(view.optionsOpen), ontoggle: event => { view.optionsOpen = event.target.open; } },
+      h("summary", {}, "测试目标与选项"),
+      h("div", { class: "form-grid" },
+        field("测试目标（主机:端口）", view.target, value => { view.target = value; updateSavedTestResult(index); }, { id: "outbound-test-target", disabled: !canManage() || view.running }),
+        check("验证目标 TLS", view.tls, value => { view.tls = value; updateSavedTestResult(index); }, "测试会连接指定目标，不发送应用请求。", "outbound-test-tls", !canManage() || view.running),
+      ),
+    ),
+    button(view.running ? "测试中…" : "重新测试", () => runSavedOutboundTest(index), "ghost", !canManage() || view.running || outbound.enabled === false, { "data-outbound-retest": index }),
+  );
+  panel.dataset.outboundIdentity = key;
+  return panel;
+}
+function updateSavedTestResult(index) {
+  const view = outboundTestView(index);
+  const target = document.querySelector(`[data-outbound-test-live="${index}"]`);
+  if (target) target.replaceChildren(renderOutboundTestResult(view.result || outboundHealthFor(model.config?.config?.outbounds?.[index]), view));
+}
+async function runSavedOutboundTest(index, draftEditor = null) {
   if (!canManage()) return;
-  const editor = model.editor;
-  if (editor?.kind === "outbound") {
-    const value = model.draft.outbounds[editor.index];
-    const cached = model.outboundHealth.find(item => (value.id && item.id === value.id) || item.name === value.name);
-    const current = outboundTestFingerprint();
-    const tested = editor.test?.fingerprint === current && currentHealth(editor.test);
-    const unchangedHealthy = current === editor.baseFingerprint && currentHealth(cached);
-    if (!tested && !unchangedHealthy) {
-      dialog("确认保存未验证的出站", "尚未获得当前配置的有效成功测试。你可以返回修正并重试，也可以仅保存配置；不会自动启用接管。", editor.test ? healthResult(editor.test) : note("此出站尚未测试或测试结果已过期。", "warning"), [
-        button("返回测试", closeDialog, "ghost", false),
-        button("仍然保存", () => { closeDialog(); saveConfig(apply); }, "primary", !canManage(), { id: "outbound-save-untested" }),
-      ]);
-      return;
+  const outbound = draftEditor ? model.draft?.outbounds?.[index] : model.config?.config?.outbounds?.[index];
+  if (!outbound || outbound.enabled === false) return;
+  const view = outboundTestView(index, draftEditor);
+  if (view.running) return;
+  const epoch = model.authEpoch;
+  const key = draftEditor ? draftEditor.testKey : outboundTestKey(outbound);
+  if (draftEditor) view.editorRevision = draftEditor.connectionRevision;
+  view.running = true;
+  view.error = "";
+  view.stages = [];
+  view.result = { status: "testing", stage: "queued", target: view.target, tls: view.tls };
+  const publish = operation => {
+    if (!currentAuth(epoch) || model.outboundTests[key] !== view) return false;
+    const result = operation.result && typeof operation.result === "object" ? operation.result : {};
+    view.result = { ...view.result, ...result, stage: result.progress?.stage || result.stage || operation.stage || view.result.stage };
+    const stage = result.progress?.stage || operation.stage;
+    if (testStageLabels[stage] && view.stages.at(-1) !== stage) view.stages.push(stage);
+    renderPreserving();
+    return true;
+  };
+  renderPreserving();
+  try {
+    const identity = draftEditor ? { draft: clone(outbound), credential_action: model.credentialActions[outbound.name] || { action: "preserve", original_name: draftEditor.originalName } } : { outbound_id: outbound.id };
+    let operation = await endpoints.outboundTest({ base_version: model.config.version, ...identity, target: view.target, tls: view.tls });
+    if (!publish(operation)) return;
+    const deadline = Date.now() + 45000;
+    while (["running", "queued"].includes(operation.status) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 400));
+      if (!currentAuth(epoch) || model.outboundTests[key] !== view) return;
+      operation = await endpoints.operation(operation.id);
+      await refreshOutboundHealth();
+      if (!publish(operation)) return;
+    }
+    if (["running", "queued"].includes(operation.status)) throw new ApiError("测试仍在主机执行，请稍后查看结果，勿重复提交。", 0, { uncertain: true });
+    if (["failed", "canceled", "cancelled", "expired"].includes(operation.status)) view.error = explainError(operation.error || "连接测试未完成。");
+  } catch (error) {
+    if (currentAuth(epoch) && !error.details?.session_changed) {
+      if (error.status === 401) failure(error);
+      else view.error = error.message;
+    }
+  } finally {
+    if (currentAuth(epoch) && model.outboundTests[key] === view) {
+      view.running = false;
+      await refreshOutboundHealth();
+      renderPreserving();
     }
   }
-  return saveConfig(apply);
 }
+
+async function saveEditor() {
+  if (!canManage()) return;
+  const editor = model.editor;
+  try { prepareOutboundEditor(); } catch (error) { notice(error.message, "error"); return; }
+  const body = JSON.stringify(configBody());
+  const epoch = model.authEpoch;
+  const validation = await action(() => endpoints.validate(configBody()));
+  if (!validation || !currentAuth(epoch)) return;
+  if (validation.valid === false) { notice(list(validation.issues).map(issue => issue.message || String(issue)).join("；") || validation.message || "配置未通过校验，请检查输入。", "error"); return; }
+  if (body !== JSON.stringify(configBody())) { notice("草稿已变化，请核对后重新保存。", "warning"); return; }
+  if (captureLocked() && validation.restart_required) { notice("这些更改影响接管入口，请先暂停接管，再保存当前草稿。", "warning"); return; }
+  const outbound = editor?.kind === "outbound" && model.draft.outbounds[editor.index];
+  const references = outbound && outbound.name !== editor.originalName ? list(editor.snapshot.draft?.rules).filter(rule => rule.outbound === editor.originalName).length : 0;
+  const issues = list(validation.issues || validation.warnings);
+  if (references || issues.length) {
+    dialog("确认保存变更", "请确认这些修改的影响。保存不会自动发起连接测试。",
+      h("div", {}, references ? note("将同步更新 " + references + " 条规则中的出站名称。") : null, issues.map(issue => note(issue.message || String(issue), issue.severity === "error" ? "error" : "warning"))),
+      [button("返回修改", closeDialog, "ghost", false), button("确认保存", () => {
+        closeDialog();
+        if (!currentAuth(epoch) || body !== JSON.stringify(configBody())) return notice("草稿或会话已变化，请重新保存。", "warning");
+        saveConfig(false, validation);
+      }, "primary", !canManage())]);
+    return;
+  }
+  return saveConfig(false, validation);
+}
+
 async function refreshOutboundHealth() {
   if (!model.authenticated) return;
   const epoch = model.authEpoch;
@@ -4134,8 +4259,7 @@ async function refreshOutboundHealth() {
   catch { if (currentAuth(epoch)) model.outboundHealth = []; }
 }
 function addOutbound() {
-  const index = list(model.draft?.outbounds).length;
-  openEditor("outbound", index, () => { model.draft.outbounds ||= []; model.draft.outbounds.push({ name: "", url: "", "udp-fallback": "" }); model.outboundOrigins.push(undefined); markDirty(); });
+  if (canManage()) navigate("outbounds/new");
 }
 function addRule(type) {
   const values = list(model.draft?.rules);
@@ -4148,12 +4272,12 @@ function confirmResourceChange(title, mutate) {
   if (!canManage()) return;
   dialog(title, "保存后会尝试热应用到新连接，已有连接保留原策略。", null, [button("取消", closeDialog, "ghost", false), button("确认保存", () => { closeDialog(); saveResourceChange(mutate); }, "danger")]);
 }
-async function saveResourceChange(mutate) {
+async function saveResourceChange(mutate, apply = false) {
   if (!canManage()) return;
   const epoch = model.authEpoch;
   const previous = editorSnapshot();
   mutate(); markDirty();
-  const saved = await saveConfig(true);
+  const saved = await saveConfig(apply);
   if (currentAuth(epoch) && !saved) { Object.assign(model, previous); render(); }
 }
 function deleteOutbound(index) {
@@ -4169,21 +4293,20 @@ function outboundDetails(index) {
   dialog(outbound.name, "已保存出站详情；现有凭据不会回显。", h("div", {}, detailPairs([["地址", outboundAddress(outbound.url)], ["启用状态", outbound.enabled === false ? "已禁用" : "已启用"], ["认证", model.config.credential_state?.[outbound.name]?.configured ? "已配置（隐藏）" : "未配置或不可得"], ["UDP 回退", outbound["udp-fallback"] || "默认拒绝不支持的协议"]]), health ? healthResult(health) : note("尚无有效目标测试。")));
 }
 function openOutboundTest(index) {
-  const outbound = model.config.config.outbounds[index];
-  const target = h("input", { id: "outbound-test-target", value: "example.com:443", "aria-label": "测试目标（主机:端口）" });
-  const tls = h("input", { type: "checkbox", checked: true, id: "outbound-test-tls" });
-  const result = h("div", { id: "outbound-test-result", role: "status" });
-  dialog(`测试出站 ${outbound.name}`, "只有点击测试才会连接所列目标；不发送应用请求，不修改网络。", h("div", {}, h("label", { for: "outbound-test-target" }, "测试目标（主机:端口）"), target, h("label", { for: "outbound-test-tls" }, tls, "验证目标 TLS"), result), [button("测试连接", () => action(async () => {
-    try { const operation = await watchOperation(await endpoints.outboundTest({ base_version: model.config.version, outbound_id: outbound.id, target: target.value, tls: tls.checked })); result.replaceChildren(healthResult(operation.result || operation)); await refreshOutboundHealth(); }
-    catch (error) { result.replaceChildren(note(error.message, "error")); }
-  }), "primary")]);
+  const outbound = model.config?.config?.outbounds?.[index];
+  if (!outbound || !canManage() || outbound.enabled === false) return;
+  model.outboundTestOpen = outboundTestKey(outbound);
+  renderPreserving();
+  runSavedOutboundTest(index);
 }
+
 function openDiagnosticForm() { dialog("新建诊断", "目标和出站由你指定；不重放业务请求。", h("div", {}, ...selectCards(renderDiagnosticsEditor(), ["对比直连与代理"]))); }
 function renderDiagnostics() {
   return [card("连通性诊断", "从任务和失败证据判断问题；新诊断由你明确发起。", button("新建诊断", openDiagnosticForm, "primary")), ...renderDiagnosticsEditor().filter(node => node?.getAttribute?.("data-card-title") !== "对比直连与代理")];
 }
 const configurationPages = createConfigurationPages({ model, h, card, note, button, badge, detailPairs, empty, readonlyNote, time, canManage, runtime,
   logout, resetConfiguration: confirmResetConfiguration, settingsDetail: renderSettingsDetail,
+  outboundTestPanel: renderOutboundTestPanel,
   stateLabel: () => stateLabels[runtime()] || runtime(), edit: openEditor, addOutbound, addRule, deleteOutbound, deleteRule, moveRule: moveSavedRule, outboundDetails, testOutbound: openOutboundTest,
   refreshHealth: () => refreshOutboundHealth().then(renderPreserving), preflight: () => action(async () => showResult("接管预检", await endpoints.lifecycle("preflight"))),
   simulateRules: () => dialog("模拟规则匹配", "使用已保存版本，不发起业务连接。", h("div", {}, ...selectCards(renderRulesEditor(), ["模拟一次规则匹配"]))),
@@ -4203,6 +4326,7 @@ const renderers = {
 function render() {
   updateShell();
   main.classList.toggle("settings-page", model.authenticated && model.page === "settings");
+  main.classList.toggle("editor-page", model.authenticated && model.page === "outbounds" && Boolean(model.outboundRoute));
   if (model.authPending) {
     main.replaceChildren(h("div", { class: "loading-state", role: "status" }, h("span", { class: "spinner", "aria-hidden": true }), h("h1", {}, "正在连接 KONE"), h("p", {}, "正在确认管理会话，请稍候。")));
     return;
@@ -4220,6 +4344,7 @@ function render() {
     return;
   }
   beginInlineSettingsEditor();
+  beginOutboundPageEditor();
   main.replaceChildren(
     ...(model.page === "settings" && model.settingsSection ? [button("‹ 设置", () => navigate("settings"), "settings-back", model.busy || model.authBusy || model.settingsLoading, { "aria-label": "返回设置", "data-settings-back": "" })] : []),
     pageHeader(),
@@ -4228,12 +4353,19 @@ function render() {
       { id: "page-notice" },
       model.notice && note(model.notice.message, model.notice.kind),
     ),
-    ...renderers[model.page]().filter(Boolean),
+    ...(model.page === "outbounds" && model.outboundRoute ? renderOutboundsEditor() : renderers[model.page]()).filter(Boolean),
   );
   if (model.editor) renderEditor();
   syncSettingsAccess();
+  syncOutboundEditorAccess();
 }
 function renderPreserving() {
+  if (model.authenticated && !model.authPending && model.editor?.page && outboundEditorElement?.isConnected) {
+    updateShell();
+    document.querySelector("#page-notice")?.replaceChildren(...(model.notice ? [note(model.notice.message, model.notice.kind)] : []));
+    syncOutboundEditorAccess();
+    return;
+  }
   if (model.authenticated && !model.authPending && model.page === "settings" && ["logs", "lan", "geoip", "account", "network", "about"].includes(model.settingsSection) && settingsDetailElement?.isConnected && settingsDetailElement.dataset.settingsDetail === model.settingsSection) {
     updateShell();
     document.querySelector("#page-notice")?.replaceChildren(...(model.notice ? [note(model.notice.message, model.notice.kind)] : []));
@@ -4331,7 +4463,10 @@ document
 document.querySelector("#navigation").addEventListener("click", (event) => {
   if (event.target.closest("a")) menu(false);
 });
-document.querySelector("#detail-dialog").addEventListener("close", () => { pendingSettingsNavigation = null; });
+// Escape is a synchronous cancellation of the currently displayed dialog.
+// A queued `close` event may belong to a previous showing of this same element;
+// it must never erase a newer pending navigation.
+document.querySelector("#detail-dialog").addEventListener("cancel", () => { pendingSettingsNavigation = null; });
 document
   .querySelector("#menu-toggle")
   .addEventListener("click", () =>
@@ -4343,14 +4478,25 @@ document
 document
   .querySelector("#lifecycle-toggle")
   .addEventListener("click", () => lifecycle(running() ? "pause" : "start"));
+window.addEventListener("popstate", event => {
+  // Finishing an editor can leave adjacent entries with the same fragment.
+  // Those traversals have no hashchange; keep the position without changing
+  // the source index needed by a subsequent guarded cross-page traversal.
+  if (!restoringSettingsHistory && location.hash === `#${currentRoute()}` && Number.isInteger(event.state?.koneSettingsIndex)) settingsHistoryIndex = event.state.koneSettingsIndex;
+});
 window.addEventListener("hashchange", async () => {
   const route = resolveRoute(location.hash.slice(1));
   if (!route) return;
   const destinationIndex = Number.isInteger(history.state?.koneSettingsIndex) ? history.state.koneSettingsIndex : settingsHistoryIndex + 1;
   history.replaceState({ ...history.state, koneSettingsIndex: destinationIndex }, "", `${location.pathname}${location.search}#${route.key}`);
-  if (restoringSettingsHistory?.key === route.key && restoringSettingsHistory.index === destinationIndex) { restoringSettingsHistory = null; return; }
-  if (route.key === currentRoute()) return;
-  if (model.authenticated && model.page === "settings" && model.settingsSection && (settingsHaveChanges() || model.busy || model.authBusy || model.settingsLoading)) {
+  if (restoringSettingsHistory?.key === route.key && restoringSettingsHistory.index === destinationIndex) {
+    const confirm = restoringSettingsHistory.confirm;
+    restoringSettingsHistory = null;
+    if (confirm) showPendingSettingsNavigation();
+    return;
+  }
+  if (route.key === currentRoute()) { settingsHistoryIndex = destinationIndex; return; }
+  if (model.authenticated && (model.editor || model.settingsSection) && (settingsHaveChanges() || model.busy || model.authBusy || model.settingsLoading)) {
     requestSettingsNavigation(route.key, destinationIndex);
     return;
   }
@@ -4361,10 +4507,11 @@ window.addEventListener("hashchange", async () => {
   closeDialog();
   model.page = route.page;
   model.settingsSection = route.section;
+  model.outboundRoute = route.outboundRoute || "";
   model.notice = model.navigationNotice?.page === route.key ? model.navigationNotice : null;
   model.navigationNotice = null;
   menu(false);
-  if (model.online && route.page === "settings" && ["logs", "lan", "geoip"].includes(route.section)) {
+  if (model.online && (route.outboundRoute || route.page === "settings" && ["logs", "lan", "geoip"].includes(route.section))) {
     try { await loadConfig(false); }
     catch (error) { failure(error); }
   }
@@ -4428,6 +4575,7 @@ try {
     const route = resolveRoute(location.hash.slice(1)) || { page: "home", section: "", key: "home" };
     model.page = route.page;
     model.settingsSection = route.section;
+    model.outboundRoute = route.outboundRoute || "";
     const canonical = location.hash.startsWith("#settings") ? `${location.pathname}${location.search}#${route.key}` : undefined;
     if (canonical) history.replaceState({ ...history.state, koneSettingsIndex: settingsHistoryIndex }, "", canonical);
     else history.replaceState({ ...history.state, koneSettingsIndex: settingsHistoryIndex }, "");

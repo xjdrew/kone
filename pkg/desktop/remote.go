@@ -38,6 +38,7 @@ type RemoteEngine struct {
 	geoIP                            *geoip.Database
 	requests                         chan struct{}
 	probeSequence                    atomic.Uint64
+	probeObservers                   map[string]*remoteProbeProgress
 	logs, logSink                    *logstore.Store
 	logCursor                        uint64
 	logStatus                        logstore.RemoteStatus
@@ -473,15 +474,39 @@ func (e *RemoteEngine) ProbeDiagnosticVersion(ctx context.Context, outbound, tar
 		return reply, errors.New("network helper is not connected")
 	}
 	id := strconv.FormatUint(e.probeSequence.Add(1), 10)
+	observer := &remoteProbeProgress{ctx: ctx}
+	observer.active.Store(true)
+	e.mu.Lock()
+	if e.probeObservers == nil {
+		e.probeObservers = map[string]*remoteProbeProgress{}
+	}
+	e.probeObservers[id] = observer
+	e.mu.Unlock()
+	defer func() {
+		observer.active.Store(false)
+		// A callback may already be delivering a value into the caller's
+		// progress state. Wait for it before returning the final RPC result.
+		observer.delivery.Lock()
+		defer observer.delivery.Unlock()
+		e.mu.Lock()
+		delete(e.probeObservers, id)
+		e.mu.Unlock()
+	}()
 	budget := 5 * time.Second
 	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < budget {
 		budget = time.Until(deadline)
 	}
-	call := client.Go("Network.Probe", ProbeRequest{ID: id, Outbound: outbound, Target: target, TLS: withTLS, TimeoutMS: budget.Milliseconds(), ExpectedVersion: expectedVersion, Deadline: time.Now().Add(budget)}, &reply, make(chan *rpc.Call, 1))
+	call := client.Go("Network.Probe", ProbeRequest{ID: id, Outbound: outbound, Target: target, TLS: withTLS, TimeoutMS: budget.Milliseconds(), ExpectedVersion: expectedVersion, Deadline: time.Now().Add(budget), ReportProgress: true}, &reply, make(chan *rpc.Call, 1))
 	select {
 	case result := <-call.Done:
 		if err := ctx.Err(); err != nil {
 			return kone.DiagnosticResult{}, err
+		}
+		// Gob flattens pointers and can omit a measured zero millisecond
+		// value. Preserve that valid measurement separately from "not tested".
+		if reply.ConnectLatencyMeasured && reply.ConnectLatencyMS == nil {
+			latency := int64(0)
+			reply.ConnectLatencyMS = &latency
 		}
 		return reply, result.Error
 	case <-ctx.Done():

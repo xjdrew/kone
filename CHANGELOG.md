@@ -2,6 +2,7 @@
 
 ## Features
 
+- Configure proxy protocols, addresses and authentication in compact forms and follow live connection checks with measured latency.
 - Include system, gVisor and mixed stacks in every build, selected at runtime with system as the default.
 - Record management startup, capture lifecycle and network helper progress in runtime logs.
 - Change the management password and reset all settings while capture is paused from Settings.
@@ -33,6 +34,7 @@
 
 ## Bugfixes
 
+- Preserve editor drafts and return navigation during browser history changes and configuration refreshes.
 - Keep Windows packaging from changing tracked frontend files solely because of line endings.
 - Keep gateway capture stable when using the gVisor stack.
 - Hide management navigation and controls until login succeeds, including during initial loading and after logout.
@@ -54,6 +56,7 @@
 
 ## Changes
 
+- Keep editors focused on save and cancel, validate automatically, and reveal advanced settings and tests only when needed.
 - Derive versions from cumulative feature and bugfix changes, with master prereleases and tag-triggered stable releases.
 - Publish Windows ZIP, macOS PKG and Linux DEB for amd64/arm64; keep ARMv7 gateway builds as an explicit option.
 - Start capture without a technical preflight confirmation screen; show execution details in runtime logs.

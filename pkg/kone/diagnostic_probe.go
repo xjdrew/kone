@@ -13,20 +13,25 @@ import (
 )
 
 type DiagnosticResult struct {
-	Target        string    `json:"target"`
-	Outbound      string    `json:"outbound"`
-	Protocol      string    `json:"protocol"`
-	Stage         string    `json:"stage"`
-	Status        string    `json:"status"`
-	Message       string    `json:"message,omitempty"`
-	RemoteAddress string    `json:"remote_address,omitempty"`
-	PeerKind      string    `json:"peer_kind,omitempty"`
-	ConfigVersion uint64    `json:"config_version"`
-	DNSPath       string    `json:"dns_path,omitempty"`
-	DurationMS    int64     `json:"duration_ms"`
-	Time          time.Time `json:"time"`
-	Expires       time.Time `json:"expires"`
-	Scope         string    `json:"scope"`
+	Target                 string              `json:"target"`
+	Outbound               string              `json:"outbound"`
+	Protocol               string              `json:"protocol"`
+	Stage                  string              `json:"stage"`
+	Status                 string              `json:"status"`
+	Message                string              `json:"message,omitempty"`
+	RemoteAddress          string              `json:"remote_address,omitempty"`
+	PeerKind               string              `json:"peer_kind,omitempty"`
+	ConfigVersion          uint64              `json:"config_version"`
+	DNSPath                string              `json:"dns_path,omitempty"`
+	DurationMS             int64               `json:"duration_ms"`
+	Time                   time.Time           `json:"time"`
+	Expires                time.Time           `json:"expires"`
+	Scope                  string              `json:"scope"`
+	ConnectLatencyMS       *int64              `json:"connect_latency_ms,omitempty"`
+	ConnectLatencyMeasured bool                `json:"-"`
+	Host                   DiagnosticHost      `json:"host"`
+	Protocols              DiagnosticProtocols `json:"protocols"`
+	Progress               DiagnosticProgress  `json:"progress"`
 }
 
 func ValidateDiagnosticTarget(target string) error {
@@ -96,7 +101,17 @@ func (one *One) ProbeDiagnostic(parent context.Context, outbound, target string,
 func (one *One) ProbeDiagnosticVersion(parent context.Context, outbound, target string, withTLS bool, expectedVersion uint64) (result DiagnosticResult, err error) {
 	start := time.Now()
 	result = DiagnosticResult{Target: target, Outbound: outbound, Protocol: "tcp", Stage: "configuration", Status: "failed", Time: start, Expires: start.Add(5 * time.Minute), Scope: "diagnostic; not application traffic"}
-	defer func() { result.DurationMS = time.Since(start).Milliseconds() }()
+	result.Host = DiagnosticHost{Status: "unknown", Message: "Endpoint connection was not tested"}
+	result.Protocols = DiagnosticProtocolEvidence("")
+	result.Progress = DiagnosticProgress{Stage: "configuration", Total: 2}
+	if withTLS {
+		result.Progress.Total++
+	}
+	defer func() {
+		result.DurationMS = time.Since(start).Milliseconds()
+		result.Progress.Stage = "complete"
+		reportDiagnosticProgress(parent, result)
+	}()
 	if err := ValidateDiagnosticTarget(target); err != nil {
 		result.Message = err.Error()
 		return result, nil
@@ -126,6 +141,16 @@ func (one *One) ProbeDiagnosticVersion(parent context.Context, outbound, target 
 	}
 	info := diagnosticTCP(snapshot, outbound)
 	result.Stage, result.PeerKind = info.Stage, info.PeerKind
+	result.Host.Address = target
+	for _, item := range snapshot.cfg.Outbounds {
+		if item.Name == outbound {
+			result.Protocols = DiagnosticProtocolEvidence(item.URL)
+			if endpoint, err := url.Parse(item.URL); err == nil {
+				result.Host.Address = endpoint.Host
+			}
+			break
+		}
+	}
 	host, _, _ := net.SplitHostPort(target)
 	if info.Stage == "policy" || info.Stage == "configuration" {
 		result.DNSPath = "not_attempted"
@@ -145,6 +170,24 @@ func (one *One) ProbeDiagnosticVersion(parent context.Context, outbound, target 
 		stop := context.AfterFunc(runContext, cancel)
 		defer stop()
 	}
+	result.Progress.Stage = "connect"
+	result.Host.Status, result.Host.Message = "testing", "Connecting to the TCP endpoint"
+	result.Protocols.TCP = DiagnosticCheck{Status: "testing", Message: "Testing the selected transport and proxy protocol"}
+	reportDiagnosticProgress(parent, result)
+	ctx = context.WithValue(ctx, diagnosticTransportKey{}, diagnosticTransportObserver(func(address string, elapsed time.Duration, dialErr error) {
+		result.Host.Address = address
+		result.Progress.Completed = 1
+		if dialErr != nil {
+			result.Host.Status, result.Host.Message = "failed", diagnosticMessage(dialErr, snapshot.cfg)
+			return
+		}
+		latency := elapsed.Milliseconds()
+		result.ConnectLatencyMS = &latency
+		result.ConnectLatencyMeasured = true
+		result.Host.Status, result.Host.Message = "healthy", "TCP endpoint connected; elapsed time includes endpoint name resolution"
+		result.Progress.Stage = "proxy_handshake"
+		reportDiagnosticProgress(parent, result)
+	}))
 	conn, dialErr := one.dialDiagnosticSnapshot(ctx, snapshot, outbound, target)
 	if dialErr != nil {
 		result.Stage = DiagnosticStage(dialErr)
@@ -152,27 +195,50 @@ func (one *One) ProbeDiagnosticVersion(parent context.Context, outbound, target 
 			result.Stage = info.Stage
 		}
 		result.Message = diagnosticMessage(dialErr, snapshot.cfg)
+		result.Protocols.TCP = DiagnosticCheck{Status: "failed", Tested: true, Message: result.Message}
+		if result.Host.Status == "testing" {
+			result.Host.Status, result.Host.Message = "unknown", "No endpoint connection evidence was obtained"
+		}
+		if result.Stage == "configuration" || result.Stage == "policy" || result.Stage == "virtual_destination" {
+			result.Protocols.TCP = DiagnosticCheck{Status: "unknown", Message: "The requested TCP probe was rejected before connecting"}
+		}
 		if errors.Is(dialErr, context.Canceled) {
 			result.Status = "canceled"
+			result.Protocols.TCP = DiagnosticCheck{Status: "unknown", Message: "The connection test was canceled"}
+			if result.Host.Status == "failed" {
+				result.Host.Status, result.Host.Message = "unknown", "The connection test was canceled"
+			}
 		} else if result.Stage == "virtual_destination" {
 			result.Status = "unsupported"
 		}
 		return result, nil
 	}
 	defer conn.Close()
+	result.Progress.Completed = 2
+	result.Protocols.TCP = DiagnosticCheck{Status: "unknown", Tested: true, Message: "This encrypted stream provides no target connection acknowledgement"}
+	if info.TargetAcknowledged {
+		result.Protocols.TCP = DiagnosticCheck{Status: "healthy", Tested: true, Message: "The selected protocol acknowledged the target TCP connection"}
+	}
 	if remote := conn.RemoteAddr(); remote != nil {
 		result.RemoteAddress = remote.String()
 	}
 	if withTLS {
 		result.Stage = "target_tls"
+		result.Progress.Stage = "target_tls"
+		result.Protocols.TLS = DiagnosticCheck{Status: "testing", Message: "Verifying target TLS"}
+		reportDiagnosticProgress(parent, result)
 		client := tls.Client(conn, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
 		if tlsErr := client.HandshakeContext(ctx); tlsErr != nil {
 			result.Message = diagnosticMessage(tlsErr, snapshot.cfg)
+			result.Protocols.TLS = DiagnosticCheck{Status: "failed", Tested: true, Message: result.Message}
 			if errors.Is(tlsErr, context.Canceled) {
 				result.Status = "canceled"
 			}
 			return result, nil
 		}
+		result.Progress.Completed++
+		result.Protocols.TCP = DiagnosticCheck{Status: "healthy", Tested: true, Message: "Verified target TLS proves the TCP path reached the target"}
+		result.Protocols.TLS = DiagnosticCheck{Status: "healthy", Tested: true, Message: "Target TLS certificate and handshake verified"}
 		result.Status = "reachable"
 		result.Message = "TCP and verified target TLS succeeded; no application request was sent"
 		return result, nil

@@ -69,6 +69,7 @@ function fixture() {
   ];
   const config = {
     version: 1,
+    credential_state: { "Proxy A": { configured: true } },
     inbound: { id: "tun-main", name: "家庭网关", enabled: true },
     config: {
       general: {
@@ -130,6 +131,32 @@ function fixture() {
       { id: "1", time: start, level: "INFO", source: "management", message: "Management service ready", attrs: { state: "ready" } },
       { id: "2", time: start, level: "ERROR", source: "helper", message: "TUN startup failed", attrs: { stage: "start", endpoint: "http://REDACTED@proxy.invalid" } },
     ],
+  };
+}
+
+function outboundTestSnapshot(data) {
+  const { outbound, body, version } = data.outboundOperation;
+  const stage = data.testStage || "complete";
+  const completed = stage === "complete";
+  const connected = stage !== "connect" && !(completed && data.healthFailure);
+  const tcpReady = ["target_tls", "complete"].includes(stage) && !data.healthFailure;
+  const protocol = outbound.url.split(":", 1)[0];
+  const tcpUnverified = protocol === "ss" && body.tls === false;
+  const udpStatus = data.udpStatus || (["http", "https"].includes(protocol) ? "unsupported" : "unknown");
+  return {
+    id: outbound.id || "draft", name: outbound.name || "draft", status: completed ? data.healthFailure ? "unhealthy" : tcpUnverified ? "unknown" : "healthy" : "testing",
+    stage: completed && data.healthFailure ? "connect" : stage, message: data.healthFailure && completed ? "Proxy connection refused" : completed ? "TLS verified for this target" : `Testing ${stage}`,
+    target: body.target || "example.com:443", tls: body.tls !== false, config_version: version,
+    configuration_id: "fixture-health", operation_id: "outbound-test-1", scope: "explicit TCP/TLS target; UDP response not tested",
+    duration_ms: completed ? 240 : 0, ...(connected ? { connect_latency_ms: data.connectLatency ?? 12 } : {}),
+    host: { address: new URL(outbound.url).host, status: connected ? "healthy" : completed ? "failed" : "testing", message: connected ? "Proxy endpoint TCP connected" : "Connecting to proxy endpoint" },
+    protocols: {
+      tcp: { status: tcpUnverified ? "unknown" : tcpReady ? "healthy" : completed ? "failed" : "testing", tested: completed || tcpReady, message: tcpUnverified ? "Shadowsocks transport has no target acknowledgement without TLS" : tcpReady ? "Target TCP tunnel established" : "Waiting for TCP tunnel" },
+      tls: { status: body.tls === false ? "unknown" : completed && !data.healthFailure ? "healthy" : stage === "target_tls" ? "testing" : "unknown", tested: completed && !data.healthFailure && body.tls !== false, message: body.tls === false ? "TLS was not selected" : "Target TLS verification" },
+      udp: { status: udpStatus, tested: false, evidence: udpStatus === "unsupported" ? "protocol" : "none", message: udpStatus === "unsupported" ? "This proxy implementation does not forward UDP" : "No UDP response was tested" },
+    },
+    progress: { stage: completed && data.healthFailure ? "connect" : stage, completed: completed ? data.healthFailure ? 0 : 3 : stage === "connect" ? 0 : stage === "proxy_handshake" ? 1 : 2, total: 3 },
+    ...(completed ? { checked_at: new Date().toISOString(), expires_at: new Date(Date.now() + 60000).toISOString() } : {}),
   };
 }
 
@@ -253,15 +280,24 @@ async function mount(page, options = {}) {
       blockers: [...(data.disabledTUN ? [{ id: "inbound", code: "inbound_disabled", status: "failed", severity: "error", message: "请先在入站启用 TUN 入口并保存。", page: "inbounds", field: "enabled", action: "edit_inbound" }] : []), ...(data.directOnly && !data.config.direct_only_confirmed ? [{ id: "direct_only_confirmation", code: "direct_only_confirmation", status: "error", severity: "error", message: "请明确确认仅直连接管。", page: "outbounds", field: "direct_only_confirmed", action: "confirm_direct" }] : [])],
       warnings: [],
     });
-    if (path === "/outbounds/health") return respond({ statuses: data.health || [], time: end });
+    if (path === "/outbounds/health") {
+      if (data.outboundOperation && !data.outboundOperation.body.draft) data.health = [outboundTestSnapshot(data)];
+      return respond({ statuses: data.health || [], time: end });
+    }
     if (path === "/outbounds/test") {
       const outbound = body.draft || data.config.config.outbounds.find((outbound) => outbound.id === body.outbound_id);
-      const result = { id: outbound?.id || "draft", name: outbound?.name || "draft", status: data.healthFailure ? "unhealthy" : "healthy", stage: data.healthFailure ? "proxy_connect" : "tls", message: data.healthFailure ? "Proxy connection refused" : "TLS verified for this target", target: body.target, tls: body.tls, checked_at: new Date().toISOString(), expires_at: new Date(Date.now()+60000).toISOString(), configuration_id: "fixture-health", config_version: data.config.version, scope: "explicit target only" };
-      data.health = [result];
-      return respond({ id: "outbound-test-1", status: "succeeded", result }, 202);
+      data.outboundOperation = { outbound: structuredClone(outbound), body, version: data.config.version };
+      if (data.asyncHealth) data.testStage = "connect";
+      const result = outboundTestSnapshot(data);
+      if (!body.draft) data.health = [result];
+      return respond({ id: "outbound-test-1", status: data.asyncHealth ? "running" : "succeeded", stage: result.stage, result }, 202);
     }
-    if (path === "/config/validate")
-      return respond({ valid: true, restart_required: false, issues: [] });
+    if (path === "/operations/outbound-test-1") {
+      const result = outboundTestSnapshot(data);
+      if (!data.outboundOperation.body.draft) data.health = [result];
+      return respond({ id: "outbound-test-1", status: (data.testStage || "complete") === "complete" ? "succeeded" : "running", stage: result.stage, result });
+    }
+    if (path === "/config/validate") return respond(data.validationFailure ? { valid: false, restart_required: false, issues: [{ code: "outbound", severity: "error", message: data.validationFailure }] } : { valid: true, restart_required: false, issues: [] });
     if (path === "/config/import/validate")
       return respond({
         valid: true,
@@ -291,10 +327,35 @@ async function mount(page, options = {}) {
     if (path === "/config" && method === "PUT") {
       if (data.conflict || body.base_version !== data.config.version)
         return respond({ error: { message: "Version conflict" } }, 409);
+      const config = structuredClone(body.config);
+      const credentialState = {};
+      data.outboundSequence ||= Math.max(0, ...data.config.config.outbounds.map((outbound) => Number(outbound.id?.match(/^outbound-id-(\d+)$/)?.[1]) || 0)) + 1;
+      for (const outbound of config.outbounds || []) {
+        outbound.id ||= `outbound-id-${data.outboundSequence++}`;
+        const action = body.credential_actions?.[outbound.name] || { action: "preserve", original_name: outbound.name };
+        const original = action.original_name || outbound.name;
+        const configured = action.action === "replace" || action.action !== "clear" && Boolean(data.config.credential_state?.[original]?.configured);
+        credentialState[outbound.name] = { configured };
+        const schemeEnd = outbound.url.indexOf("://") + 3;
+        const rest = outbound.url.slice(schemeEnd);
+        const authority = rest.split(/[/?#]/, 1)[0];
+        const address = authority.slice(authority.lastIndexOf("@") + 1);
+        outbound.url = `${outbound.url.slice(0, schemeEnd)}${configured ? "REDACTED:REDACTED@" : ""}${address}${rest.slice(authority.length)}`;
+      }
+      if (data.outboundOperation) {
+        const old = data.config.config.outbounds.find((outbound) => outbound.id === data.outboundOperation.outbound.id);
+        const next = config.outbounds.find((outbound) => outbound.id === data.outboundOperation.outbound.id);
+        const authentication = next && body.credential_actions?.[next.name];
+        if (!old || !next || old.url !== next.url || old.enabled !== next.enabled || old["udp-fallback"] !== next["udp-fallback"] || authentication?.action === "replace" || JSON.stringify(data.config.config.core) !== JSON.stringify(config.core) || JSON.stringify(data.config.config.dns) !== JSON.stringify(config.dns)) {
+          data.outboundOperation = null;
+          data.health = [];
+        } else data.outboundOperation.outbound.name = next.name;
+      }
       data.config = {
         version: data.config.version + 1,
-        config: body.config,
+        config,
         inbound: body.inbound,
+        credential_state: credentialState,
         direct_only_confirmed: body.direct_only_confirmed ?? data.config.direct_only_confirmed,
       };
       return respond({ ...data.config, applied: data.state === "running" && !data.applyError, apply_error: data.applyError || "" });
@@ -626,8 +687,17 @@ async function navigateSettings(page, section) {
 }
 
 async function saveOutbound(page) {
-  await page.getByRole("button", { name: "保存", exact: true }).click();
-  await page.locator("#outbound-save-untested").click();
+  await page.locator("[data-editor-save]").click();
+}
+
+async function dismissOutboundTestSuggestion(page) {
+  await expect(page.locator("[data-outbound-test-suggestion]")).toBeVisible();
+  await page.getByRole("button", { name: "稍后", exact: true }).click();
+}
+
+async function confirmReferencedOutboundRename(page) {
+  await expect(page.getByRole("heading", { name: "确认保存变更", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "确认保存", exact: true }).click();
 }
 
 for (const firstVisit of ["password", "setup"]) {
@@ -1316,11 +1386,10 @@ test("direct-only confirmation preserves saved settings while an editor contains
   expect(data.config.config.outbounds[0].name).toBe("Proxy A");
 });
 
-test("details dialogs without action buttons do not display placeholder values", async ({ page }) => {
-  await mount(page);
-  await navigate(page, "outbounds");
-  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "详情", exact: true }).click();
-  await expect(page.locator("#detail-dialog").getByRole("heading", { name: "Proxy A", exact: true })).toBeVisible();
+test("dialogs without footer actions do not display placeholder values", async ({ page }) => {
+  await mount(page, { bootstrapPage: "diagnostics" });
+  await page.getByRole("button", { name: "新建诊断", exact: true }).click();
+  await expect(page.locator("#detail-dialog").getByRole("heading", { name: "新建诊断", exact: true })).toBeVisible();
   await expectNoDialogPlaceholders(page);
 });
 
@@ -1337,8 +1406,8 @@ test("@compat configuration pages start as saved-state displays and cancel disca
   await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
   await page.screenshot({ path: testInfo.outputPath("outbound-editor.png"), animations: "disabled" });
   await page.locator("#outbound-name-0").fill("discard this name");
-  await page.getByRole("button", { name: "取消编辑", exact: true }).click();
-  await page.getByRole("button", { name: "放弃修改并关闭", exact: true }).click();
+  await page.locator("[data-editor-cancel]").click();
+  await expect(page.locator("[data-outbound-editor]")).toHaveCount(0);
   await expect(page.locator("#editor-dialog")).not.toBeVisible();
   await expect(page.locator('[data-outbound-row="0"]')).toContainText("Proxy A");
   expect(data.writes).toEqual([]);
@@ -1360,17 +1429,290 @@ test("@compat running capture locks TUN while rule edits save and hot-apply", as
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/") || write.path === "/config/apply")).toBe(false);
 });
 
+for (const [section, kind, field] of [["inbounds", "inbounds", "#inbound-tun"], ["rules", "rule", "#rule-protocol-0"], ["dns", "dns", "#dns-port"]]) {
+  test(`@compat ${section} editors keep advanced controls folded and cancel without saving`, async ({ page }) => {
+    const data = await mount(page);
+    await navigate(page, section);
+    if (kind === "inbounds") await page.getByRole("button", { name: "编辑入站", exact: true }).click();
+    else if (kind === "dns") await page.getByRole("button", { name: "编辑 DNS 设置", exact: true }).click();
+    else await page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+    const advanced = page.locator(`[data-editor-advanced="${kind}"]`);
+    await expect(advanced).toHaveJSProperty("open", false);
+    await expect(page.locator(field)).toBeHidden();
+    await expect(page.locator("[data-editor-save]")).toHaveText("保存");
+    await expect(page.locator("[data-editor-cancel]")).toHaveText("取消");
+    await expect(page.getByRole("button", { name: "校验与预览", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "保存并应用", exact: true })).toHaveCount(0);
+    await advanced.locator(":scope > summary").click();
+    await expect(page.locator(field)).toBeVisible();
+    if (kind === "inbounds") await page.locator(field).fill("kone-fixture-device");
+    else if (kind === "rule") await page.locator(field).selectOption("udp");
+    else await page.locator(field).fill("5353");
+    await page.locator("[data-editor-cancel]").click();
+    await expect(page.locator("#editor-dialog")).not.toBeVisible();
+    expect(data.writes).toEqual([]);
+  });
+}
+
+for (const [protocol, port] of [["http", "80"], ["https", "443"], ["socks5", "1080"], ["ss", "8388"]]) {
+  test(`@compat ${protocol} proxies save structured endpoint fields without starting a connection`, async ({ page }, testInfo) => {
+    const data = await mount(page);
+    await navigate(page, "outbounds");
+    await page.getByRole("button", { name: "＋ 添加代理", exact: true }).click();
+    await expect(page.locator('[data-outbound-editor="1"]')).toBeVisible();
+    await expect(page.locator("#editor-dialog")).not.toBeVisible();
+    await page.locator("#outbound-protocol-1").selectOption(protocol);
+    await page.locator("#outbound-host-1").fill("proxy.example");
+    await page.locator("#outbound-port-1").fill(port);
+    if (protocol === "ss") {
+      await page.locator("#outbound-method-1").selectOption("aes-128-gcm");
+      await page.locator("#outbound-password-1").fill("fixture-ss-secret");
+    }
+    await expect(page.locator("#outbound-name-1")).not.toHaveValue("");
+    await expect(page.locator("#outbound-url-1")).toHaveCount(0);
+    await expect(page.locator("#outbound-udp-1")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "校验与预览", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "保存并应用", exact: true })).toHaveCount(0);
+    if (protocol === "http") await page.screenshot({ path: testInfo.outputPath("outbound-structured-editor.png"), animations: "disabled" });
+    const name = await page.locator("#outbound-name-1").inputValue();
+    await saveOutbound(page);
+    await expect(page.locator("[data-outbound-test-suggestion]")).toBeVisible();
+    if (protocol === "http") await page.screenshot({ path: testInfo.outputPath("outbound-saved-test-suggestion.png"), animations: "disabled" });
+    expect(data.requests.some((request) => request.path === "/outbounds/test")).toBe(false);
+    const saved = data.writes.find((write) => write.path === "/config");
+    expect(saved.body.config.outbounds.at(-1)).toMatchObject({ name, url: `${protocol}://proxy.example:${port}`, "udp-fallback": "direct" });
+    expect(saved.body.credential_actions[name]).toMatchObject(protocol === "ss" ? { action: "replace", username: "aes-128-gcm", password: "fixture-ss-secret" } : { action: "clear" });
+    expect(data.writes.findIndex((write) => write.path === "/config/validate")).toBeLessThan(data.writes.indexOf(saved));
+    await dismissOutboundTestSuggestion(page);
+    await expect(page.locator('[data-outbound-row="1"]')).toContainText(name);
+    await expect(page.locator('[data-outbound-row="1"]')).toContainText(/未测试|待测试/);
+    expect(data.requests.some((request) => request.path === "/outbounds/test")).toBe(false);
+  });
+}
+
+test("@compat default outbound names remain unique and a custom name survives changing protocol", async ({ page }) => {
+  const initial = fixture();
+  initial.config.config.outbounds.push({ id: "outbound-id-2", name: "HTTP 代理", url: "http://127.0.0.1:8081" }, { id: "outbound-id-3", name: "HTTP 代理 2", url: "http://127.0.0.1:8082" });
+  const data = await mount(page, { config: initial.config });
+  await navigate(page, "outbounds");
+  await page.getByRole("button", { name: "＋ 添加代理", exact: true }).click();
+  await expect(page.locator("#outbound-name-3")).toHaveValue("HTTP 代理 3");
+  await page.locator("#outbound-name-3").fill("Office custom name");
+  await page.locator("#outbound-protocol-3").selectOption("https");
+  await expect(page.locator("#outbound-name-3")).toHaveValue("Office custom name");
+  await page.locator("[data-editor-cancel]").click();
+  await expect(page.locator('[data-outbound-row="3"]')).toHaveCount(0);
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat the structured outbound editor fits a 320px viewport", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 760 });
+  const data = await mount(page);
+  await navigate(page, "outbounds");
+  await page.getByRole("button", { name: "＋ 添加代理", exact: true }).click();
+  await expect(page.locator('[data-outbound-editor="1"]')).toBeVisible();
+  await expect(page.locator("#outbound-host-1")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.screenshot({ path: testInfo.outputPath("outbound-editor-320px.png"), fullPage: true, animations: "disabled" });
+  await page.locator("[data-editor-cancel]").click();
+  expect(data.writes).toEqual([]);
+});
+
+test("outbound edit deep links retain stable identity and automatic validation keeps the failed form", async ({ page }) => {
+  const data = await mount(page, { validationFailure: "代理地址无法解析，请检查服务器地址。" });
+  await page.goto("/#outbounds/edit/outbound-id-1");
+  await expect(page.locator('[data-outbound-editor="0"]')).toBeVisible();
+  await expect(page.locator("#outbound-host-0")).toHaveValue("127.0.0.1");
+  await expect(page.locator("#outbound-username-0")).toHaveValue("");
+  await expect(page.locator("#outbound-password-0")).toHaveValue("");
+  await page.locator("#outbound-name-0").fill("Keep this draft");
+  await saveOutbound(page);
+  await expect(page.locator("#page-notice")).toContainText("代理地址无法解析");
+  await expect(page.locator("#outbound-name-0")).toHaveValue("Keep this draft");
+  await expect(page).toHaveURL(/#outbounds\/edit\/outbound-id-1$/);
+  expect(data.writes.some((write) => write.path === "/config")).toBe(false);
+  expect(data.requests.some((request) => request.path === "/outbounds/test")).toBe(false);
+});
+
+for (const previousExit of ["cancel", "save"]) {
+  test(`@compat same-hash history after outbound ${previousExit} still guards a later dirty Back`, async ({ page }) => {
+    const data = await mount(page);
+    await navigate(page, "outbounds");
+    await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+    if (previousExit === "cancel") await page.locator("[data-editor-cancel]").click();
+    else {
+      await page.locator("#outbound-name-0").fill("Saved proxy");
+      await saveOutbound(page);
+      await confirmReferencedOutboundRename(page);
+      await dismissOutboundTestSuggestion(page);
+    }
+    await expect(page).toHaveURL(/#outbounds$/);
+    await page.evaluate(() => new Promise((resolve) => {
+      window.addEventListener("popstate", () => resolve(), { once: true });
+      history.back();
+    }));
+    await expect(page).toHaveURL(/#outbounds$/);
+    const savedName = data.config.config.outbounds[0].name;
+    const savedWrites = data.writes.filter((write) => write.path === "/config").length;
+    await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+    await page.locator("#outbound-name-0").fill("Unsaved after same-hash Back");
+    await page.goBack();
+    await expect(page.getByRole("heading", { name: "放弃未保存的修改？", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "放弃修改并离开", exact: true }).click();
+    await expect(page.locator('[data-outbound-row="0"]')).toContainText(savedName);
+    await expect(page.locator("[data-outbound-editor]")).toHaveCount(0);
+    expect(data.writes.filter((write) => write.path === "/config")).toHaveLength(savedWrites);
+  });
+}
+
+test("partial outbound credentials stay in the form and explicit clearing removes the saved authentication", async ({ page }) => {
+  const data = await mount(page);
+  await navigate(page, "outbounds");
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await page.locator("#outbound-username-0").fill("changed-user-only");
+  await saveOutbound(page);
+  await expect(page.locator("#page-notice")).toContainText("用户名和密码");
+  await expect(page.locator("#outbound-username-0")).toHaveValue("changed-user-only");
+  expect(data.writes.some((write) => write.path === "/config")).toBe(false);
+  await page.locator("#outbound-clear-auth-0").check();
+  await saveOutbound(page);
+  await dismissOutboundTestSuggestion(page);
+  expect(data.writes.find((write) => write.path === "/config").body.credential_actions["Proxy A"]).toMatchObject({ action: "clear", original_name: "Proxy A" });
+  expect(data.config.config.outbounds[0].url).not.toContain("@");
+  expect(data.config.credential_state["Proxy A"].configured).toBe(false);
+  expect(data.requests.some((request) => request.path === "/outbounds/test")).toBe(false);
+});
+
+test("testing an outbound draft is explicit, preserves stored credentials and invalidates evidence after edits", async ({ page }) => {
+  const data = await mount(page, { asyncHealth: true });
+  const saved = structuredClone(data.config);
+  await navigate(page, "outbounds");
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await page.locator("#outbound-username-0").fill("draft-user");
+  await page.locator("#outbound-password-0").fill("draft-password");
+  await page.locator("[data-outbound-draft-test]").click();
+  const panel = page.locator("[data-outbound-draft-panel]");
+  await expect(panel).toBeVisible();
+  await expect(panel.locator("[data-outbound-test-progress]")).toContainText(/连接|connect/);
+  const probe = data.writes.find((write) => write.path === "/outbounds/test");
+  expect(probe.body).toMatchObject({ base_version: 1, draft: { id: "outbound-id-1", name: "Proxy A" }, credential_action: { action: "replace", username: "draft-user", password: "draft-password" } });
+  expect(data.config).toEqual(saved);
+  expect(data.writes.some((write) => write.path === "/config")).toBe(false);
+  data.testStage = "complete";
+  await expect(panel.locator('[data-outbound-protocol="udp"]')).toContainText(/不支持|unsupported/);
+  await expect(page.locator("#outbound-udp-0")).toBeVisible();
+  await page.locator("#outbound-host-0").fill("different-proxy.example");
+  await expect(page.locator("#outbound-udp-0")).toBeHidden();
+  await page.locator("[data-editor-cancel]").click();
+  expect(data.config).toEqual(saved);
+  await expect(page.locator('[data-outbound-row="0"]')).toContainText(/未测试|待测试/);
+});
+
+test("@compat explicit outbound tests show live stages, real connect latency and protocol evidence", async ({ page }, testInfo) => {
+  const data = await mount(page, { asyncHealth: true });
+  await navigate(page, "outbounds");
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "测试", exact: true }).click();
+  const panel = page.locator('[data-outbound-test-panel="0"]');
+  const latency = page.locator('[data-outbound-row="0"] [data-outbound-connect-latency]');
+  await expect(panel).toBeVisible();
+  await expect(panel.locator("[data-outbound-test-progress]")).toContainText(/连接|connect/);
+  await expect(page.locator('[data-outbound-row="0"]')).toContainText("测试中");
+  data.testStage = "proxy_handshake";
+  await expect(panel.locator("[data-outbound-test-progress]")).toContainText(/握手|代理协议|proxy_handshake/);
+  await expect(latency).toContainText(/12\s*ms/);
+  data.testStage = "target_tls";
+  await expect(panel.locator("[data-outbound-test-progress]")).toContainText(/TLS|tls/);
+  data.testStage = "complete";
+  await expect(panel.locator('[data-outbound-protocol="tcp"]')).toContainText(/通过|成功|可用|healthy/);
+  await expect(panel.locator('[data-outbound-protocol="tls"]')).toContainText(/通过|成功|可用|healthy/);
+  await expect(panel.locator('[data-outbound-protocol="udp"]')).toContainText(/不支持|unsupported/);
+  await expect(latency).toContainText(/12\s*ms/);
+  await expect(latency).not.toContainText("240");
+  await expect(page.locator('[data-outbound-row="0"]')).toContainText(/可用|成功/);
+  await page.screenshot({ path: testInfo.outputPath("outbound-live-test-results.png"), fullPage: true, animations: "disabled" });
+  expect(data.writes.filter((write) => write.path === "/outbounds/test")).toHaveLength(1);
+  expect(data.writes.some((write) => write.path === "/config")).toBe(false);
+});
+
+test("saving a proxy suggests a test and starts it only when the user chooses Test connection", async ({ page }) => {
+  const data = await mount(page);
+  await navigate(page, "outbounds");
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await page.locator("#outbound-name-0").fill("Office probe");
+  await saveOutbound(page);
+  await confirmReferencedOutboundRename(page);
+  await expect(page.locator("[data-outbound-test-suggestion]")).toBeVisible();
+  expect(data.requests.some((request) => request.path === "/outbounds/test")).toBe(false);
+  await page.getByRole("button", { name: "测试连接", exact: true }).click();
+  await expect(page.locator('[data-outbound-test-panel="0"]')).toBeVisible();
+  await expect.poll(() => data.writes.filter((write) => write.path === "/outbounds/test").length).toBe(1);
+  expect(data.writes.find((write) => write.path === "/outbounds/test").body).toMatchObject({ outbound_id: "outbound-id-1", base_version: 2 });
+});
+
+test("a measured zero millisecond connect latency is displayed as a measurement", async ({ page }) => {
+  await mount(page, { connectLatency: 0 });
+  await navigate(page, "outbounds");
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "测试", exact: true }).click();
+  await expect(page.locator("[data-outbound-connect-latency]")).toContainText(/0\s*ms/);
+  await expect(page.locator("[data-outbound-connect-latency]")).not.toContainText(/未测试|未知/);
+});
+
+test("Shadowsocks transport success without target verification stays unverified", async ({ page }) => {
+  const initial = fixture();
+  initial.config.config.outbounds[0].url = "ss://REDACTED:REDACTED@127.0.0.1:8388";
+  const data = await mount(page, { config: initial.config });
+  await navigate(page, "outbounds");
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "测试", exact: true }).click();
+  await page.locator("[data-outbound-test-options] > summary").click();
+  await page.locator("#outbound-test-tls").uncheck();
+  await page.getByRole("button", { name: "重新测试", exact: true }).click();
+  await expect.poll(() => data.writes.filter((write) => write.path === "/outbounds/test").length).toBe(2);
+  await expect(page.locator('[data-outbound-protocol="tcp"]')).toContainText(/未验证|未知/);
+  await expect(page.locator('[data-outbound-protocol="udp"]')).toContainText(/未验证|未知/);
+  await expect(page.locator('[data-outbound-row="0"] .outbound-status-line')).not.toContainText(/成功|可用/);
+});
+
+test("UDP fallback appears only after an explicit unsupported result and an unknown result stays unverified", async ({ page }) => {
+  const data = await mount(page);
+  await navigate(page, "outbounds");
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(page.locator("#outbound-udp-0")).toHaveCount(0);
+  await page.locator("[data-editor-cancel]").click();
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "测试", exact: true }).click();
+  await expect(page.locator('[data-outbound-protocol="udp"]')).toContainText(/不支持|unsupported/);
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(page.locator("#outbound-udp-0")).toBeVisible();
+  await page.locator('[data-editor-advanced="outbound"] > summary').click();
+  await page.locator("#outbound-enabled-0").uncheck();
+  await expect(page.locator("#outbound-udp-0")).toBeHidden();
+  await page.locator("[data-editor-cancel]").click();
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(page.locator("#outbound-udp-0")).toBeVisible();
+  await page.locator("#outbound-udp-0").selectOption("direct");
+  await saveOutbound(page);
+  await dismissOutboundTestSuggestion(page);
+  expect(data.writes.find((write) => write.path === "/config").body.config.outbounds[0]["udp-fallback"]).toBe("direct");
+  data.udpStatus = "unknown";
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "测试", exact: true }).click();
+  await expect(page.locator('[data-outbound-protocol="udp"]')).toContainText(/未验证|未测试|未知|unknown/);
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await expect(page.locator("#outbound-udp-0")).toHaveCount(0);
+});
+
 test("@compat outbound testing is explicit, reports protocol failure and updates its list status", async ({ page }) => {
   const data = await mount(page, { healthFailure: true });
   await navigate(page, "outbounds");
   expect(data.writes).toEqual([]);
   await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "测试", exact: true }).click();
+  await expect(page.locator('[data-outbound-test-panel="0"]')).toBeVisible();
+  await expect(page.locator('[data-outbound-test-panel="0"]')).toContainText("Proxy connection refused");
+  await page.locator("[data-outbound-test-options] > summary").click();
   await page.locator("#outbound-test-target").fill("target.example:8443");
-  await page.getByRole("button", { name: "测试连接", exact: true }).click();
-  await expect(page.locator("#outbound-test-result")).toContainText("Proxy connection refused");
-  expect(data.writes.find((write) => write.path === "/outbounds/test")?.body).toMatchObject({ outbound_id: "outbound-id-1", target: "target.example:8443", tls: true });
-  await page.getByRole("button", { name: "关闭详情", exact: true }).click();
-  await expect(page.locator('[data-outbound-row="0"]')).toContainText("测试失败");
+  await page.getByRole("button", { name: "重新测试", exact: true }).click();
+  await expect.poll(() => data.writes.filter((write) => write.path === "/outbounds/test").length).toBe(2);
+  expect(data.writes.filter((write) => write.path === "/outbounds/test").at(-1)?.body).toMatchObject({ outbound_id: "outbound-id-1", target: "target.example:8443", tls: true });
+  await expect(page.locator("#detail-dialog")).not.toBeVisible();
+  await expect(page.locator('[data-outbound-row="0"]')).toContainText(/测试失败|失败/);
   expect(data.writes.some((write) => write.path === "/config" || write.path.startsWith("/lifecycle/"))).toBe(false);
 });
 
@@ -1480,6 +1822,8 @@ test("rename updates rule references atomically and explicitly preserves masked 
   await page.locator("#outbound-name-0").fill("Office");
   await page.locator("#outbound-name-0").dispatchEvent("input");
   await saveOutbound(page);
+  await confirmReferencedOutboundRename(page);
+  await dismissOutboundTestSuggestion(page);
   await expect(page.locator("#page-notice")).toContainText("已保存");
   const save = data.writes.find((r) => r.path === "/config");
   expect(save.body.config.outbounds[0].name).toBe("Office");
@@ -1506,7 +1850,7 @@ test("version conflict retains draft and offers a persistent actionable message"
     "其他页面或文件修改",
   );
   await expect(page.locator("#inbound-name")).toHaveValue("保留的草稿");
-  await expect(page.locator("#draft-status")).toContainText("未保存");
+  await expect(page.locator("[data-editor-save]")).toBeEnabled();
 });
 
 for (const externalChange of ["reorder", "delete"]) {
@@ -1524,10 +1868,11 @@ for (const externalChange of ["reorder", "delete"]) {
     }
     data.config.version = 2;
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    await expect(page.getByText("已保存版本发生变化", { exact: false })).toBeVisible();
+    await expect(page.getByText(/已保存版本发生变化|已保存配置已变化/)).toBeVisible();
     await expect(page.locator("#outbound-name-0")).toHaveValue("Proxy A");
     await page.locator("#outbound-name-0").fill("Edited Proxy A");
     await saveOutbound(page);
+    await confirmReferencedOutboundRename(page);
     await expect(page.locator("#page-notice")).toContainText("其他页面或文件修改");
     await expect(page.locator("#outbound-name-0")).toHaveValue("Edited Proxy A");
     const save = data.writes.find((write) => write.path === "/config");
@@ -1544,12 +1889,12 @@ for (const first of ["username", "password"]) {
     const data = await mount(page);
     await page.locator(".nav-link[data-page=outbounds]").click();
     await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
-    await page.locator("#outbound-credentials-0").selectOption("replace");
     const values = { username: "credential-fixture-user", password: "credential-fixture-password" };
     const second = first === "username" ? "password" : "username";
     await page.locator(`#outbound-${first}-0`).fill(values[first]);
     await page.locator(`#outbound-${second}-0`).fill(values[second]);
     await saveOutbound(page);
+    await dismissOutboundTestSuggestion(page);
     await expect(page.locator("#page-notice")).toContainText("已保存");
     const credentials = data.writes.find((write) => write.path === "/config")?.body.credential_actions["Proxy A"];
     expect(credentials?.action === "replace").toBe(true);
@@ -1796,8 +2141,8 @@ test("automatic refresh never silently rebases a dirty draft onto a concurrent s
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await expect(page.locator("#inbound-name")).toHaveValue("My draft");
   await expect(
-    page.getByText("已保存版本发生变化", { exact: false }),
-  ).toBeVisible();
+    page.locator("[data-editor-conflict]"),
+  ).toContainText("当前草稿仍保留");
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect
     .poll(
@@ -1917,6 +2262,7 @@ test("all compiled stacks are runtime choices and saving never starts capture", 
   const data = await mount(page);
   await page.locator(".nav-link[data-page=inbounds]").click();
   await page.getByRole("button", { name: "编辑入站", exact: true }).click();
+  await page.locator('[data-editor-advanced="inbounds"] > summary').click();
   const stack = page.locator("#inbound-stack");
   await expect(stack).toHaveValue("system");
   await expect(stack.locator("option")).toHaveCount(3);
@@ -1932,6 +2278,7 @@ test("IPv6 is an explicit saved opt-in and unavailable platforms cannot enable i
   const data = await mount(page, { ipv6: true });
   await page.locator(".nav-link[data-page=inbounds]").click();
   await page.getByRole("button", { name: "编辑入站", exact: true }).click();
+  await page.locator('[data-editor-advanced="inbounds"] > summary').click();
   await page.locator("#inbound-ipv6-network").fill("fd7a:203::1/120");
   await page.locator("#inbound-outbound-interface").fill("eth0");
   await page.locator("#inbound-auto-route6").check();
@@ -1957,6 +2304,7 @@ test("IPv6 is an explicit saved opt-in and unavailable platforms cannot enable i
   data.config.config.core["auto-route6"] = false;
   await page.reload();
   await page.getByRole("button", { name: "编辑入站", exact: true }).click();
+  await page.locator('[data-editor-advanced="inbounds"] > summary').click();
   await expect(page.locator("#inbound-ipv6-network")).toBeDisabled();
   await expect(page.locator("#inbound-auto-route6")).toBeDisabled();
 });
@@ -1994,7 +2342,8 @@ test("temporary domain rules and outbound disable are explicit saved drafts with
   const data = await mount(page);
   await page.locator(".nav-link[data-page=rules]").click();
   await page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
-  await page.locator("#editor-dialog .editor-item summary").first().click();
+  await page.locator('[data-editor-advanced="rule"] > summary').click();
+  await page.getByText("高级：规则有效期", { exact: true }).click();
   await page.locator("#rule-lifetime-0").selectOption("temporary");
   await expect(page.locator("#rule-expires-0")).toBeVisible();
   await page.getByRole("button", { name: "保存", exact: true }).click();
@@ -2007,8 +2356,10 @@ test("temporary domain rules and outbound disable are explicit saved drafts with
     .toMatch(/^\d{4}-\d{2}-\d{2}T/);
   await page.locator(".nav-link[data-page=outbounds]").click();
   await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await page.locator('[data-editor-advanced="outbound"] > summary').click();
   await page.locator("#outbound-enabled-0").uncheck();
   await saveOutbound(page);
+  await expect(page.locator("[data-outbound-test-suggestion]")).not.toBeVisible();
   await expect
     .poll(
       () =>
@@ -2033,6 +2384,7 @@ test("DNS system guidance saves explicit intent while automatic scopes remain re
   await expect(page.getByText("系统解析范围", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "编辑 DNS 设置", exact: true }).click();
   await page.locator("#dns-system").check();
+  await page.locator('[data-editor-advanced="dns"] > summary').click();
   await page.getByRole("button", { name: "＋ 添加解析规则" }).click();
   await page.locator("#dns-route-suffix-0").fill("private.example");
   await page.locator("#dns-route-servers-0").fill("192.168.50.1:53");
