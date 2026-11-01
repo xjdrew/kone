@@ -13,6 +13,33 @@ export const settingsSections = {
   network: ["网络维护", "查看自动恢复说明，处理需要人工维护的网络状态。"],
 };
 
+// Keep native pointer/keyboard interaction attached to the original menu nodes.
+// The fresh view remains the authority for values and access decisions.
+export function updateSettingsRoot(current, fresh) {
+  const attributes = (target, source) => {
+    for (const attribute of [...target.attributes]) if (!source.hasAttribute(attribute.name)) target.removeAttribute(attribute.name);
+    for (const attribute of [...source.attributes]) if (target.getAttribute(attribute.name) !== attribute.value) target.setAttribute(attribute.name, attribute.value);
+  };
+  for (const key of ["data-settings-link", "data-settings-action"]) {
+    const values = new Map([...fresh.querySelectorAll(`[${key}]`)].map(node => [node.getAttribute(key), node]));
+    for (const target of current.querySelectorAll(`[${key}]`)) {
+      const source = values.get(target.getAttribute(key));
+      if (!source) continue;
+      attributes(target, source);
+      if (key === "data-settings-action") target.disabled = source.disabled;
+      const summary = target.querySelector(".settings-row-value");
+      const nextSummary = source.querySelector(".settings-row-value");
+      if (summary && nextSummary && summary.textContent !== nextSummary.textContent) summary.textContent = nextSummary.textContent;
+    }
+  }
+  const access = current.querySelector("[data-settings-root-access]");
+  const nextAccess = fresh.querySelector("[data-settings-root-access]");
+  if (access && nextAccess && access.textContent !== nextAccess.textContent) access.replaceChildren(...nextAccess.childNodes);
+  const footnote = current.querySelector(".settings-footnote");
+  const nextFootnote = fresh.querySelector(".settings-footnote");
+  if (footnote && nextFootnote && footnote.textContent !== nextFootnote.textContent) footnote.textContent = nextFootnote.textContent;
+}
+
 export function outboundAddress(raw) {
   try {
     const url = new URL(raw);
@@ -95,7 +122,7 @@ export function createConfigurationPages(ui) {
       h("span", { class: "settings-row-value" }, summary), h("span", { class: "settings-chevron", "aria-hidden": true }, "›"));
     const group = (id, title, ...rows) => h("section", { class: "settings-group", "data-settings-group": id, "aria-label": title || (id === "about" ? "关于 KONE" : "账号操作") }, title && h("h2", { class: "settings-group-title" }, title), h("div", { class: "settings-list" }, rows));
     const danger = (id, text, fn, disabled) => button(text, fn, "settings-danger-row", disabled, { "data-settings-action": id });
-    return [h("div", { class: "settings-root", "data-settings-root": "" }, readonlyNote(),
+    return [h("div", { class: "settings-root", "data-settings-root": "" }, h("div", { "data-settings-root-access": "" }, readonlyNote()),
       group("about", "", link("about", model.state.version || model.state.build?.version || "开发版本")),
       group("application", "应用设置", link("logs", (general["log-level"] || "info").toUpperCase()), link("geoip", model.geoip?.saved?.version || "查看数据")),
       group("security", "访问与安全", link("lan", model.lan.enabled ? "已开启" : "未开启"), link("account", "修改密码")),

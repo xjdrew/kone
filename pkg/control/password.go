@@ -25,6 +25,9 @@ const passwordMemory = 19 * 1024
 const passwordIterations = 2
 const passwordParallelism = 1
 
+// ErrPasswordFormatUnsupported identifies authentication files needing a local reset.
+var ErrPasswordFormatUnsupported = errors.New("management password format is unsupported; back up and remove auth.json locally, then restart to set a new password")
+
 type passwordCredentials struct {
 	Version int    `json:"version"`
 	Salt    []byte `json:"salt"`
@@ -56,7 +59,7 @@ func (c *Controller) initAuthentication() error {
 		return errors.New("management password file has invalid framing")
 	}
 	if c.credentials.Version != passwordVersion {
-		return errors.New("management password format is unsupported; back up and remove auth.json locally, then restart to set a new password")
+		return ErrPasswordFormatUnsupported
 	}
 	return nil
 }

@@ -1,6 +1,6 @@
 # macOS 桌面入口与验收边界
 
-打开 `Kone.app` 默认只显示菜单栏图标，不弹终端、不自动打开浏览器；选择“打开管理”后配置并启用接管。终端使用独立的 `kone-cli`。无参数管理启动与启用接管是两个动作，Web profile 不读取项目 `config.toml`；首次需核对 TUN 入站、出站与规则，见 [桌面指南](desktop.md)。管理、浏览器及菜单在普通用户上下文运行，特权数据面通过独立助手和受限制的私有通道控制；菜单不自行配置 TUN、路由或 DNS。关闭浏览器不停止接管，选择退出则交给统一生命周期完成恢复。
+打开 `Kone.app` 默认打开管理页面并保留菜单栏图标，不弹终端；`-no-browser` 可静默启动菜单栏。关闭页面后可从菜单栏重新打开管理。终端使用独立的 `kone-cli`。无参数管理启动与启用接管是两个动作，Web profile 不读取项目 `config.toml`；首次需核对 TUN 入站、出站与规则，见 [桌面指南](desktop.md)。管理、浏览器及菜单在普通用户上下文运行，特权数据面通过独立助手和受限制的私有通道控制；菜单不自行配置 TUN、路由或 DNS。关闭浏览器不停止接管，选择退出则交给统一生命周期完成恢复。
 
 菜单使用系统 `/usr/bin/osascript` 的 JavaScript for Automation Objective-C bridge 调用 AppKit，不增加 CGO 或第三方桌面框架。它只创建自己的 `NSStatusBar`、`NSMenu` 与 target/action 对象，不向其他应用发送 Apple Events，也不请求辅助功能权限。实现依据 [Apple 的 JXA bridge 说明](https://devstreaming-cdn.apple.com/videos/wwdc/2014/306xxjtg7uz13v0/306/306_javascript_for_automation.pdf) 和 [NSStatusItem API](https://developer.apple.com/documentation/appkit/nsstatusitem?language=objc)。
 

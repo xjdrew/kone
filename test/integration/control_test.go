@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,11 +37,18 @@ func (e *isolatedEngine) SetTrafficObserver(*kone.TrafficObserver) error { retur
 
 func TestManagementConfigurationCaptureAndPauseEndToEnd(t *testing.T) {
 	// Exercise the real HTTP, authorization, persistence and lifecycle together;
-	// replace only privileged device ownership. No host networking is modified.
+	// isolate privileged device ownership and machine DNS inspection. No host
+	// networking is modified or inspected through the platform adapter.
 	directory := t.TempDir()
+	var dnsInspections atomic.Int32
 	c, err := control.New(control.Options{Directory: directory, Factory: func(*kone.KoneConfig) (control.Engine, error) {
 		return &isolatedEngine{ready: make(chan struct{}), stop: make(chan struct{})}, nil
-	}, Preflight: func(context.Context, *kone.KoneConfig) kone.PreflightReport { return kone.PreflightReport{Ready: true} }})
+	}, Preflight: func(context.Context, *kone.KoneConfig) kone.PreflightReport { return kone.PreflightReport{Ready: true} },
+		InspectSystemDNSRecovery: func(context.Context) ([]kone.SystemDNSRecoveryEntry, error) {
+			dnsInspections.Add(1)
+			return nil, nil
+		},
+	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	server := httptest.NewServer(c.Handler())
@@ -48,28 +56,55 @@ func TestManagementConfigurationCaptureAndPauseEndToEnd(t *testing.T) {
 	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
 	var cookie *http.Cookie
 	csrf := ""
-	call := func(method, path string, input any) (int, map[string]any) {
+	callWithContext := func(ctx context.Context, method, path string, input any) (int, map[string]any) {
 		var body io.Reader
 		if input != nil {
 			data, e := json.Marshal(input)
 			require.NoError(t, e)
 			body = bytes.NewReader(data)
 		}
-		r, e := http.NewRequest(method, server.URL+"/api/v1/"+path, body)
-		require.NoError(t, e)
+		r, e := http.NewRequestWithContext(ctx, method, server.URL+"/api/v1/"+path, body)
+		require.NoError(t, e, "%s %s", method, path)
 		if cookie != nil {
 			r.AddCookie(cookie)
 			r.Header.Set("X-CSRF-Token", csrf)
 		}
 		response, e := client.Do(r)
-		require.NoError(t, e)
+		require.NoError(t, e, "%s %s", method, path)
 		defer response.Body.Close()
 		if cookies := response.Cookies(); len(cookies) > 0 {
 			cookie = cookies[0]
 		}
 		var value map[string]any
-		require.NoError(t, json.NewDecoder(response.Body).Decode(&value))
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&value), "%s %s returned HTTP %d", method, path, response.StatusCode)
 		return response.StatusCode, value
+	}
+	call := func(method, path string, input any) (int, map[string]any) {
+		return callWithContext(context.Background(), method, path, input)
+	}
+	waitOperation := func(action string, operation map[string]any) {
+		id, ok := operation["id"].(string)
+		require.True(t, ok && id != "", "%s returned no operation ID: %#v", action, operation)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			status, result := callWithContext(ctx, "GET", "operations/"+id, nil)
+			require.Equal(t, http.StatusOK, status, "%s operation poll: %#v", action, result)
+			switch result["status"] {
+			case "succeeded":
+				return
+			case "running":
+			default:
+				require.FailNowf(t, "lifecycle operation did not succeed", "%s: %#v", action, result)
+			}
+			select {
+			case <-ctx.Done():
+				require.FailNowf(t, "lifecycle operation timed out", "%s: %#v", action, result)
+			case <-ticker.C:
+			}
+		}
 	}
 	status, auth := call("POST", "session", map[string]any{"token": c.BootstrapToken()})
 	require.Equal(t, 200, status)
@@ -85,15 +120,18 @@ func TestManagementConfigurationCaptureAndPauseEndToEnd(t *testing.T) {
 	require.Equal(t, 200, status)
 	for _, action := range []string{"start", "pause", "start", "stop"} {
 		status, operation := call("POST", "lifecycle/"+action, nil)
-		require.Equal(t, 202, status)
-		require.Eventually(t, func() bool {
-			status, result := call("GET", "operations/"+operation["id"].(string), nil)
-			return status == 200 && result["status"] == "succeeded"
-		}, 2*time.Second, time.Millisecond)
+		require.Equal(t, http.StatusAccepted, status, "%s: %#v", action, operation)
+		waitOperation(action, operation)
 		status, state := call("GET", "state", nil)
 		require.Equal(t, 200, status)
 		require.Equal(t, "ready", state["control_state"])
+		expectedState := "paused"
+		if action == "start" {
+			expectedState = "running"
+		}
+		require.Equal(t, expectedState, state["data_state"], "%s: control=%v data=%v", action, state["control_state"], state["data_state"])
 	}
+	require.EqualValues(t, 2, dnsInspections.Load(), "both starts must use the injected DNS inspector")
 	status, state := call("GET", "state", nil)
 	require.Equal(t, 200, status)
 	require.Equal(t, "paused", state["data_state"])

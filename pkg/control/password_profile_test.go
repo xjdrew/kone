@@ -39,6 +39,7 @@ func TestUnsupportedPasswordVersionsFailClosedWithoutChangingTheFile(t *testing.
 			require.NoError(t, os.WriteFile(path, data, 0600))
 			_, err = New(Options{Directory: directory})
 			require.ErrorContains(t, err, "password format is unsupported")
+			require.ErrorIs(t, err, ErrPasswordFormatUnsupported)
 			require.ErrorContains(t, err, "auth.json")
 			preserved, err := os.ReadFile(path)
 			require.NoError(t, err)

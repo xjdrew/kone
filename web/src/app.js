@@ -15,7 +15,7 @@ import {
 import { aggregatePaths, bytes, nativePaths, renderSankey } from "./graph.js";
 import { mergeLogs, parseLogTimeRange, logQuery } from "./logs.js";
 import { createDiagnosticsPage } from "./diagnostics-page.js";
-import { createConfigurationPages, outboundAddress, currentHealth, needsDirectConfirmation, settingsSections } from "./configuration-pages.js";
+import { createConfigurationPages, outboundAddress, currentHealth, needsDirectConfirmation, settingsSections, updateSettingsRoot } from "./configuration-pages.js";
 import { outboundProtocols, parseOutboundFields, buildOutboundURL, defaultOutboundName, outboundCredentialAction } from "./outbound-editor.js";
 import { ruleTypes, rulePatternInfo, validateRulePattern, countryOptions, classifyRuleDecision, ruleScope } from "./rule-editor.js";
 import "./outbounds.css";
@@ -4023,6 +4023,7 @@ function renderAuth() {
   content.append(form);
   if (!setup) content.append(h("div", { class: "form-section" }, button(paired ? "使用管理密码" : "使用配对代码", () => { if (model.authBusy) return; model.authMode = paired ? "password" : "pairing"; render(); }, "ghost", false)));
   content.append(h("small", { class: "block-hint form-section" }, "密码不写入地址或日志；手机可使用所有者授权的短期配对代码。"));
+  if (!paired) content.append(h("p", { class: "desktop-startup-guide", "data-desktop-startup-guide": "" }, "桌面版 KONE 常驻系统托盘或菜单栏。关闭此页面不会退出程序；可从 KONE 图标菜单重新打开管理，结束运行请使用该菜单中的退出操作。"));
   return content;
 }
 
@@ -4079,6 +4080,7 @@ function selectCards(nodes, titles) {
 }
 
 let settingsDetailElement = null;
+let settingsRootElement = null;
 let pendingSettingsNavigation = null;
 let settingsNavigationGeneration = 0;
 let settingsHistoryIndex = Number.isInteger(history.state?.koneSettingsIndex) ? history.state.koneSettingsIndex : 0;
@@ -4111,6 +4113,7 @@ function clearSettingsPresentation(restore = false) {
   outboundEditorElement = null;
   settingsDetailElement?.querySelectorAll("form").forEach(form => form.reset());
   settingsDetailElement = null;
+  settingsRootElement = null;
   model.settingsLocalDirty = false;
   model.geoFile = null;
   model.geoExpected = "";
@@ -4558,6 +4561,16 @@ const configurationPages = createConfigurationPages({ model, h, card, note, butt
   dnsObservations: () => selectCards(renderDNSEditor(), ["系统解析范围", "查询记录"]),
   settingsObservations: () => selectCards(renderSettingsEditor(), ["配置与生命周期", "导入与恢复配置", "网络恢复", "记录、隐私与导出", "关于 KONE"]),
 });
+function renderSettingsPage() {
+  const content = configurationPages.settings();
+  if (!model.settingsSection) settingsRootElement = content.find(node => node?.hasAttribute?.("data-settings-root")) || null;
+  return content;
+}
+function syncSettingsRoot() {
+  if (!settingsRootElement?.isConnected) return;
+  const fresh = configurationPages.settings().find(node => node?.hasAttribute?.("data-settings-root"));
+  if (fresh) updateSettingsRoot(settingsRootElement, fresh);
+}
 const renderers = {
   home: renderHome,
   connections: renderConnections,
@@ -4566,7 +4579,7 @@ const renderers = {
   rules: configurationPages.rules,
   dns: configurationPages.dns,
   diagnostics: renderDiagnostics,
-  settings: configurationPages.settings,
+  settings: renderSettingsPage,
 };
 function render() {
   updateShell();
@@ -4591,6 +4604,11 @@ function render() {
   }
   beginInlineSettingsEditor();
   beginOutboundPageEditor();
+  if (model.page === "settings" && !model.settingsSection && settingsRootElement?.isConnected) {
+    document.querySelector("#page-notice")?.replaceChildren(...(model.notice ? [note(model.notice.message, model.notice.kind)] : []));
+    syncSettingsRoot();
+    return;
+  }
   if (model.page === "diagnostics" && diagnosticsPage?.root.isConnected) {
     document.querySelector("#page-notice")?.replaceChildren(...(model.notice ? [note(model.notice.message, model.notice.kind)] : []));
     diagnosticsPage.update();
@@ -4611,6 +4629,12 @@ function render() {
   syncOutboundEditorAccess();
 }
 function renderPreserving() {
+  if (model.authenticated && !model.authPending && model.page === "settings" && !model.settingsSection && settingsRootElement?.isConnected) {
+    updateShell();
+    document.querySelector("#page-notice")?.replaceChildren(...(model.notice ? [note(model.notice.message, model.notice.kind)] : []));
+    syncSettingsRoot();
+    return;
+  }
   if (model.authenticated && !model.authPending && model.page === "diagnostics" && diagnosticsPage?.root.isConnected) {
     updateShell();
     document.querySelector("#page-notice")?.replaceChildren(...(model.notice ? [note(model.notice.message, model.notice.kind)] : []));

@@ -54,7 +54,7 @@ just init
 just build
 ```
 
-Windows 输出 `dist/kone.exe` 桌面程序和 `dist/kone-cli.exe` 控制台程序；macOS 输出 `dist/Kone.app` 和 `dist/kone-cli`；Linux 保留 `dist/kone` CLI。双击 Windows 程序或打开 macOS app，默认只显示托盘/菜单图标，不弹终端、不自动打开浏览器；通过图标打开管理，接管保持暂停。日常开发可直接用 `just dev`，它会实际启动对应入口。首次接管的设置步骤见 [桌面指南](desktop.md)。
+Windows 输出 `dist/kone.exe` 桌面程序和 `dist/kone-cli.exe` 控制台程序；macOS 输出 `dist/Kone.app` 和 `dist/kone-cli`；Linux 保留 `dist/kone` CLI。双击 Windows 程序或打开 macOS app，默认打开管理页面并保留托盘/菜单图标，不弹终端；`-no-browser` 可静默启动到托盘，接管保持暂停。日常开发可直接用 `just dev`，它会实际启动对应入口。首次接管的设置步骤见 [桌面指南](desktop.md)。
 
 所有构建同时包含 `system`、`gvisor`、`mixed`，通过 `core.stack` 运行时选择，默认 `system`；切换后暂停并重新启用接管。构建任务只生成本机程序，不因为开发 Windows 桌面就同时编译 Linux/macOS。`just build-all` 默认构建三平台的 amd64/arm64；Raspberry Pi 64 位系统使用 Linux arm64，32 位网关使用 `just build-all --include-armv7` 显式追加 Linux ARMv7。ARMv7 同样包含三种协议栈，真机性能仍需部署验收。
 

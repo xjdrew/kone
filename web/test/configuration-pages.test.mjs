@@ -1,9 +1,56 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createConfigurationPages, outboundAddress, currentHealth, needsDirectConfirmation } from "../src/configuration-pages.js";
+import { createConfigurationPages, outboundAddress, currentHealth, needsDirectConfirmation, updateSettingsRoot } from "../src/configuration-pages.js";
 
 const element = (tag, attrs = {}, ...children) => ({ tag, attrs, children: children.flat(Infinity).filter(Boolean), getAttribute: name => attrs[name] });
 const descendants = (nodes) => (Array.isArray(nodes) ? nodes : [nodes]).flatMap(node => node && typeof node === "object" ? [node, ...descendants(node.children || [])] : []);
+
+test("settings refresh keeps menu and action identities while updating summaries and access", () => {
+  const node = (attrs = {}, text = "", selectors = {}) => {
+    const values = new Map(Object.entries(attrs));
+    return {
+      textContent: text, childNodes: text ? [{ textContent: text }] : [],
+      get attributes() { return [...values].map(([name, value]) => ({ name, value })); },
+      getAttribute: name => values.get(name) ?? null,
+      hasAttribute: name => values.has(name),
+      setAttribute: (name, value) => values.set(name, value), removeAttribute: name => values.delete(name),
+      querySelector: selector => selectors[selector] || null,
+      replaceChildren(...children) { this.childNodes = children; this.textContent = children.map(child => child.textContent).join(""); },
+    };
+  };
+  const makeRoot = (value, disabled, warning, footnote) => {
+    const summary = node({}, value);
+    const link = node({ "data-settings-link": "logs", href: "#settings/logs", title: value }, "", { ".settings-row-value": summary });
+    const action = node({ "data-settings-action": "reset", ...(disabled ? { disabled: "" } : {}) });
+    action.disabled = disabled;
+    const access = node({}, warning), footer = node({}, footnote);
+    const root = node({}, "", { "[data-settings-root-access]": access, ".settings-footnote": footer });
+    root.querySelectorAll = selector => selector === "[data-settings-link]" ? [link] : selector === "[data-settings-action]" ? [action] : [];
+    return { root, link, action, summary, access, footer };
+  };
+  const current = makeRoot("INFO", false, "", "可以重置");
+  let clicked = 0;
+  current.link.onclick = () => clicked++;
+  current.action.onclick = () => clicked++;
+  const original = [current.link, current.action, current.summary, current.access];
+  const fresh = makeRoot("DEBUG", true, "当前为只读会话", "请先暂停接管");
+  updateSettingsRoot(current.root, fresh.root);
+  assert.deepEqual([current.link, current.action, current.summary, current.access], original);
+  assert.equal(current.summary.textContent, "DEBUG");
+  assert.equal(current.link.getAttribute("href"), "#settings/logs");
+  assert.equal(current.link.getAttribute("title"), "DEBUG");
+  assert.equal(current.action.disabled, true);
+  assert.equal(current.action.hasAttribute("disabled"), true);
+  assert.equal(current.access.textContent, "当前为只读会话");
+  assert.equal(current.footer.textContent, "请先暂停接管");
+  current.link.onclick(); current.action.onclick();
+  assert.equal(clicked, 2, "polling retains the original handlers");
+  updateSettingsRoot(current.root, makeRoot("WARN", false, "", "可以重置").root);
+  assert.equal(current.action.disabled, false);
+  assert.equal(current.action.hasAttribute("disabled"), false);
+  assert.equal(current.access.textContent, "");
+  assert.equal(current.summary.textContent, "WARN");
+});
 
 function settingsHarness() {
   const model = {

@@ -26,11 +26,12 @@ Download the package for your platform from [Releases](https://github.com/xjdrew
 Windows uses ZIP, macOS PKG and Linux DEB, for amd64 and arm64.
 See [installation and platform notes](docs/usage.md) for checksums, permissions and package trust.
 On Windows, double-click `kone.exe`; on macOS, open `Kone.app`.
-They start in the tray/menu bar **without a terminal or automatic browser window**.
-Choose **Open management**, set a password, configure the needed outbounds/rules,
+They open management in your browser and keep a tray/menu icon **without a terminal**.
+Set a password, configure the needed outbounds/rules,
 then review the checks and explicitly start capture. Capture starts **paused**.
 See the [desktop setup guide](docs/desktop.md) for the three steps and troubleshooting.
 Use `kone-cli.exe` / `kone-cli` for terminal commands; Linux keeps the `kone` CLI.
+Use `-no-browser` with the desktop entrypoint for quiet tray startup.
 
 **From source**
 

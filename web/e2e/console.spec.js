@@ -760,6 +760,14 @@ async function expectKeyboardOutsideManagementShell(page) {
   }
 }
 
+async function expectDesktopStartupGuide(page) {
+  const guide = page.locator("[data-desktop-startup-guide]");
+  await expect(guide).toBeVisible();
+  await expect(guide).toContainText("常驻系统托盘或菜单栏");
+  await expect(guide).toContainText("关闭此页面不会退出程序");
+  await expect(guide).toContainText("结束运行请使用该菜单中的退出操作");
+}
+
 async function expectNoDialogPlaceholders(page) {
   const placeholders = await page.locator("#detail-content").evaluate((content) => [...content.childNodes]
     .filter((node) => node.nodeType === Node.TEXT_NODE)
@@ -848,6 +856,7 @@ for (const firstVisit of ["password", "setup"]) {
 test("@compat password login occupies the whole viewport until successful authentication", async ({ page }, testInfo) => {
   const data = await mount(page, { noBootstrap: true, requirePassword: true, managementPassword: "mock-owner-password", loggedIn: false, authScreen: "登录 KONE 管理" });
   await expect(page.locator("body")).toHaveClass(/auth-screen/);
+  await expectDesktopStartupGuide(page);
   await expectKeyboardOutsideManagementShell(page);
   await page.screenshot({ path: testInfo.outputPath("password-login-only.png"), animations: "disabled" });
   await page.locator("#login-password").fill("incorrect-password");
@@ -868,6 +877,7 @@ test("@compat password login occupies the whole viewport until successful authen
   } finally { release(); }
   await expect(page.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
   await expectManagementShellVisible(page);
+  await expect(page.locator("[data-desktop-startup-guide]")).toHaveCount(0);
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
 });
 
@@ -922,6 +932,7 @@ test("@compat first-time password setup requires matching inputs and remains cap
   const data = await mount(page, { requireSetup: true, loggedIn: false, authScreen: "设置管理密码" });
   await page.reload();
   await expect(page.locator("#setup-password")).toBeVisible();
+  await expectDesktopStartupGuide(page);
   await expectManagementShellHidden(page);
   expect(data.requests.some((request) => ["/config", "/logs", "/traffic"].includes(request.path))).toBe(false);
   await page.locator("#setup-password").fill("mock-owner-password");
@@ -933,6 +944,7 @@ test("@compat first-time password setup requires matching inputs and remains cap
   await page.getByRole("button", { name: "设置管理密码", exact: true }).click();
   await expect(page.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
   await expectManagementShellVisible(page);
+  await expect(page.locator("[data-desktop-startup-guide]")).toHaveCount(0);
   expect(data.requests.find((request) => request.path === "/auth/password")?.headers["x-csrf-token"]).toBe("setup-csrf");
   await expect(page.locator("#runtime-status")).toContainText("已暂停");
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
@@ -997,6 +1009,56 @@ test("@compat settings subpages support direct links, the Back button and browse
   await expect(page.locator('[data-settings-detail="about"]')).toContainText("test-version");
   await expect(page.locator('[data-settings-detail="about"]')).toContainText("GPL-3.0-or-later");
   await page.screenshot({ path: testInfo.outputPath("settings-about-subpage.png"), animations: "disabled" });
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat a settings link remains clickable across a natural status poll", async ({ page }, testInfo) => {
+  await mount(page);
+  await navigate(page, "settings");
+  await expect(page.locator("[data-settings-root]")).toBeVisible();
+  const account = page.locator('[data-settings-link="account"]');
+  const bounds = await account.evaluate(node => {
+    node.scrollIntoView({ block: "center", inline: "nearest" });
+    window.settingsPressedLink = node;
+    const box = node.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  });
+  const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === "/api/v1/recovery" && response.ok());
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await page.mouse.down();
+  try {
+    await (await refreshed).finished();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const connected = await page.evaluate(() => window.settingsPressedLink.isConnected);
+    await page.mouse.up();
+    await testInfo.attach("settings-pointer-poll", { contentType: "application/json", body: JSON.stringify({ originalAnchorConnected: connected, hashAfterPointerUp: await page.evaluate(() => location.hash) }) });
+    expect(connected).toBe(true);
+    await expect(page.locator('[data-settings-detail="account"]')).toBeVisible();
+  } finally {
+    await page.mouse.up();
+  }
+});
+
+test("@compat stable settings navigation keeps saved summaries and reset permissions current", async ({ page }) => {
+  const data = await mount(page);
+  await navigate(page, "settings");
+  await expect(page.locator('[data-settings-link="logs"]')).toContainText("INFO");
+  await expect(page.locator('[data-settings-action="reset"]')).toBeEnabled();
+  await page.evaluate(() => { window.settingsRootBeforeRefresh = document.querySelector("[data-settings-root]"); });
+  data.config.config.general["log-level"] = "warn";
+  data.config.version++;
+  data.state = "running";
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.locator('[data-settings-link="logs"]')).toContainText("WARN");
+  await expect(page.locator('[data-settings-action="reset"]')).toBeDisabled();
+  data.state = "paused";
+  data.role = "read";
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#session-role")).toContainText("只读");
+  await expect(page.locator('[data-settings-action="reset"]')).toBeDisabled();
+  await expect(page.locator('[data-settings-action="logout"]')).toBeEnabled();
+  expect(await page.evaluate(() => window.settingsRootBeforeRefresh === document.querySelector("[data-settings-root]"))).toBe(true);
   expect(data.writes).toEqual([]);
 });
 

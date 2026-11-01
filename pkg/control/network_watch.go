@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/xjdrew/kone/pkg/dnsconfig"
+	commandutil "github.com/xjdrew/kone/pkg/internal/command"
 )
 
 type NetworkChange struct {
@@ -80,6 +81,7 @@ func sampleNetwork(ctx context.Context, ownedTunName string) (networkFingerprint
 		} else {
 			command = exec.CommandContext(queryCtx, "route", "-n", "get", "default")
 		}
+		commandutil.Background(command)
 		routeData, err = command.Output()
 	}
 	if err != nil {
