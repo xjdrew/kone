@@ -7,6 +7,8 @@
 
 终端的 `-check`、`-config`、`-version` 等操作请使用单独的 `kone-cli.exe`，它保留控制台输出和 CLI 提权行为。
 
+接管期间的后台 DNS、网络和路由命令不会创建控制台窗口。旧管理密码格式导致启动失败时，桌面弹窗会说明重设认证的步骤；只需备份并移出 profile 中的 `auth.json`，保留 `settings.json` 即可保留代理和规则。
+
 源码开发使用 Go 1.27.3、just 1.59.0，并在 Git Bash 的仓库根目录执行开发任务（见 [开发说明](../development.md)）：
 
 ```sh

@@ -20,9 +20,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode/utf16"
+
+	commandutil "github.com/xjdrew/kone/pkg/internal/command"
 )
 
 //go:embed dns_system_windows.ps1
@@ -104,7 +105,7 @@ func windowsDNSPowerShell(script string) (*exec.Cmd, error) {
 		binary.LittleEndian.PutUint16(encoded[index*2:], word)
 	}
 	command := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.StdEncoding.EncodeToString(encoded))
-	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	commandutil.Background(command)
 	command.WaitDelay = time.Second
 	return command, nil
 }

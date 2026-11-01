@@ -4,6 +4,8 @@ Windows 双击 `kone.exe`，macOS 打开 `Kone.app`，程序默认只显示托�
 
 Windows 托盘右键菜单使用品牌和操作图标，并将打开管理、接管控制、诊断与退出分组；启动和暂停是否可用取决于当前接管状态。
 
+Windows 后台 DNS、路由和网络检查以隐藏进程运行，启用接管后的周期检查不会反复弹出 PowerShell 或命令行窗口。
+
 终端操作使用 Windows 的 `kone-cli.exe`、macOS 的 `kone-cli`。Linux 保留 `kone` 的 CLI 和网关用法。CLI 参数见 [使用说明](usage.md#toml-and-file-mode)，开发构建见 [开发说明](development.md)。
 
 ## 首次启用接管

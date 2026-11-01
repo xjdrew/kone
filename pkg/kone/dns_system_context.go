@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/xjdrew/kone/pkg/dnsconfig"
+	commandutil "github.com/xjdrew/kone/pkg/internal/command"
 )
 
 type DNSSystemScope struct {
@@ -177,6 +178,7 @@ func readDNSCommand(ctx context.Context, name string, arguments ...string) ([]by
 
 func readDNSCommandInput(ctx context.Context, input, name string, arguments ...string) ([]byte, error) {
 	command := exec.CommandContext(ctx, name, arguments...)
+	commandutil.Background(command)
 	if input != "" {
 		command.Stdin = strings.NewReader(input)
 	}

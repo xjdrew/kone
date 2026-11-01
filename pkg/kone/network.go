@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"sync"
 	"time"
+
+	commandutil "github.com/xjdrew/kone/pkg/internal/command"
 )
 
 // Device is the packet interface owned by one engine run.
@@ -100,6 +102,7 @@ func (l *ownedListener) Close() error {
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
+	commandutil.Background(cmd)
 	cmd.WaitDelay = time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
