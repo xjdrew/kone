@@ -289,6 +289,11 @@ func cidrChanges(a, b *kone.KoneConfig) bool {
 func (c *Controller) Save(request SaveRequest) (map[string]any, error) {
 	c.actions.Lock()
 	defer c.actions.Unlock()
+	return c.saveLocked(request)
+}
+
+// Caller holds c.actions so resets and lifecycle changes cannot race a save.
+func (c *Controller) saveLocked(request SaveRequest) (map[string]any, error) {
 	c.mu.Lock()
 	current := cloneDocument(c.doc)
 	repair := c.configError != ""

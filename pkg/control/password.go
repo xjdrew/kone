@@ -160,6 +160,9 @@ func (c *Controller) passwordSession(password string, remote bool) (string, *Ses
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if subtle.ConstantTimeCompare(credential.Hash, c.credentials.Hash) != 1 {
+		return "", nil, errors.New("password changed; sign in again")
+	}
 	for hash, session := range c.sessions {
 		if !c.now().Before(session.Expires) {
 			delete(c.sessions, hash)
@@ -170,6 +173,63 @@ func (c *Controller) passwordSession(password string, remote bool) (string, *Ses
 	}
 	token, session := c.newSession("admin", remote)
 	return token, session, nil
+}
+
+func (c *Controller) changePassword(w http.ResponseWriter, r *http.Request, session *Session) {
+	var input struct {
+		Current  string `json:"current_password"`
+		Password string `json:"password"`
+		Confirm  string `json:"confirm_password"`
+	}
+	if readJSON(w, r, &input) != nil || !validPassword(input.Current) || !validPassword(input.Password) || input.Password != input.Confirm {
+		apiError(w, 400, "password", "Use matching passwords of at least 8 characters and at most 128 UTF-8 bytes")
+		return
+	}
+	c.mu.Lock()
+	credential := *c.credentials
+	c.mu.Unlock()
+	select {
+	case credential.slots <- struct{}{}:
+		defer func() { <-credential.slots }()
+	default:
+		apiError(w, 429, "busy", "Password verification is busy; retry later")
+		return
+	}
+	if subtle.ConstantTimeCompare(passwordKey(input.Current, credential.Salt), credential.Hash) != 1 {
+		apiError(w, 403, "current_password", "Current management password is incorrect")
+		return
+	}
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		apiError(w, 500, "password", "Could not prepare the management password")
+		return
+	}
+	next := passwordCredentials{Version: 1, Salt: salt, Hash: passwordKey(input.Password, salt)}
+	data, _ := json.Marshal(next)
+	c.mu.Lock()
+	sessionCurrent := false
+	for _, active := range c.sessions {
+		if active.ID == session.ID && c.now().Before(active.Expires) {
+			sessionCurrent = true
+			break
+		}
+	}
+	if c.closed || subtle.ConstantTimeCompare(credential.Hash, c.credentials.Hash) != 1 || !sessionCurrent {
+		c.mu.Unlock()
+		apiError(w, 409, "password_changed", "Management session or password changed; sign in again")
+		return
+	}
+	if err := atomicWrite(filepath.Join(c.directory, "auth.json"), data); err != nil {
+		c.mu.Unlock()
+		apiError(w, 500, "password", "Could not save the management password")
+		return
+	}
+	c.credentials.Version, c.credentials.Salt, c.credentials.Hash = next.Version, next.Salt, next.Hash
+	c.sessions = map[string]*Session{}
+	c.pairs = map[string]Pairing{}
+	token, owner := c.newSession("admin", session.Remote)
+	c.mu.Unlock()
+	writeSession(w, r, token, owner)
 }
 
 func writeSession(w http.ResponseWriter, r *http.Request, token string, session *Session) {

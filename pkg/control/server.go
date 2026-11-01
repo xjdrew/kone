@@ -155,6 +155,8 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		key = session.ID + ":" + key
 	}
 	switch {
+	case path == "auth/password" && r.Method == http.MethodPut:
+		c.changePassword(w, r, session)
 	case path == "state" && r.Method == http.MethodGet:
 		state := c.State()
 		writeJSON(w, 200, map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role, "remote_session": session.Remote, "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf, "capture_locked": state.CaptureLocked})
@@ -213,6 +215,10 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 	case (path == "config/import" || path == "config/import/validate") && r.Method == http.MethodPost:
 		c.importConfiguration(w, r, path == "config/import/validate")
 	case path == "config/defaults" && r.Method == http.MethodPost:
+		if session.Remote || !localRemote(r) {
+			apiError(w, 403, "local_only", "Reset all configuration from the local KONE console")
+			return
+		}
 		var request struct {
 			BaseVersion uint64 `json:"base_version"`
 		}
@@ -220,12 +226,7 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 			respondError(err)
 			return
 		}
-		c.mu.Lock()
-		inbound := c.doc.Inbound
-		c.mu.Unlock()
-		inbound.Enabled = true
-		confirmed := false
-		value, err := c.Save(SaveRequest{BaseVersion: request.BaseVersion, Config: jsonConfig(managementDefaults()), Inbound: inbound, DirectOnlyConfirmed: &confirmed})
+		value, err := c.ResetConfiguration(r.Context(), request.BaseVersion)
 		if err != nil {
 			respondError(err)
 			return
