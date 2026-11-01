@@ -19,12 +19,7 @@ func TestManagementPasswordChangeRevokesOldSessionsAndPersists(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	server := httptest.NewServer(c.Handler())
 	t.Cleanup(server.Close)
-	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
-	// A real password change verifies the old Argon2 key and derives the new
-	// one. Race-instrumented, shared runners need a separate bounded budget;
-	// ordinary management requests retain their short timeout.
-	passwordChangeClient := *client
-	passwordChangeClient.Timeout = 30 * time.Second
+	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}}
 	call := func(method, path string, body any, cookie *http.Cookie, csrf string) (int, map[string]any, *http.Cookie) {
 		data, err := json.Marshal(body)
 		require.NoError(t, err)
@@ -34,11 +29,7 @@ func TestManagementPasswordChangeRevokesOldSessionsAndPersists(t *testing.T) {
 			r.AddCookie(cookie)
 			r.Header.Set("X-CSRF-Token", csrf)
 		}
-		requestClient := client
-		if method == http.MethodPut && path == "auth/password" {
-			requestClient = &passwordChangeClient
-		}
-		response, err := requestClient.Do(r)
+		response, err := client.Do(r)
 		require.NoError(t, err)
 		defer response.Body.Close()
 		var result map[string]any

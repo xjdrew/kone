@@ -3,6 +3,74 @@ import { createHash } from "node:crypto";
 
 const start = "2026-11-01T00:00:00Z";
 const end = "2026-11-01T00:00:01Z";
+const logSequenceBase = 9007199254740991n;
+function logFixture() {
+  const records = Array.from({ length: 360 }, (_, index) => ({
+    id: String(logSequenceBase + BigInt(index + 1)),
+    time: new Date(Date.parse(start) + index * 1000).toISOString(),
+    level: ["DEBUG", "INFO", "WARN", "ERROR"][index % 4],
+    source: ["management", "helper", "desktop"][index % 3],
+    message: `Runtime event ${String(index + 1).padStart(3, "0")}: ${index % 4 === 3 ? "connection failed" : "processing lifecycle update"}`,
+    attrs: { event: index + 1, stage: index % 2 ? "connect" : "ready", destination: "proxy.example:443", note: index === 355 ? "<img src=x onerror=alert(1)>" : "local observation" },
+  }));
+  records.push(
+    { id: String(logSequenceBase + 361n), time: new Date(Date.parse(start) + 360000).toISOString(), level: "INFO", source: "management", message: "Management service ready", attrs: { state: "ready" } },
+    { id: String(logSequenceBase + 362n), time: new Date(Date.parse(start) + 361000).toISOString(), level: "ERROR", source: "helper", message: "TUN startup failed", attrs: { stage: "start", endpoint: "http://REDACTED@proxy.invalid" } },
+  );
+  return records;
+}
+
+function runtimeLogPage(data, query) {
+  const levels = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
+  const minimum = levels[(query.min_level || "info").toUpperCase()];
+  const limit = Number(query.limit || 100);
+  if (query.after !== undefined && query.before !== undefined || query.before === "0" || minimum === undefined || !Number.isInteger(limit) || limit < 1 || limit > 200)
+    return { error: { message: "Invalid runtime log query" } };
+  const records = [...data.logRecords].sort((left, right) => BigInt(left.id) < BigInt(right.id) ? -1 : BigInt(left.id) > BigInt(right.id) ? 1 : 0);
+  const sequence = records.at(-1)?.id || "0";
+  const matches = record => levels[record.level] >= minimum && (!query.source || record.source === query.source)
+    && (!query.from || Date.parse(record.time) >= Date.parse(query.from)) && (!query.to || Date.parse(record.time) <= Date.parse(query.to));
+  let selected, next = sequence, more;
+  if (query.after !== undefined) {
+    let after = BigInt(query.after);
+    if (after > BigInt(sequence)) after = 0n;
+    const pending = records.filter(record => BigInt(record.id) > after);
+    selected = [];
+    let scanned = -1;
+    for (const [index, record] of pending.entries()) {
+      scanned = index;
+      next = record.id;
+      if (matches(record)) selected.push(record);
+      if (selected.length === limit) break;
+    }
+    more = scanned < pending.length - 1;
+    if (!more) next = sequence;
+  } else {
+    const matching = records.filter(record => (!query.before || BigInt(record.id) < BigInt(query.before)) && matches(record));
+    selected = matching.slice(-limit);
+    more = matching.length > limit;
+  }
+  return { records: structuredClone(selected), next_cursor: next, oldest_cursor: records[0]?.id || "1", dropped: 0, gap: false, has_more: more, capacity: 1000, bytes: 0, helper: { connected: data.state === "running" } };
+}
+
+function appendRuntimeLog(data, record = {}) {
+  const value = { id: String(BigInt(data.logRecords.at(-1)?.id || "0") + 1n), time: new Date().toISOString(), level: "INFO", source: "management", message: "New runtime observation", attrs: { stage: "ready" }, ...record };
+  data.logRecords.push(value);
+  return value;
+}
+
+async function localLogTime(page, iso) {
+  return page.evaluate(value => {
+    const date = new Date(value);
+    const pad = part => String(part).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }, iso);
+}
+
+async function displayedLogIDs(page) {
+  return page.locator("#runtime-logs [data-log-id]").evaluateAll(rows => rows.map(row => row.getAttribute("data-log-id")));
+}
+
 function fixture() {
   const records = [
     {
@@ -127,10 +195,7 @@ function fixture() {
     lanState: { enabled: false, transport: "https", trust_required: true },
     authorizedSessions: [{ id: "phone-1", role: "read", expires: end }],
     geoState: { saved: { version: "builtin", source: "legacy bundled dataset", license: "bundled notices", sha256: "a".repeat(64), ranges: 0, builtin: true }, restart_required: false },
-    logRecords: [
-      { id: "1", time: start, level: "INFO", source: "management", message: "Management service ready", attrs: { state: "ready" } },
-      { id: "2", time: start, level: "ERROR", source: "helper", message: "TUN startup failed", attrs: { stage: "start", endpoint: "http://REDACTED@proxy.invalid" } },
-    ],
+    logRecords: logFixture(),
   };
 }
 
@@ -521,13 +586,18 @@ async function mount(page, options = {}) {
     if (path === "/diagnostics" && method === "GET")
       return respond({ operations: data.diagnosticOperations || [] });
     if (path === "/logs") {
+      if (data.failLogBefore && url.searchParams.has("before")) return route.abort("connectionfailed");
       if (data.logsUnavailable) return respond({ error: { message: "logs temporarily unavailable" } }, 503);
-      let records = data.logRecords;
-      const levels = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
-      records = records.filter((record) => (!url.searchParams.has("after") || BigInt(record.id) > BigInt(url.searchParams.get("after"))) &&
-        levels[record.level] >= (levels[(url.searchParams.get("min_level") || "info").toUpperCase()] || 0) &&
-        (!url.searchParams.get("source") || record.source === url.searchParams.get("source")));
-      return respond({ records, next_cursor: data.logRecords.at(-1)?.id || "0", dropped: 0, gap: false, has_more: false, capacity: 1000, helper: { connected: data.state === "running" } });
+      const query = Object.fromEntries(url.searchParams);
+      const result = runtimeLogPage(data, query);
+      if (data.deferLogs && (!data.deferLogs.match || data.deferLogs.match(query))) {
+        const deferred = data.deferLogs;
+        data.deferLogs = null;
+        deferred.started = true;
+        deferred.query = query;
+        await deferred.promise;
+      }
+      return respond(result, result.error ? 400 : 200);
     }
     if (path === "/diagnostics")
       return respond({ id: "diag-1", status: "running" }, 202);
@@ -589,11 +659,21 @@ async function mount(page, options = {}) {
     if (path === "/pairing")
       return respond({ code: "12345678", role: body.role, expires: end });
     if (path === "/rules/simulate")
-      return respond({
+      return respond(data.simulationResult || {
         outbound: "Proxy A",
-        rule: "rule-1",
-        protocol: "tcp",
-        source: "saved-config",
+        effective_outbound: "Proxy A",
+        rule_id: "rule-1",
+        rule_type: "DOMAIN",
+        rule_name: "DOMAIN example.com",
+        rule_order: 1,
+        rule_source: "config",
+        protocol: body.protocol,
+        port: Number(body.target?.split(":").at(-1)) || 443,
+        config_version: data.config.version,
+        protected: false,
+        capture_only: false,
+        fallback: false,
+        reason: "ordered rule match",
       });
     if (path === "/lifecycle/preflight")
       if (data.disabledTUN) return respond({ error: { message: "enable the TUN inbound before starting capture" } }, 400);
@@ -1465,6 +1545,275 @@ test("@compat configuration pages start as saved-state displays and cancel disca
   expect(data.writes).toEqual([]);
 });
 
+test("@compat built-in outbounds stay first, read-only and readable with exact saved references", async ({ page }, testInfo) => {
+  const initial = fixture();
+  initial.config.config.rules.splice(1, 0,
+    { id: "expired-direct", type: "DOMAIN", pattern: "expired.example", outbound: "direct", "expires-at": "2000-01-01T00:00:00Z" },
+    { id: "reject-rule", type: "DOMAIN", pattern: "blocked.example", outbound: "reject" },
+  );
+  const data = await mount(page, { config: initial.config, role: "read" });
+  await navigate(page, "outbounds");
+  await expect(page.locator("[data-builtin-outbounds]")).toBeVisible();
+  expect(await page.evaluate(() => Boolean(document.querySelector("[data-builtin-outbounds]").compareDocumentPosition(document.querySelector("[data-outbound-row]")) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true);
+  await expect(page.locator('[data-outbound-references="direct"]')).toHaveText("2 条规则");
+  await expect(page.locator('[data-outbound-references="reject"]')).toHaveText("1 条规则");
+  await expect(page.locator('[data-outbound-references="Proxy A"]')).toHaveText("1 条规则");
+  for (const name of ["direct", "reject"]) {
+    const builtin = page.locator(`[data-builtin-outbound="${name}"]`);
+    await builtin.locator(":scope > summary").click();
+    await expect(builtin).toHaveJSProperty("open", true);
+    await expect(builtin.locator("button,input,select")).toHaveCount(0);
+  }
+  await expect(page.locator('[data-builtin-outbound="direct"]')).toContainText("已到期");
+  await expect(page.locator('[data-builtin-outbound="direct"]')).toContainText("FINAL");
+  await expect(page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
+  await expect(page.getByRole("heading", { name: "代理出站", exact: true })).toHaveCount(1);
+  await page.screenshot({ path: testInfo.outputPath("outbounds-compact-with-builtins.png"), fullPage: true, animations: "disabled" });
+  await page.setViewportSize({ width: 320, height: 760 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.screenshot({ path: testInfo.outputPath("outbounds-builtins-320px.png"), fullPage: true, animations: "disabled" });
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat an implicit direct fallback is explained without counting a saved rule", async ({ page }) => {
+  const initial = fixture();
+  initial.config.config.rules.pop();
+  const data = await mount(page, { config: initial.config });
+  await navigate(page, "outbounds");
+  await expect(page.locator('[data-outbound-references="direct"]')).toHaveText("0 条规则");
+  await page.locator('[data-builtin-outbound="direct"] > summary').click();
+  await expect(page.locator('[data-builtin-outbound="direct"]')).toContainText("没有显式 FINAL");
+  await expect(page.locator('[data-builtin-outbound="direct"]')).toContainText("内置默认兜底");
+  await expect(page.locator('[data-builtin-outbound="direct"] button')).toHaveCount(0);
+  expect(data.writes).toEqual([]);
+});
+
+test("outbound reference counts follow saved rule edits, proxy rename and rule deletion", async ({ page }) => {
+  const initial = fixture();
+  initial.config.config.rules.splice(1, 0, { id: "second-proxy-rule", type: "DOMAIN-SUFFIX", pattern: "office.example", outbound: "Proxy A" });
+  const data = await mount(page, { config: initial.config });
+  await navigate(page, "outbounds");
+  await expect(page.locator('[data-outbound-references="Proxy A"]')).toHaveText("2 条规则");
+  await navigate(page, "rules");
+  await page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await page.locator("#rule-outbound-0").selectOption("reject");
+  await page.locator("#editor-dialog [data-editor-save]").click();
+  await expect(page.locator("#editor-dialog")).not.toBeVisible();
+  await navigate(page, "outbounds");
+  await expect(page.locator('[data-outbound-references="Proxy A"]')).toHaveText("1 条规则");
+  await expect(page.locator('[data-outbound-references="reject"]')).toHaveText("1 条规则");
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await page.locator("#outbound-name-0").fill("Office");
+  await saveOutbound(page);
+  await confirmReferencedOutboundRename(page);
+  await dismissOutboundTestSuggestion(page);
+  await expect(page.locator('[data-outbound-references="Office"]')).toHaveText("1 条规则");
+  await expect(page.locator('[data-outbound-references="Proxy A"]')).toHaveCount(0);
+  expect(data.config.config.rules[1]).toMatchObject({ id: "second-proxy-rule", outbound: "Office" });
+  await navigate(page, "rules");
+  await page.locator('[data-rule-row="1"]').getByRole("button", { name: "删除", exact: true }).click();
+  await page.getByRole("button", { name: "确认保存", exact: true }).click();
+  await expect(page.locator('[data-rule-row="1"]')).toHaveCount(0);
+  await navigate(page, "outbounds");
+  await expect(page.locator('[data-outbound-references="Office"]')).toHaveText("0 条规则");
+  await expect(page.locator('[data-outbound-references="reject"]')).toHaveText("1 条规则");
+  await expect(page.locator('[data-outbound-references="direct"]')).toHaveText("1 条规则");
+  expect(data.writes.filter(write => write.path === "/config")).toHaveLength(3);
+});
+
+test("@compat a manually added domain rule defaults to all protocols and ports", async ({ page }) => {
+  const data = await mount(page);
+  await navigate(page, "rules");
+  await page.locator("[data-rule-add]").click();
+  await expect(page.locator("#rule-type-1")).toHaveValue("DOMAIN");
+  expect(await page.locator("#rule-type-1 option").evaluateAll(options => options.map(option => option.value))).not.toContain("FINAL");
+  await expect(page.locator('[data-editor-advanced="rule"]')).not.toHaveAttribute("open", "");
+  await expect(page.locator("#rule-protocol-1")).toHaveValue("");
+  await expect(page.locator("#rule-ports-1")).toHaveValue("");
+  await page.locator("#rule-pattern-1").fill("all-transports.example");
+  await page.locator("#editor-dialog [data-editor-save]").click();
+  await expect(page.locator("#editor-dialog")).not.toBeVisible();
+  const saved = data.writes.find(write => write.path === "/config").body.config.rules;
+  expect(saved[1]).toMatchObject({ type: "DOMAIN", pattern: "all-transports.example", outbound: "direct" });
+  expect(Object.hasOwn(saved[1], "protocol")).toBe(false);
+  expect(Object.hasOwn(saved[1], "ports")).toBe(false);
+  expect(saved.at(-1).type).toBe("FINAL");
+  expect(data.writes.some(write => write.path.startsWith("/lifecycle/"))).toBe(false);
+});
+
+test("@compat FINAL stays in its own last group and only its outbound can be edited", async ({ page }, testInfo) => {
+  const initial = fixture();
+  initial.config.config.rules.at(-1).id = "final-stable-id";
+  const data = await mount(page, { config: initial.config });
+  await navigate(page, "rules");
+  await expect(page.locator("[data-rule-row]")).toHaveCount(1);
+  const final = page.locator("[data-rule-final]");
+  await expect(final).toHaveCount(1);
+  await expect(final).toContainText("FINAL");
+  await expect(final.locator("button")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: /添加最终/ })).toHaveCount(0);
+  await expect(page.locator('[data-rule-row="0"] button[aria-label$="下移"]')).toBeDisabled();
+  await page.screenshot({ path: testInfo.outputPath("rules-final-separated.png"), animations: "disabled", fullPage: true });
+  await page.setViewportSize({ width: 320, height: 760 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.screenshot({ path: testInfo.outputPath("rules-final-320px.png"), animations: "disabled", fullPage: true });
+  await page.locator("[data-rule-final-edit]").click();
+  const editor = page.locator("[data-rule-final-editor]");
+  await expect(editor).toBeVisible();
+  await expect(editor.locator("select")).toHaveCount(1);
+  await expect(page.locator("#rule-type-1, #rule-pattern-1, #rule-protocol-1, #rule-ports-1")).toHaveCount(0);
+  await expect(page.locator('[data-editor-advanced="rule"]')).toHaveCount(0);
+  await page.locator("#rule-outbound-1").selectOption("reject");
+  await page.locator("#editor-dialog [data-editor-save]").click();
+  await expect(page.locator("#editor-dialog")).not.toBeVisible();
+  expect(data.writes.find(write => write.path === "/config").body.config.rules.at(-1)).toEqual({ id: "final-stable-id", type: "FINAL", outbound: "reject" });
+  await expect(final).toContainText("reject");
+});
+
+test("@compat an implicit direct FINAL can be cancelled or saved as an explicit fallback", async ({ page }) => {
+  const initial = fixture();
+  initial.config.config.rules.pop();
+  const original = structuredClone(initial.config.config.rules);
+  const data = await mount(page, { config: initial.config });
+  await navigate(page, "rules");
+  await expect(page.locator("[data-rule-final]")).toContainText(/内置.*direct|direct.*内置/);
+  await page.locator("[data-rule-final-edit]").click();
+  await page.locator("#rule-outbound-1").selectOption("reject");
+  await page.locator("#editor-dialog [data-editor-cancel]").click();
+  expect(data.config.config.rules).toEqual(original);
+  expect(data.writes).toEqual([]);
+  await page.locator("[data-rule-final-edit]").click();
+  await expect(page.locator("#rule-outbound-1")).toHaveValue("direct");
+  await page.locator("#rule-outbound-1").selectOption("reject");
+  await page.locator("#editor-dialog [data-editor-save]").click();
+  await expect(page.locator("#editor-dialog")).not.toBeVisible();
+  const saved = data.writes.find(write => write.path === "/config").body.config.rules;
+  expect(saved.slice(0, -1)).toEqual(original);
+  expect(saved.at(-1)).toMatchObject({ type: "FINAL", outbound: "reject" });
+  expect(Object.hasOwn(saved.at(-1), "protocol")).toBe(false);
+  expect(Object.hasOwn(saved.at(-1), "ports")).toBe(false);
+});
+
+test("@compat converting a legacy scoped FINAL with the same outbound requires confirmation and preserves cancellation", async ({ page }) => {
+  const initial = fixture();
+  initial.config.config.rules[1] = { id: "scoped-final", type: "FINAL", protocol: "tcp", ports: [443], outbound: "direct" };
+  const legacy = structuredClone(initial.config.config.rules[1]);
+  const data = await mount(page, { config: initial.config });
+  await navigate(page, "rules");
+  await page.locator("[data-rule-final-edit]").click();
+  await expect(page.locator("[data-rule-final-scope]")).toContainText("443");
+  await expect(page.locator("#rule-outbound-1")).toHaveValue("direct");
+  await expect(page.locator("#editor-dialog [data-editor-save]")).toBeEnabled();
+  await page.locator("#editor-dialog [data-editor-save]").click();
+  await expect(page.locator("[data-rule-final-confirm]")).toBeVisible();
+  expect(data.requests.some(request => request.path === "/config/validate")).toBe(false);
+  await page.getByRole("button", { name: "返回修改", exact: true }).click();
+  await expect(page.locator("#rule-outbound-1")).toHaveValue("direct");
+  expect(data.config.config.rules[1]).toEqual(legacy);
+  await page.locator("#editor-dialog [data-editor-cancel]").click();
+  expect(data.writes).toEqual([]);
+  await page.locator("[data-rule-final-edit]").click();
+  await expect(page.locator("#rule-outbound-1")).toHaveValue("direct");
+  await page.locator("#editor-dialog [data-editor-save]").click();
+  await page.locator("[data-rule-final-confirm]").click();
+  await expect(page.locator("#editor-dialog")).not.toBeVisible();
+  expect(data.writes.find(write => write.path === "/config").body.config.rules[1]).toEqual({ id: "scoped-final", type: "FINAL", outbound: "direct" });
+});
+
+test("@compat read-only rules retain a visible FINAL without permitting any mutation", async ({ page }) => {
+  const data = await mount(page, { role: "read" });
+  await navigate(page, "rules");
+  await expect(page.locator("[data-rule-final]")).toContainText("direct");
+  await expect(page.locator("[data-rule-final-edit]")).toBeDisabled();
+  await expect(page.locator("[data-rule-add]")).toBeDisabled();
+  await expect(page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "模拟规则匹配", exact: true })).toBeDisabled();
+  expect(data.writes).toEqual([]);
+});
+
+for (const [type, invalid, valid] of [
+  ["DOMAIN", "https://secure.example/path", "secure.example"],
+  ["DOMAIN-SUFFIX", "*.example.com", "example.com"],
+  ["DOMAIN-KEYWORD", "two words", "video"],
+  ["IP-CIDR", "2001:db8::/32", "192.0.2.0/24"],
+  ["IP-CIDR6", "192.0.2.0/24", "2001:db8::/32"],
+]) {
+  test(`${type} explains and validates its matching format before saving`, async ({ page }) => {
+    const initial = fixture();
+    initial.config.config.core["ipv6-network"] = "fd7a:203::1/120";
+    const data = await mount(page, { config: initial.config });
+    await navigate(page, "rules");
+    await page.locator("[data-rule-add]").click();
+    await page.locator("#rule-type-1").selectOption(type);
+    await expect(page.locator("[data-rule-pattern-help]")).not.toHaveText("");
+    await page.locator("#rule-pattern-1").fill(invalid);
+    await expect(page.locator("[data-rule-pattern-error]")).toBeVisible();
+    await page.locator("#editor-dialog [data-editor-save]").click();
+    await expect(page.locator("#rule-pattern-1")).toHaveValue(invalid);
+    expect(data.requests.some(request => request.path === "/config/validate" || request.path === "/config" && request.method === "PUT")).toBe(false);
+    await page.locator("#rule-pattern-1").fill(valid);
+    await expect(page.locator("[data-rule-pattern-error]")).not.toBeVisible();
+    await page.locator("#editor-dialog [data-editor-save]").click();
+    await expect(page.locator("#editor-dialog")).not.toBeVisible();
+    expect(data.writes.find(write => write.path === "/config").body.config.rules[1]).toMatchObject({ type, pattern: valid });
+  });
+}
+
+test("@compat GeoIP rules offer offline country names and save the selected country code", async ({ page }, testInfo) => {
+  const data = await mount(page);
+  await navigate(page, "rules");
+  await page.locator("[data-rule-add]").click();
+  await page.locator("#rule-type-1").selectOption("GEOIP");
+  const countries = page.locator("select#rule-pattern-1");
+  await expect(countries).toBeVisible();
+  await expect(countries.locator('option[value="CN"]')).toHaveText(/中国.*CN|CN.*中国/);
+  await expect(countries.locator('option[value="US"]')).toHaveText(/美国.*US|US.*美国/);
+  expect(await countries.locator("option").count()).toBeGreaterThanOrEqual(250);
+  await countries.selectOption("CN");
+  await page.screenshot({ path: testInfo.outputPath("geoip-rule-editor.png"), animations: "disabled", fullPage: true });
+  await page.locator("#editor-dialog [data-editor-save]").click();
+  await expect(page.locator("#editor-dialog")).not.toBeVisible();
+  expect(data.writes.find(write => write.path === "/config").body.config.rules[1]).toMatchObject({ type: "GEOIP", pattern: "CN" });
+});
+
+for (const code of ["AA", "ZZ"]) {
+  test(`@compat editing an existing GeoIP ${code} code never replaces it with the first country`, async ({ page }) => {
+    const initial = fixture();
+    initial.config.config.rules[0] = { id: "legacy-geoip", type: "GEOIP", pattern: code, outbound: "direct" };
+    const data = await mount(page, { config: initial.config });
+    await navigate(page, "rules");
+    await page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+    await expect(page.locator("select#rule-pattern-0")).toHaveValue(code);
+    await expect(page.locator(`select#rule-pattern-0 option[value="${code}"]`)).toContainText(code);
+    await page.locator("#rule-outbound-0").selectOption("reject");
+    await page.locator("#editor-dialog [data-editor-save]").click();
+    await expect(page.locator("#editor-dialog")).not.toBeVisible();
+    expect(data.writes.find(write => write.path === "/config").body.config.rules[0]).toMatchObject({ id: "legacy-geoip", type: "GEOIP", pattern: code, outbound: "reject" });
+  });
+}
+
+test("a rule editor retains its stable identity and draft when saved rules are reordered externally", async ({ page }) => {
+  const initial = fixture();
+  initial.config.config.rules.splice(1, 0, { id: "rule-2", type: "DOMAIN", pattern: "second.example", outbound: "direct" });
+  const data = await mount(page, { config: initial.config });
+  await navigate(page, "rules");
+  await page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  data.config.config.rules.splice(0, 2, data.config.config.rules[1], data.config.config.rules[0]);
+  data.config.version = 2;
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.locator("[data-editor-conflict]")).toBeVisible();
+  await expect(page.locator("#rule-pattern-0")).toHaveValue("example.com");
+  await page.locator("#rule-pattern-0").fill("edited-original.example");
+  await page.locator("#editor-dialog [data-editor-save]").click();
+  await expect(page.locator("#page-notice")).toContainText("其他页面或文件修改");
+  await expect(page.locator("#rule-pattern-0")).toHaveValue("edited-original.example");
+  const saved = data.writes.find(write => write.path === "/config");
+  expect(saved.body.base_version).toBe(1);
+  expect(saved.body.config.rules[0]).toMatchObject({ id: "rule-1", pattern: "edited-original.example" });
+  expect(data.config.version).toBe(2);
+  expect(data.config.config.rules[0]).toMatchObject({ id: "rule-2", pattern: "second.example" });
+});
+
 test("@compat running capture locks TUN while rule edits save and hot-apply", async ({ page }) => {
   const data = await mount(page);
   data.state = "running";
@@ -1785,8 +2134,9 @@ test("@compat uses embedded offline assets, removes token fragment, and renders 
   page,
 }, testInfo) => {
   const external = [];
+  const localOrigin = new URL(testInfo.project.use.baseURL).origin;
   page.on("request", (request) => {
-    if (!request.url().startsWith("http://127.0.0.1:4173/"))
+    if (new URL(request.url()).origin !== localOrigin)
       external.push(request.url());
   });
   const data = await mount(page);
@@ -2070,7 +2420,7 @@ test("@compat weak network recovery refreshes real state without repeating a mut
 test("@compat unavailable capture telemetry keeps management and rules editable, then recovers", async ({ page }) => {
   const data = await mount(page);
   await navigate(page, "rules");
-  const add = page.getByRole("button", { name: "＋ 添加精确域名", exact: true });
+  const add = page.locator("[data-rule-add]");
   await expect(add).toBeEnabled();
   data.state = "running";
   data.telemetryUnavailable = true;
@@ -2103,6 +2453,285 @@ test("@compat disabled TUN explains the saved inbound requirement without starti
   expect(data.requests.some((request) => request.path === "/readiness")).toBe(false);
 });
 
+test("@compat diagnostic polling preserves filter focus, unfinished time input, expanded fields and reading position", async ({ page }, testInfo) => {
+  const data = await mount(page, { bootstrapPage: "diagnostics" });
+  await expect(page.locator("[data-diagnostics-root]")).toBeVisible();
+  await expect(page.locator("[data-diagnostics-tools]")).toBeVisible();
+  await expect(page.locator("#log-page-size")).toHaveValue("100");
+  await expect(page.locator("[data-log-time-range]")).toHaveJSProperty("open", false);
+  await expect(page.locator("[data-log-time-toggle]")).toHaveCount(1);
+  await expect(page.locator("#log-from, #log-to").filter({ visible: true })).toHaveCount(0);
+  await expect(page.locator("[data-log-apply-time]")).not.toBeVisible();
+  await page.locator("#log-level").selectOption("debug");
+  await page.locator("#log-source").selectOption("helper");
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(100);
+  await expect.poll(() => data.requests.filter(request => request.path === "/logs").at(-1)?.query.source).toBe("helper");
+  await expect.poll(() => displayedLogIDs(page)).toEqual(runtimeLogPage(data, { min_level: "debug", source: "helper", limit: "100" }).records.map(record => record.id).reverse());
+  await page.evaluate(() => {
+    window.retainedDiagnosticsRoot = document.querySelector("[data-diagnostics-root]");
+    window.retainedLogFilter = document.querySelector("#log-source");
+    window.retainedLogRow = document.querySelector("[data-log-id]");
+  });
+  await page.locator("#log-source").focus();
+  let reads = data.requests.filter(request => request.path === "/logs").length;
+  await expect.poll(() => data.requests.filter(request => request.path === "/logs").length).toBeGreaterThan(reads);
+  await expect(page.locator("#log-source")).toBeFocused();
+  await expect(page.locator("#log-source")).toHaveValue("helper");
+  await page.screenshot({ path: testInfo.outputPath("diagnostics-time-control-collapsed.png"), fullPage: true, animations: "disabled" });
+  const first = (await displayedLogIDs(page))[0];
+  await page.locator(`[data-log-fields="${first}"] > summary`).click();
+  await page.locator("#runtime-logs").evaluate(node => { node.scrollTop = 140; });
+  const position = await page.locator("#runtime-logs").evaluate(node => node.scrollTop);
+  expect(position).toBeGreaterThan(0);
+  await page.locator("[data-log-time-toggle]").click();
+  const unfinished = await localLogTime(page, "2026-11-01T00:01:00Z");
+  await page.locator("#log-from").fill(unfinished);
+  await page.locator("#log-from").focus();
+  const ids = await displayedLogIDs(page);
+  reads = data.requests.filter(request => request.path === "/logs").length;
+  appendRuntimeLog(data, { source: "helper", level: "WARN", message: "Deferred while reading expanded fields" });
+  await expect.poll(() => data.requests.filter(request => request.path === "/logs").length).toBeGreaterThan(reads);
+  await expect(page.locator("[data-log-pending]")).toBeVisible();
+  await expect(page.locator("#log-from")).toBeFocused();
+  await expect(page.locator("#log-from")).toHaveValue(unfinished);
+  await expect(page.locator("[data-log-time-range]")).toHaveJSProperty("open", true);
+  await expect(page.locator(`[data-log-fields="${first}"]`)).toHaveJSProperty("open", true);
+  expect(await displayedLogIDs(page)).toEqual(ids);
+  expect(await page.locator("#runtime-logs").evaluate(node => node.scrollTop)).toBe(position);
+  expect(await page.evaluate(() => window.retainedDiagnosticsRoot === document.querySelector("[data-diagnostics-root]") && window.retainedLogFilter === document.querySelector("#log-source") && window.retainedLogRow === document.querySelector(`[data-log-id="${window.retainedLogRow.dataset.logId}"]`))).toBe(true);
+  expect(data.requests.filter(request => request.path === "/logs").every(request => !request.query.from)).toBe(true);
+  await expect(page.locator("#runtime-logs")).not.toContainText("Deferred while reading expanded fields");
+  await expect(page.locator("[data-log-table] th")).toHaveText(["时间", "级别", "来源", "消息", "结构化字段"]);
+  for (const level of ["error", "warn", "debug"]) expect(await page.locator(`[data-log-id].log-level-${level}`).count()).toBeGreaterThan(0);
+  await page.screenshot({ path: testInfo.outputPath("diagnostics-dense-desktop.png"), fullPage: true, animations: "disabled" });
+  await page.setViewportSize({ width: 320, height: 760 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  await page.screenshot({ path: testInfo.outputPath("diagnostics-dense-320px.png"), fullPage: true, animations: "disabled" });
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat compact log messages and field previews keep complete multiline values as safe expandable text", async ({ page }) => {
+  const message = "<img src=x onerror=alert(1)> " + "Detailed connection failure ".repeat(10) + "\nFinal explanation";
+  const fields = { error: "failed\n" + "reason ".repeat(40), target: "example.com:443", stage: "connect", outbound: "Office", nested: { reason: "<script>alert(1)</script>" } };
+  const data = await mount(page, { bootstrapPage: "diagnostics", logRecords: [
+    { id: "9007199254740992", time: start, level: "ERROR", source: "helper", message, attrs: fields },
+    { id: "9007199254740993", time: end, level: "INFO", source: "management", message: "Long message without fields ".repeat(10), attrs: {} },
+  ] });
+  const row = page.locator('[data-log-id="9007199254740992"]');
+  await expect(row.locator(".log-message")).toHaveAttribute("title", message);
+  await expect(row.locator(".log-message")).toHaveCSS("white-space", "nowrap");
+  await expect(row.locator(".log-message")).toHaveCSS("text-overflow", "ellipsis");
+  const summary = row.locator("[data-log-fields] > summary");
+  await expect(summary).toContainText("outbound=Office");
+  const preview = await summary.textContent();
+  expect(preview.length).toBeLessThanOrEqual(120);
+  expect(preview).not.toMatch(/[\r\n]/);
+  await expect(summary).toHaveAttribute("title", /reason reason/);
+  await summary.click();
+  await expect(row.locator(".log-full-message")).toHaveText(message);
+  await expect(row.locator("pre")).toContainText("<script>alert(1)</script>");
+  await expect(page.locator("#runtime-logs img, #runtime-logs script")).toHaveCount(0);
+  const plain = page.locator('[data-log-fields="9007199254740993"]');
+  await expect(plain.locator("summary")).toBeVisible();
+  await plain.locator("summary").click();
+  await expect(plain.locator(".log-full-message")).toContainText("Long message without fields");
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat log history pages use exact exclusive cursors and stay anchored when new records arrive", async ({ page }) => {
+  const data = await mount(page, { bootstrapPage: "diagnostics" });
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(100);
+  const firstPage = runtimeLogPage(data, { min_level: "info", limit: "100" }).records;
+  expect(await displayedLogIDs(page)).toEqual(firstPage.map(record => record.id).reverse());
+  await page.locator("[data-log-older]").click();
+  await expect.poll(() => data.requests.filter(request => request.path === "/logs" && request.query.before).at(-1)?.query.before).toBe(firstPage[0].id);
+  const secondPage = runtimeLogPage(data, { min_level: "info", limit: "100", before: firstPage[0].id }).records;
+  await expect.poll(() => displayedLogIDs(page)).toEqual(secondPage.map(record => record.id).reverse());
+  const row = secondPage.at(-1).id;
+  await page.locator(`[data-log-fields="${row}"] > summary`).click();
+  await page.locator("#runtime-logs").evaluate(node => { node.scrollTop = 100; });
+  const position = await page.locator("#runtime-logs").evaluate(node => node.scrollTop);
+  const reads = data.requests.filter(request => request.path === "/logs").length;
+  appendRuntimeLog(data, { message: "Arrived while a historical page was open" });
+  await expect.poll(() => data.requests.filter(request => request.path === "/logs").length).toBeGreaterThan(reads);
+  await expect(page.locator("[data-log-pending]")).toBeVisible();
+  expect(await displayedLogIDs(page)).toEqual(secondPage.map(record => record.id).reverse());
+  await expect(page.locator(`[data-log-fields="${row}"]`)).toHaveJSProperty("open", true);
+  expect(await page.locator("#runtime-logs").evaluate(node => node.scrollTop)).toBe(position);
+  await page.locator("[data-log-older]").click();
+  const oldestPage = runtimeLogPage(data, { min_level: "info", limit: "100", before: secondPage[0].id }).records;
+  await expect.poll(() => displayedLogIDs(page)).toEqual(oldestPage.map(record => record.id).reverse());
+  await expect(page.locator("[data-log-older]")).toBeDisabled();
+  await page.locator("[data-log-newer]").click();
+  await expect.poll(() => displayedLogIDs(page)).toEqual(secondPage.map(record => record.id).reverse());
+  await page.locator("[data-log-newer]").click();
+  await expect.poll(() => displayedLogIDs(page)).toEqual(firstPage.map(record => record.id).reverse());
+  await page.locator("[data-log-latest]").click();
+  await expect(page.locator("#runtime-logs")).toContainText("Arrived while a historical page was open");
+  await expect(page.locator("[data-log-pending]")).not.toBeVisible();
+  await expect(page.locator("[data-log-newer]")).toBeDisabled();
+  await page.locator("#log-page-size").selectOption("50");
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(50);
+  await expect.poll(() => data.requests.filter(request => request.path === "/logs").at(-1)?.query.limit).toBe("50");
+  await page.locator("#log-page-size").selectOption("200");
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(200);
+  expect(data.requests.filter(request => request.path === "/logs").every(request => !(request.query.before && request.query.after))).toBe(true);
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat a failed older-log request keeps the current page and retries the same cursor without duplicate history", async ({ page }) => {
+  const data = await mount(page, { bootstrapPage: "diagnostics" });
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(100);
+  const first = runtimeLogPage(data, { min_level: "info", limit: "100" }).records;
+  const firstIDs = first.map(record => record.id).reverse();
+  const before = first[0].id;
+  data.failLogBefore = true;
+  await page.locator("[data-log-older]").click();
+  await expect(page.locator("[data-log-notices]")).toContainText("日志暂不可用");
+  await expect(page.locator("[data-log-older]")).toBeEnabled();
+  expect(await displayedLogIDs(page)).toEqual(firstIDs);
+  await expect(page.locator("[data-log-page-status]")).toContainText("最新页");
+  await expect(page.locator("[data-log-newer]")).toBeDisabled();
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  data.failLogBefore = false;
+  await page.locator("[data-log-older]").click();
+  const secondIDs = runtimeLogPage(data, { min_level: "info", limit: "100", before }).records.map(record => record.id).reverse();
+  await expect.poll(() => displayedLogIDs(page)).toEqual(secondIDs);
+  expect(data.requests.filter(request => request.path === "/logs" && request.query.before).map(request => request.query.before)).toEqual([before, before]);
+  await expect(page.locator("[data-log-notices]")).not.toContainText("日志暂不可用");
+  await page.locator("[data-log-newer]").click();
+  await expect.poll(() => displayedLogIDs(page)).toEqual(firstIDs);
+  await expect(page.locator("[data-log-newer]")).toBeDisabled();
+  await page.locator("[data-log-older]").click();
+  await expect.poll(() => displayedLogIDs(page)).toEqual(secondIDs);
+  expect(new Set(await displayedLogIDs(page)).size).toBe(100);
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat log navigation responds while an older background poll is still pending", async ({ page }) => {
+  const data = await mount(page, { bootstrapPage: "diagnostics" });
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(100);
+  const first = runtimeLogPage(data, { min_level: "info", limit: "100" }).records;
+  const firstIDs = first.map(record => record.id).reverse();
+  const secondIDs = runtimeLogPage(data, { min_level: "info", limit: "100", before: first[0].id }).records.map(record => record.id).reverse();
+  await page.locator("[data-log-older]").click();
+  await expect.poll(() => displayedLogIDs(page)).toEqual(secondIDs);
+  let releaseFirst, releaseSecond;
+  const firstPoll = { promise: new Promise(resolve => { releaseFirst = resolve; }), started: false, match: query => query.after !== undefined };
+  const secondPoll = { promise: new Promise(resolve => { releaseSecond = resolve; }), started: false, match: query => query.after !== undefined };
+  try {
+    data.deferLogs = firstPoll;
+    await expect.poll(() => firstPoll.started).toBe(true);
+    await page.locator("[data-log-newer]").click();
+    await expect.poll(() => displayedLogIDs(page)).toEqual(firstIDs);
+    data.deferLogs = secondPoll;
+    releaseFirst();
+    await expect.poll(() => secondPoll.started).toBe(true);
+    await page.locator("[data-log-older]").click();
+    await expect.poll(() => displayedLogIDs(page)).toEqual(secondIDs);
+  } finally {
+    releaseFirst();
+    releaseSecond();
+  }
+  await expect(page.locator("[data-log-page-status]")).toContainText("历史页");
+  expect(await displayedLogIDs(page)).toEqual(secondIDs);
+  await page.locator("[data-log-newer]").click();
+  await expect.poll(() => displayedLogIDs(page)).toEqual(firstIDs);
+  await expect(page.locator("[data-log-newer]")).toBeDisabled();
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat log time filters include both endpoints and validate unfinished or inverted ranges without requests", async ({ page }, testInfo) => {
+  const data = await mount(page, { bootstrapPage: "diagnostics" });
+  await page.locator("#log-level").selectOption("debug");
+  await page.locator("[data-log-time-toggle]").click();
+  const from = "2026-11-01T00:01:00.000Z", to = "2026-11-01T00:02:00.000Z";
+  await page.locator("#log-from").fill(await localLogTime(page, from));
+  await page.locator("#log-to").fill(await localLogTime(page, to));
+  expect(data.requests.filter(request => request.path === "/logs").every(request => !request.query.from && !request.query.to)).toBe(true);
+  await page.locator("[data-log-apply-time]").click();
+  await expect.poll(() => data.requests.filter(request => request.path === "/logs" && request.query.from).at(-1)?.query).toMatchObject({ from, to });
+  const selected = data.logRecords.filter(record => Date.parse(record.time) >= Date.parse(from) && Date.parse(record.time) <= Date.parse(to));
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(61);
+  expect(await displayedLogIDs(page)).toEqual(selected.map(record => record.id).reverse());
+  await expect(page.locator("[data-log-time-toggle]")).toHaveText("时间范围 · 已应用");
+  await page.locator("[data-log-time-toggle]").click();
+  await expect(page.locator("#log-from")).not.toBeVisible();
+  await expect(page.locator("[data-log-time-toggle]")).toHaveCount(1);
+  await page.screenshot({ path: testInfo.outputPath("diagnostics-time-applied.png"), fullPage: true, animations: "disabled" });
+  await page.getByRole("button", { name: "暂停日志刷新", exact: true }).click();
+  await page.locator("[data-log-time-toggle]").click();
+  await page.locator("#log-from").fill(await localLogTime(page, "2026-11-01T00:03:00Z"));
+  const reads = data.requests.filter(request => request.path === "/logs").length;
+  await page.locator("[data-log-apply-time]").click();
+  await expect(page.locator("[data-log-filter-error]")).toBeVisible();
+  expect(data.requests.filter(request => request.path === "/logs")).toHaveLength(reads);
+  expect(await displayedLogIDs(page)).toEqual(selected.map(record => record.id).reverse());
+  await page.locator("#log-from").fill(await localLogTime(page, "2030-01-01T00:00:00Z"));
+  await page.locator("#log-to").fill(await localLogTime(page, "2030-01-01T01:00:00Z"));
+  await page.locator("[data-log-apply-time]").click();
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(0);
+  await expect(page.getByText("暂无匹配的运行日志", { exact: true })).toBeVisible();
+  await expect(page.locator("[data-log-older]")).toBeDisabled();
+  await page.locator("[data-log-reset-time]").click();
+  await expect(page.locator("#log-from")).toHaveValue("");
+  await expect(page.locator("#log-to")).toHaveValue("");
+  await expect(page.locator("[data-log-time-toggle]")).toHaveText("时间范围");
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(100);
+  const query = data.requests.filter(request => request.path === "/logs").at(-1).query;
+  expect(query.from).toBeUndefined();
+  expect(query.to).toBeUndefined();
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat a late log-filter response cannot overwrite a newer source selection", async ({ page }) => {
+  const data = await mount(page, { bootstrapPage: "diagnostics" });
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(100);
+  let release;
+  const deferred = { promise: new Promise(resolve => { release = resolve; }), started: false, match: query => query.source === "helper" };
+  data.deferLogs = deferred;
+  await page.locator("#log-source").selectOption("helper");
+  await expect.poll(() => deferred.started).toBe(true);
+  await page.locator("#log-source").selectOption("desktop");
+  release();
+  await expect.poll(() => data.requests.filter(request => request.path === "/logs").at(-1)?.query.source).toBe("desktop");
+  const expected = runtimeLogPage(data, { limit: "100", min_level: "info", source: "desktop" }).records.map(record => record.id).reverse();
+  await expect.poll(() => displayedLogIDs(page)).toEqual(expected);
+  await expect(page.locator("#log-source")).toHaveValue("desktop");
+  const reads = data.requests.filter(request => request.path === "/logs").length;
+  await expect.poll(() => data.requests.filter(request => request.path === "/logs").length).toBeGreaterThan(reads);
+  expect(await displayedLogIDs(page)).toEqual(expected);
+});
+
+test("@compat a delayed private log response cannot revive the diagnostic page after logout", async ({ page }) => {
+  const data = await mount(page, { bootstrapPage: "diagnostics" });
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(100);
+  let release;
+  const deferred = { promise: new Promise(resolve => { release = resolve; }), started: false, match: query => query.after !== undefined };
+  appendRuntimeLog(data, { message: "Private late log sentinel" });
+  data.deferLogs = deferred;
+  await expect.poll(() => deferred.started).toBe(true);
+  await navigate(page, "settings");
+  await page.locator('[data-settings-action="logout"]').click();
+  await expect(page.locator("#login-password")).toBeVisible();
+  release();
+  await expectManagementShellHidden(page);
+  await expect(page.locator("[data-diagnostics-root]")).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("Private late log sentinel");
+});
+
+test("@compat read-only sessions can page and filter runtime logs while diagnostic actions stay disabled", async ({ page }) => {
+  const data = await mount(page, { bootstrapPage: "diagnostics", role: "read" });
+  await expect(page.locator("#runtime-logs [data-log-id]")).toHaveCount(100);
+  await expect(page.getByRole("button", { name: "新建诊断", exact: true })).toBeDisabled();
+  await page.locator("[data-log-older]").click();
+  await expect.poll(() => data.requests.filter(request => request.path === "/logs").some(request => request.query.before)).toBe(true);
+  await page.locator("#log-source").selectOption("helper");
+  await expect.poll(() => data.requests.filter(request => request.path === "/logs").at(-1)?.query.source).toBe("helper");
+  await expect(page.locator("#runtime-logs")).toContainText("TUN startup failed");
+  expect(data.writes).toEqual([]);
+});
+
 test("@compat default INFO logs appear immediately and keep polling through capture start and pause", async ({ page }, testInfo) => {
   const data = await mount(page, { bootstrapPage: "diagnostics" });
   await expect(page.locator("#log-level")).toHaveValue("info");
@@ -2131,7 +2760,7 @@ test("@compat runtime logs filter sources, pause polling and render fields as sa
   await page.locator("#log-source").selectOption("helper");
   await expect.poll(() => data.requests.filter((r) => r.path === "/logs").at(-1)?.query.source).toBe("helper");
   await page.getByRole("button", { name: "暂停日志刷新" }).click();
-  data.logRecords = [{ id: "3", time: end, level: "ERROR", source: "helper", message: "<img src=x onerror=alert(1)>", attrs: { reason: "safe text" } }];
+  appendRuntimeLog(data, { level: "ERROR", source: "helper", message: "<img src=x onerror=alert(1)>", attrs: { reason: "safe text" } });
   await page.getByRole("button", { name: "刷新日志", exact: true }).click();
   await expect(page.locator("#runtime-logs")).toContainText("<img src=x onerror=alert(1)>");
   await expect(page.locator("#runtime-logs img")).toHaveCount(0);
@@ -2243,6 +2872,7 @@ test("@compat UDP diagnosis requires an explicit DNS server and separates addres
 test("UDP diagnostic results distinguish DNS rcode and truncation from business success", async ({ page }) => {
   const data = await mount(page, { diagnosticOperations: [{ id: "udp-result", kind: "diagnostics", status: "succeeded", started_at: start, result: { target: "[::1]:5353", protocol: "udp", results: [{ outbound: "direct", protocol: "udp", status: "reachable", stage: "udp_response", dns_rcode: "REFUSED", dns_truncated: true, message: "Matching DNS response; application behavior is not tested", time: start }] } }] });
   await navigate(page, "diagnostics");
+  await page.locator("[data-diagnostic-tasks] > summary").click();
   await page.getByRole("button", { name: "结果", exact: true }).click();
   await expect(page.locator("#detail-dialog")).toContainText("REFUSED");
   await expect(page.locator("#detail-dialog")).toContainText("截断响应，未重试 TCP");
@@ -2623,7 +3253,8 @@ test("observed UDP shortcuts retain transport and port, precede broad rules and 
   await page.getByRole("button", { name: "详情", exact: true }).first().click();
   await page.getByRole("dialog").getByRole("button", { name: "为此目标建规则" }).click();
   await expect(page.locator("#editor-dialog")).not.toBeVisible();
-  await expect(page.locator("[data-rule-row]")).toHaveCount(3);
+  await expect(page.locator("[data-rule-row]")).toHaveCount(2);
+  await expect(page.locator("[data-rule-final]")).toHaveCount(1);
   await expect(page.getByText(/没有重复添加/)).toBeVisible();
   expect(data.writes.filter((write) => write.path === "/config")).toHaveLength(1);
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/") || write.path === "/config/apply")).toBe(false);
@@ -2640,3 +3271,48 @@ test("routing simulation sends the selected protocol and destination port withou
   await expect.poll(() => data.requests.find((request) => request.path === "/rules/simulate")?.body).toEqual({ target: "example.com:8443", protocol: "udp" });
   expect(data.writes.some((write) => write.path === "/diagnostics" || write.path === "/config")).toBe(false);
 });
+
+for (const [description, classification, decision] of [
+  ["the exact ordered domain rule", "rule", { rule_type: "DOMAIN", rule_id: "rule-1", rule_name: "DOMAIN example.com", rule_order: 1, rule_source: "config", outbound: "Proxy A", effective_outbound: "Proxy A" }],
+  ["an explicit FINAL", "final", { rule_type: "FINAL", rule_id: "final-stable-id", rule_name: "FINAL", rule_order: 2, rule_source: "config", outbound: "direct", effective_outbound: "direct" }],
+  ["the built-in FINAL", "final", { rule_type: "FINAL", rule_id: "builtin:default", rule_name: "Default direct", rule_order: 0, rule_source: "builtin", outbound: "direct", effective_outbound: "direct" }],
+  ["a legacy implicit FINAL without rule_type", "final", { rule_id: "builtin:default", rule_name: "Default direct", rule_order: 0, rule_source: "builtin", outbound: "direct", effective_outbound: "direct" }],
+  ["a protected endpoint bypass", "protected", { rule_type: "PROTECTED", rule_id: "protected:endpoint", rule_name: "Proxy endpoint bypass", rule_order: 0, rule_source: "protected", protected: true, outbound: "direct", effective_outbound: "direct" }],
+]) {
+  test(`@compat routing simulation identifies ${description} without making a connection`, async ({ page }, testInfo) => {
+    const data = await mount(page, { simulationResult: { config_version: 1, protocol: "udp", port: 8443, capture_only: false, fallback: false, protected: false, ...decision } });
+    await navigate(page, "rules");
+    await page.getByRole("button", { name: "模拟规则匹配", exact: true }).click();
+    for (const [id, label] of [["simulate-target", "目标域名或 IP"], ["simulate-port", "目标端口"], ["simulate-protocol", "协议"]]) {
+      await expect(page.locator(`label[for="${id}"]`)).toBeVisible();
+      await expect(page.locator(`label[for="${id}"]`)).toHaveText(label);
+    }
+    await expect(page.getByRole("heading", { name: "模拟一次规则匹配", exact: true })).toHaveCount(0);
+    await page.locator("#simulate-target").fill("example.com");
+    await page.locator("#simulate-port").fill("8443");
+    await page.getByRole("combobox", { name: "模拟协议" }).selectOption("udp");
+    await page.getByRole("button", { name: "模拟匹配", exact: true }).click();
+    const result = page.locator("[data-rule-simulation-result]");
+    await expect(result).toHaveAttribute("data-rule-simulation-match", classification);
+    await expect(result).toContainText(decision.outbound);
+    if (classification === "rule") {
+      await expect(result).toContainText("DOMAIN");
+      await expect(result).toContainText("example.com");
+      await expect(result.locator("[data-rule-simulation-order]")).toContainText("1");
+    } else if (classification === "final") {
+      await expect(result).toContainText("FINAL");
+      if (decision.rule_source === "builtin") await expect(result).toContainText("内置");
+    } else await expect(result).toContainText(/保护|安全绕过/);
+    await page.screenshot({ path: testInfo.outputPath(`rule-simulation-${classification}.png`), animations: "disabled", fullPage: true });
+    if (classification === "rule") {
+      await page.setViewportSize({ width: 320, height: 760 });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+      const bounds = await page.locator("#detail-dialog").boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.width).toBeLessThanOrEqual(320);
+      await page.screenshot({ path: testInfo.outputPath("rule-simulation-320px.png"), animations: "disabled", fullPage: true });
+    }
+    expect(data.requests.find(request => request.path === "/rules/simulate").body).toEqual({ target: "example.com:8443", protocol: "udp" });
+    expect(data.writes.every(write => write.path === "/rules/simulate")).toBe(true);
+  });
+}

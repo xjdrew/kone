@@ -17,10 +17,13 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// Argon2id uses the RFC 9106 memory-constrained profile, with one lane to
-// bound CPU use on gateways. See https://pkg.go.dev/golang.org/x/crypto/argon2.
-const passwordMemory = 64 * 1024
-const passwordIterations = 3
+// The credential version identifies this fixed Argon2id profile. Bump it when
+// changing parameters; older auth.json files require an explicit local reset.
+// This is OWASP's 19 MiB, two-iteration, one-lane minimum configuration.
+const passwordVersion = 2
+const passwordMemory = 19 * 1024
+const passwordIterations = 2
+const passwordParallelism = 1
 
 type passwordCredentials struct {
 	Version int    `json:"version"`
@@ -45,12 +48,15 @@ func (c *Controller) initAuthentication() error {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(c.credentials) != nil || c.credentials.Version != 1 || len(c.credentials.Salt) != 16 || len(c.credentials.Hash) != 32 {
+	if decoder.Decode(c.credentials) != nil || len(c.credentials.Salt) != 16 || len(c.credentials.Hash) != 32 {
 		return errors.New("management password file is invalid; preserve and repair auth.json")
 	}
 	var extra any
 	if decoder.Decode(&extra) != io.EOF {
 		return errors.New("management password file has invalid framing")
+	}
+	if c.credentials.Version != passwordVersion {
+		return errors.New("management password format is unsupported; back up and remove auth.json locally, then restart to set a new password")
 	}
 	return nil
 }
@@ -60,7 +66,7 @@ func validPassword(password string) bool {
 }
 
 func passwordKey(password string, salt []byte) []byte {
-	return argon2.IDKey([]byte(password), salt, passwordIterations, passwordMemory, 1, 32)
+	return argon2.IDKey([]byte(password), salt, passwordIterations, passwordMemory, passwordParallelism, 32)
 }
 
 func (c *Controller) passwordConfigured() bool {
@@ -110,7 +116,7 @@ func (c *Controller) setupPassword(w http.ResponseWriter, r *http.Request, sessi
 		apiError(w, 500, "password", "Could not prepare the management password")
 		return
 	}
-	credential := passwordCredentials{Version: 1, Salt: salt, Hash: passwordKey(input.Password, salt)}
+	credential := passwordCredentials{Version: passwordVersion, Salt: salt, Hash: passwordKey(input.Password, salt)}
 	data, _ := json.Marshal(credential)
 	c.mu.Lock()
 	if c.closed {
@@ -204,7 +210,7 @@ func (c *Controller) changePassword(w http.ResponseWriter, r *http.Request, sess
 		apiError(w, 500, "password", "Could not prepare the management password")
 		return
 	}
-	next := passwordCredentials{Version: 1, Salt: salt, Hash: passwordKey(input.Password, salt)}
+	next := passwordCredentials{Version: passwordVersion, Salt: salt, Hash: passwordKey(input.Password, salt)}
 	data, _ := json.Marshal(next)
 	c.mu.Lock()
 	sessionCurrent := false

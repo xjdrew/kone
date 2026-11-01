@@ -30,6 +30,9 @@ type Record struct {
 }
 type Query struct {
 	After    uint64
+	Before   uint64
+	From     time.Time
+	To       time.Time
 	Limit    int
 	MinLevel string
 	Source   string
@@ -112,8 +115,11 @@ func normalizeQuery(query Query) (Query, slog.Level, error) {
 	if query.Limit == 0 {
 		query.Limit = 100
 	}
-	if query.Limit < 1 || query.Limit > MaxLimit || len(query.Source) > 64 {
+	if query.Limit < 1 || query.Limit > MaxLimit || len(query.Source) > 64 || query.After != 0 && query.Before != 0 || !query.From.IsZero() && !query.To.IsZero() && query.From.After(query.To) {
 		return query, 0, errors.New("invalid log query bounds")
+	}
+	if query.Before != 0 {
+		query.Tail = true
 	}
 	level := slog.LevelDebug
 	switch strings.ToLower(query.MinLevel) {
@@ -148,15 +154,22 @@ func (s *Store) Query(query Query) (Page, error) {
 	if query.After < page.OldestCursor-1 {
 		page.Gap = true
 	}
+	matches := func(record Record) bool {
+		var level slog.Level
+		if level.UnmarshalText([]byte(record.Level)) != nil {
+			level = slog.LevelInfo
+		}
+		return level >= minimum && (query.Source == "" || record.Source == query.Source) && (query.From.IsZero() || !record.Time.Before(query.From)) && (query.To.IsZero() || !record.Time.After(query.To))
+	}
 	if query.Tail {
-		for i := len(s.entries) - 1; i >= 0 && len(page.Records) < query.Limit; i-- {
+		for i := len(s.entries) - 1; i >= 0; i-- {
 			record := s.entries[i].record
-			var level slog.Level
-			if level.UnmarshalText([]byte(record.Level)) != nil {
-				level = slog.LevelInfo
-			}
-			if level < minimum || query.Source != "" && record.Source != query.Source {
+			if query.Before != 0 && record.ID >= query.Before || !matches(record) {
 				continue
+			}
+			if len(page.Records) == query.Limit {
+				page.HasMore = true
+				break
 			}
 			page.Records = append(page.Records, cloneRecord(record))
 		}
@@ -170,11 +183,7 @@ func (s *Store) Query(query Query) (Page, error) {
 			continue
 		}
 		page.NextCursor = record.ID
-		var level slog.Level
-		if level.UnmarshalText([]byte(record.Level)) != nil {
-			level = slog.LevelInfo
-		}
-		if level < minimum || query.Source != "" && record.Source != query.Source {
+		if !matches(record) {
 			continue
 		}
 		page.Records = append(page.Records, cloneRecord(record))

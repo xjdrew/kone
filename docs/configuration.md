@@ -67,6 +67,10 @@ servers = ["192.168.1.53"]
 
 上面的参数均为可选项，含义及全部默认值见完整示例。`listen-port` 是 KONE DNS 服务端口，同时监听 UDP/TCP；Linux/Windows 使用 TUN 地址，macOS 使用本机回环入口；`servers` 是实际解析使用的上游，两者不同。上游 UDP 响应截断时，使用同一上游和出口重试 TCP。支持 IPv6 上游 DNS 和 AAAA 查询；Linux/macOS/Windows 可另外显式启用 IPv6 接管，默认只接管 IPv4。
 
+客户端查询需要接管的域名时，启用 IPv6 接管会返回对应的 Fake-AAAA；未配置 `core.ipv6-network` 时返回 `NOERROR` 空 AAAA 结果，避免真实 IPv6 地址绕过域名出站策略。明确拒绝的域名仍返回 `REFUSED`，直连域名与受保护代理端点继续真实解析。高级协议/端口条件需要 Fake-IP 接入时使用相同规则，流量进入后再按实际条件选择出站；内部解析器和代理端点拨号不受客户端 AAAA 过滤影响。
+
+需要接管的域名，其客户端 HTTPS/SVCB 查询同样返回空结果，避免其中的真实地址提示或替代端点绕过 Fake-IP；拒绝规则仍返回 `REFUSED`，直连与受保护端点继续透传。支持规范服务名前缀对应的域名策略。即使启用双栈也采用该处理，因为 [HTTPS/SVCB 地址提示](https://www.rfc-editor.org/rfc/rfc9460.html#section-7.3) 可以让客户端直接尝试真实地址。
+
 `system` 默认 `false`，将运行 DNS 服务与引导本机系统 DNS 分开；三平台管理模式首次初始化时默认开启，仍需用户明确启用接管。Linux 只管理本次 TUN 的 resolved link，macOS 只创建会话拥有的临时解析服务，Windows 使用自有 NRPT 根规则且要求端口 53，退出先恢复引导再关闭 DNS。Windows 根策略或严格加密策略冲突时拒绝启用，异常遗留可在本机管理中显式提权恢复。既有配置中的显式选择不会被升级重置；具体前提、恢复与 VPN 边界见 [系统 DNS 引导](system-dns.md)。
 自动上游仅在创建 engine 时发现一次，生效服务器保存在运行实例中，配置仍保留“自动”状态。规则热更新不会重新读取已经被 KONE 改写的 Windows 网卡 DNS；改变 DNS 设置或系统网络需要重启。
 
@@ -93,6 +97,8 @@ servers = ["192.168.1.53"]
 - 规则引用已配置的代理名或内置小写 `direct` / `reject`，引用区分大小写。`direct`、`reject` 及其大小写变体均不能用作代理名称。没有规则匹配时使用内置 `direct`。
 - 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 需要配置 `core.ipv6-network`，支持 Linux/macOS/Windows 的 IPv6 接管。
 - `DOMAIN-SUFFIX = example.com` 匹配自身和子域名，不匹配 `1example.com`。`DIRECT` CIDR 例外会保留规则优先级。
+
+省略 `protocol` 与 `ports` 时，域名规则匹配 TCP/UDP 的全部端口；声明这些字段才缩小流量范围。Web 新建规则采用这一默认值，最终规则独立显示且仅编辑兜底出站。没有显式 FINAL 时，模拟结果显示内置 `FINAL → direct`。文件中原有的条件 FINAL 保留兼容，Web 编辑时必须确认扩大范围后才会移除其条件。
 
 原始域名、已知 CNAME 和已知 IP 的匹配共用配置中的规则顺序，选择最早的显式命中；后面的 `FINAL` 不会覆盖前面的显式 `DOMAIN direct`。受保护的代理端点绕过始终优先，没有显式命中时才使用默认 `direct`。没有真实 DNS 证据时只判断已知域名，不为了猜测地址规则而提前向本机解析器查询代理业务域名。
 

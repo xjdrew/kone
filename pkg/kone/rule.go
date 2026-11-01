@@ -29,6 +29,7 @@ type RoutingDecision struct {
 	GeoIPVersion      string `json:"geoip_version"`
 	GeoIPSHA256       string `json:"geoip_sha256"`
 	RuleID            string `json:"rule_id"`
+	RuleType          string `json:"rule_type"`
 	RuleName          string `json:"rule_name"`
 	RuleSource        string `json:"rule_source"`
 	RuleOrder         int    `json:"rule_order"`
@@ -110,7 +111,7 @@ func (rule *Rule) Decide(val any, protocol string, port uint16) (decision Routin
 	}
 	if endpoint != "" {
 		if rule.directDomains[endpoint] {
-			return RoutingDecision{RuleID: "protected:endpoint", RuleName: "Proxy endpoint bypass", RuleSource: "protected", Outbound: BuiltinDirect, Protocol: protocol, Port: port, Protected: true, Reason: "proxy endpoint bypass"}
+			return RoutingDecision{RuleID: "protected:endpoint", RuleType: "PROTECTED", RuleName: "Proxy endpoint bypass", RuleSource: "protected", Outbound: BuiltinDirect, Protocol: protocol, Port: port, Protected: true, Reason: "proxy endpoint bypass"}
 		}
 	}
 	for _, entry := range rule.decisions {
@@ -151,7 +152,7 @@ func (rule *Rule) Decide(val any, protocol string, port uint16) (decision Routin
 		}
 		return entry.decision(protocol, port)
 	}
-	return RoutingDecision{RuleID: "builtin:default", RuleName: "Default direct", RuleSource: "builtin", Outbound: BuiltinDirect, Protocol: protocol, Port: port, Reason: "no rule matched"}
+	return RoutingDecision{RuleID: "builtin:default", RuleType: "FINAL", RuleName: "Default direct", RuleSource: "builtin", Outbound: BuiltinDirect, Protocol: protocol, Port: port, Reason: "no rule matched"}
 }
 
 func (entry decisionRule) decision(protocol string, port uint16) RoutingDecision {
@@ -163,7 +164,7 @@ func (entry decisionRule) decision(protocol string, port uint16) RoutingDecision
 	if entry.config.Pattern != "" {
 		name += " " + entry.config.Pattern
 	}
-	return RoutingDecision{RuleID: entry.id, RuleName: name, RuleSource: source, RuleOrder: entry.order, Outbound: entry.config.Outbound, Protocol: protocol, Port: port, ExpiresAt: entry.config.ExpiresAt, Reason: "ordered rule match"}
+	return RoutingDecision{RuleID: entry.id, RuleType: strings.ToUpper(entry.config.Schema), RuleName: name, RuleSource: source, RuleOrder: entry.order, Outbound: entry.config.Outbound, Protocol: protocol, Port: port, ExpiresAt: entry.config.ExpiresAt, Reason: "ordered rule match"}
 }
 
 func (rule *Rule) Explain(val any, protocol string, port uint16) RoutingDecision {

@@ -220,6 +220,7 @@ func TestStackDNSCallbackPreservesFakeIP(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	one.dns.ctx = ctx
+	one.policy.Load().rule.DirectDomain("direct.example")
 	query.SetQuestion("direct.example.", dns.TypeAAAA)
 	data, err = query.Pack()
 	require.NoError(t, err)

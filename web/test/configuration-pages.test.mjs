@@ -134,3 +134,47 @@ test("only first-time direct-only rules require the short capture confirmation",
   assert.equal(needsDirectConfirmation(document([{ outbound: "office", "expires-at": "2026-11-01T11:59:59Z" }]), now), true);
   assert.equal(needsDirectConfirmation(document([{ outbound: "office", "expires-at": "2026-11-01T12:01:00Z" }]), now), false);
 });
+
+test("rule lists keep a unique FINAL section last and preserve ordinary configuration indices", () => {
+  const { model, ui } = settingsHarness();
+  const calls = [];
+  model.config.config.rules = [
+    { id: "domain-1", type: "DOMAIN", pattern: "one.example", outbound: "direct" },
+    { id: "domain-2", type: "DOMAIN-SUFFIX", pattern: "two.example", outbound: "reject", protocol: "udp", ports: [53] },
+    { id: "final-stable", type: "FINAL", outbound: "reject" },
+  ];
+  ui.edit = (...args) => calls.push(["edit", ...args]);
+  ui.addRule = (...args) => calls.push(["add", ...args]);
+  ui.simulateRules = () => {};
+  ui.empty = text => element("p", {}, text);
+  const roots = createConfigurationPages(ui).rules().filter(Boolean);
+  const nodes = descendants(roots);
+  assert.deepEqual(nodes.filter(node => Object.hasOwn(node.attrs, "data-rule-row")).map(node => node.attrs["data-rule-row"]), [0, 1]);
+  assert.ok(Object.hasOwn(roots.at(-1).attrs, "data-rule-final"), "the fallback is a separate final group");
+  const final = nodes.find(node => Object.hasOwn(node.attrs, "data-rule-final"));
+  const buttons = descendants(final).filter(node => node.tag === "button");
+  assert.equal(buttons.length, 1, "FINAL cannot be added, deleted or moved from its group");
+  buttons[0].attrs.onclick();
+  nodes.find(node => Object.hasOwn(node.attrs, "data-rule-add")).attrs.onclick();
+  assert.deepEqual(calls, [["edit", "rule", 2], ["add", "DOMAIN"]]);
+  assert.match(JSON.stringify(nodes), /TCP 与 UDP.*全部端口/);
+});
+
+test("an absent FINAL is shown as built-in direct and stays protected for read-only sessions", () => {
+  const { model, ui } = settingsHarness();
+  const calls = [];
+  model.config.config.rules = [];
+  ui.addRule = (...args) => calls.push(args);
+  ui.empty = text => element("p", {}, text);
+  ui.simulateRules = () => {};
+  const render = () => descendants(createConfigurationPages(ui).rules());
+  let nodes = render();
+  assert.equal(nodes.filter(node => Object.hasOwn(node.attrs, "data-rule-row")).length, 0);
+  assert.match(JSON.stringify(nodes.find(node => Object.hasOwn(node.attrs, "data-rule-final"))), /内置直连/);
+  nodes.find(node => Object.hasOwn(node.attrs, "data-rule-final-edit")).attrs.onclick();
+  assert.deepEqual(calls, [["FINAL"]]);
+  ui.canManage = () => false;
+  nodes = render();
+  for (const attr of ["data-rule-add", "data-rule-final-edit"])
+    assert.equal(nodes.find(node => Object.hasOwn(node.attrs, attr)).attrs.disabled, true, attr);
+});

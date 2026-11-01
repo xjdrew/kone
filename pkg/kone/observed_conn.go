@@ -10,8 +10,9 @@ import (
 // WriterTo, so splice/ReadFrom shortcuts cannot bypass accounting.
 type observedConn struct {
 	net.Conn
-	flow   *ObservedFlow
-	upload bool
+	flow    *ObservedFlow
+	upload  bool
+	onError func(error)
 }
 
 func (c *observedConn) Write(data []byte) (int, error) {
@@ -25,6 +26,9 @@ func (c *observedConn) Write(data []byte) (int, error) {
 	}
 	if err != nil {
 		c.flow.TransferError(err)
+		if c.onError != nil {
+			c.onError(err)
+		}
 	}
 	return n, err
 }
@@ -33,6 +37,9 @@ func (c *observedConn) Read(data []byte) (int, error) {
 	n, err := c.Conn.Read(data)
 	if err != nil && err != io.EOF {
 		c.flow.TransferError(err)
+		if c.onError != nil {
+			c.onError(err)
+		}
 	}
 	return n, err
 }

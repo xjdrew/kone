@@ -2,6 +2,8 @@
 
 ## Features
 
+- Filter runtime logs by time and browse history in a compact diagnostics table with pagination.
+- Create rules with type-specific inputs and country choices, and see the matched rule in routing simulations.
 - Diagnose UDP paths with validated DNS responses through direct, SOCKS5 and Shadowsocks outbounds.
 - Guide Windows system DNS through KONE, with explicit recovery after abnormal exit.
 - Support optional IPv6 capture on macOS.
@@ -38,6 +40,9 @@
 
 ## Bugfixes
 
+- Preserve log filters, expanded fields and reading position during automatic updates.
+- Show real outbound connection failures in runtime logs at the default log level.
+- Prevent intercepted domains from bypassing their routing policy through real IPv6 DNS answers when IPv6 capture is disabled.
 - Reject invalid diagnostic addresses and consistently enforce probe limits.
 - Keep unsaved proxy edits when enabling direct-only capture.
 - Preserve editor drafts and return navigation during browser history changes and configuration refreshes.
@@ -62,6 +67,10 @@
 
 ## Changes
 
+- Reduce management password hashing cost; exit KONE and move the old `auth.json` aside to set a new password, while retaining `settings.json` and other configuration.
+- Keep the infrequently used log time filter behind one control and omit routine network-refresh command logs.
+- Compact the outbound list, show built-in targets first and display saved-rule reference counts.
+- Keep FINAL in a fixed group below ordinary rules and edit its fallback outbound separately.
 - Keep editors focused on save and cancel, validate automatically, and reveal advanced settings and tests only when needed.
 - Derive versions from cumulative feature and bugfix changes, with master prereleases and tag-triggered stable releases.
 - Publish Windows ZIP, macOS PKG and Linux DEB for amd64/arm64; keep ARMv7 gateway builds as an explicit option.
