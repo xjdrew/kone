@@ -66,7 +66,6 @@ type Controller struct {
 	probe                         func(context.Context, *kone.KoneConfig, string, string, bool) ProbeResult
 	probeUDP                      func(context.Context, *kone.KoneConfig, string, string, kone.DiagnosticOptions) ProbeResult
 	diagnosticRate                rateWindow
-	diagnosticAdmission           sync.Mutex
 	inspectSystemDNSRecovery      func(context.Context) ([]kone.SystemDNSRecoveryEntry, error)
 	recoverSystemDNS              func(context.Context, string) error
 	now                           func() time.Time

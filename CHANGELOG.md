@@ -36,6 +36,7 @@
 
 ## Bugfixes
 
+- Reject invalid diagnostic addresses and consistently enforce probe limits.
 - Keep Windows packaging from changing tracked frontend files solely because of line endings.
 - Keep gateway capture stable when using the gVisor stack.
 - Unblock recovery after capture stops before network setup, and show the actual reason when capture cannot start.

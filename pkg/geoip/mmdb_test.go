@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,9 +20,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func mmdbFixture(t *testing.T, provider, country string) ([]byte, string) {
+func mmdbFixture(t testing.TB, provider, country string) ([]byte, string) {
 	t.Helper()
-	tree, err := mmdbwriter.New(mmdbwriter.Options{IPVersion: 6, IncludeReservedNetworks: true, DatabaseType: "Synthetic-Country-Test", Description: map[string]string{"en": "Synthetic country test data"}, Languages: []string{"en"}, BuildEpoch: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).Unix()})
+	return mmdbFixtureBuildEpoch(t, provider, country, time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).Unix())
+}
+
+func mmdbFixtureBuildEpoch(t testing.TB, provider, country string, epoch int64) ([]byte, string) {
+	t.Helper()
+	tree, err := mmdbwriter.New(mmdbwriter.Options{IPVersion: 6, IncludeReservedNetworks: true, DatabaseType: "Synthetic-Country-Test", Description: map[string]string{"en": "Synthetic country test data"}, Languages: []string{"en"}, BuildEpoch: epoch})
 	require.NoError(t, err)
 	var record mmdbtype.Map
 	if provider == "ipinfo-lite" {
@@ -147,7 +153,50 @@ func TestMMDBRepositoryRejectsProviderRelabelingForIdenticalBytes(t *testing.T) 
 	data, digest := mmdbFixture(t, "dbip-lite", "CN")
 	_, err = repo.InstallMMDB(data, digest, "dbip-lite")
 	require.NoError(t, err)
+	manifestPath := filepath.Join(repo.directory, "manifest.json")
+	before, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
 	_, err = repo.InstallMMDB(data, digest, "maxmind-geolite2")
 	require.ErrorContains(t, err, "different provider")
 	require.Equal(t, "dbip-lite", repo.Current().Metadata().Provider)
+	after, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+}
+
+func TestMMDBRejectsUnreasonableBuildEpochs(t *testing.T) {
+	for _, epoch := range []int64{time.Date(1989, 1, 1, 0, 0, 0, 0, time.UTC).Unix(), time.Now().Add(72 * time.Hour).Unix()} {
+		data, digest := mmdbFixtureBuildEpoch(t, "ipinfo-lite", "CN", epoch)
+		_, err := LoadMMDB(bytes.NewReader(data), digest, "ipinfo-lite")
+		require.ErrorContains(t, err, "build time")
+	}
+}
+
+func TestMMDBManifestRejectsUnboundOrUnrecognizedSchemas(t *testing.T) {
+	current, previous, unrelated := strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64)
+	for _, raw := range []string{
+		`{"format":1,"current":"` + current + `","mmdb_providers":{"` + current + `":"dbip-lite"}}`,
+		`{"format":2,"current":"` + current + `","mmdb_providers":{"` + current + `":"unknown"}}`,
+		`{"format":2,"current":"` + current + `","mmdb_providers":{"../outside":"dbip-lite"}}`,
+		`{"format":2,"current":"` + current + `","mmdb_providers":{"` + unrelated + `":"dbip-lite"}}`,
+		`{"format":2,"current":"` + current + `","previous":"` + previous + `","mmdb_providers":{"` + current + `":"dbip-lite","` + previous + `":"ipinfo-lite","` + unrelated + `":"maxmind-geolite2"}}`,
+	} {
+		directory := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(directory, "manifest.json"), []byte(raw), 0600))
+		_, err := OpenRepository(directory)
+		require.ErrorContains(t, err, "manifest")
+	}
+}
+
+func BenchmarkSyntheticMMDBCountryLookup(b *testing.B) {
+	data, digest := mmdbFixture(b, "ipinfo-lite", "CN")
+	database, err := LoadMMDB(bytes.NewReader(data), digest, "ipinfo-lite")
+	require.NoError(b, err)
+	addresses := []netip.Addr{netip.MustParseAddr("192.0.2.1"), netip.MustParseAddr("2001:db8::1"), netip.MustParseAddr("198.51.100.1")}
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.ReportMetric(float64(database.Metadata().Ranges), "networks")
+	for i := 0; i < b.N; i++ {
+		benchmarkDatabaseCountry = database.Country(addresses[i%len(addresses)])
+	}
 }

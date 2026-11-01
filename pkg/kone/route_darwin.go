@@ -20,15 +20,16 @@ import (
 // PF_ROUTE directly; only a matching kernel acknowledgement establishes a new
 // route's ownership. Cleanup rechecks the actual prefix, gateway and interface.
 type darwinRoutes struct {
-	exchange        func(context.Context, *route.RouteMessage) (bool, *route.RouteMessage, error)
-	read            func() ([]route.Message, error)
-	interfaceByName func(string) (*net.Interface, error)
+	exchange          func(context.Context, *route.RouteMessage) (bool, *route.RouteMessage, error)
+	read              func() ([]route.Message, error)
+	interfaceByName   func(string) (*net.Interface, error)
+	interfacePrefixes func(*net.Interface) ([]netip.Prefix, error)
 }
 
 var darwinRouteSequence atomic.Uint32
 
 func newDarwinRoutes() darwinRoutes {
-	return darwinRoutes{exchange: exchangeDarwinRoute, interfaceByName: net.InterfaceByName, read: func() ([]route.Message, error) {
+	return darwinRoutes{exchange: exchangeDarwinRoute, interfaceByName: net.InterfaceByName, interfacePrefixes: nativeDarwinAddressOps().prefixes, read: func() ([]route.Message, error) {
 		data, err := route.FetchRIB(unix.AF_UNSPEC, route.RIBTypeRoute, 0)
 		if err != nil {
 			return nil, err
@@ -111,6 +112,29 @@ func darwinOwnedRoute(message *route.RouteMessage, prefix netip.Prefix, index in
 	return !requireStatic || message.Flags&unix.RTF_STATIC != 0
 }
 
+// XNU's nd6_prefix_onlink_common uses an IPv6 interface address (preferably its
+// link-local one) as the connected prefix route's gateway, rather than AF_LINK.
+// Reuse only the kernel-style, unscoped route for an address prefix actually
+// assigned to this exclusive device. It is released with that alias/device;
+// this does not establish ownership of any explicit static capture route.
+func darwinConnectedIPv6Route(message *route.RouteMessage, prefix netip.Prefix, index int, addresses []netip.Prefix) bool {
+	actual, ok := darwinMessagePrefix(message)
+	if !prefix.Addr().Is6() || !ok || actual != prefix || message.Index != index ||
+		message.Flags&unix.RTF_UP == 0 || message.Flags&(unix.RTF_GATEWAY|unix.RTF_REJECT|unix.RTF_BLACKHOLE|unix.RTF_IFSCOPE|unix.RTF_STATIC|unix.RTF_HOST) != 0 || len(message.Addrs) <= unix.RTAX_GATEWAY {
+		return false
+	}
+	gateway, ok := message.Addrs[unix.RTAX_GATEWAY].(*route.Inet6Addr)
+	if !ok || gateway.ZoneID != 0 && gateway.ZoneID != index {
+		return false
+	}
+	addressMatch, gatewayMatch := false, false
+	for _, address := range addresses {
+		addressMatch = addressMatch || address.Masked() == prefix
+		gatewayMatch = gatewayMatch || address.Addr() == netip.AddrFrom16(gateway.IP)
+	}
+	return addressMatch && gatewayMatch
+}
+
 func darwinRouteMessage(kind int, prefix netip.Prefix, device *net.Interface) *route.RouteMessage {
 	mask := net.CIDRMask(prefix.Bits(), prefix.Addr().BitLen())
 	flags := unix.RTF_UP | unix.RTF_STATIC
@@ -151,6 +175,15 @@ func (r darwinRoutes) AddRoute(ctx context.Context, device Device, subnet *net.I
 		// a second explicit route or delete anything outside that interface.
 		if len(existing) == 1 && darwinOwnedRoute(existing[0], prefix, identity.Index, false) {
 			return nil, nil
+		}
+		if len(existing) == 1 && prefix.Addr().Is6() && r.interfacePrefixes != nil {
+			addresses, err := r.interfacePrefixes(identity)
+			if err != nil {
+				return nil, fmt.Errorf("verify connected IPv6 route: %w", err)
+			}
+			if darwinConnectedIPv6Route(existing[0], prefix, identity.Index, addresses) {
+				return nil, nil
+			}
 		}
 		return nil, fmt.Errorf("route %s already exists outside the owned interface: %w", prefix, unix.EEXIST)
 	}

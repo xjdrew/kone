@@ -100,6 +100,50 @@ func TestDiagnosticRateCountsProbesAndDeduplicatesConcurrentRetries(t *testing.T
 	waitOperation(t, c, op.ID)
 }
 
+func TestDiagnosticAdmissionRechecksEvictedRequestsAndDoesNotChargeRejectedCapacity(t *testing.T) {
+	var calls atomic.Int32
+	c := testController(t, Options{ProbeUDP: func(context.Context, *kone.KoneConfig, string, string, kone.DiagnosticOptions) ProbeResult {
+		calls.Add(1)
+		return ProbeResult{Protocol: "udp", Status: "reachable"}
+	}})
+	// Even an already exhausted budget must preserve a still-retained request.
+	op, err := c.DiagnoseProtocol("127.0.0.1:53", nil, kone.DiagnosticOptions{Protocol: "udp"}, "retained")
+	require.NoError(t, err)
+	waitOperation(t, c, op.ID)
+	c.mu.Lock()
+	c.diagnosticRate.count = 32
+	c.mu.Unlock()
+	duplicate, err := c.DiagnoseProtocol("127.0.0.1:53", nil, kone.DiagnosticOptions{Protocol: "udp"}, "retained")
+	require.NoError(t, err)
+	require.Equal(t, op.ID, duplicate.ID)
+	// Other operation kinds can evict it; its old key can no longer skip quota.
+	for range 65 {
+		next := c.beginOperation("unrelated", "", time.Second, func(context.Context) (any, error) { return nil, nil })
+		waitOperation(t, c, next.ID)
+	}
+	_, err = c.DiagnoseProtocol("127.0.0.1:53", nil, kone.DiagnosticOptions{Protocol: "udp"}, "retained")
+	require.ErrorIs(t, err, ErrDiagnosticRateLimit)
+	require.Equal(t, int32(1), calls.Load())
+	c.mu.Lock()
+	c.diagnosticRate.count = 0
+	c.mu.Unlock()
+	var pending []string
+	for range 8 {
+		next := c.beginOperation("waiting", "", time.Second, func(ctx context.Context) (any, error) { <-ctx.Done(); return nil, ctx.Err() })
+		pending = append(pending, next.ID)
+	}
+	blocked, err := c.DiagnoseProtocol("127.0.0.1:53", nil, kone.DiagnosticOptions{Protocol: "udp"}, "capacity")
+	require.NoError(t, err)
+	require.Empty(t, blocked.ID)
+	c.mu.Lock()
+	require.Zero(t, c.diagnosticRate.count, "a task rejected before admission sends nothing and consumes no probe budget")
+	c.mu.Unlock()
+	for _, id := range pending {
+		require.NoError(t, c.cancelOperation(id))
+		waitOperation(t, c, id)
+	}
+}
+
 type udpProbeMemoryEngine struct {
 	*memoryEngine
 	probe func(context.Context, string, string, kone.DiagnosticOptions, uint64) (kone.DiagnosticResult, error)

@@ -62,17 +62,24 @@ func probeTarget(ctx context.Context, cfg *kone.KoneConfig, outbound, target str
 }
 
 func (c *Controller) beginOperation(kind, key string, timeout time.Duration, fn func(context.Context) (any, error)) Operation {
+	operation, _ := c.beginOperationAdmitted(kind, key, timeout, fn, nil)
+	return operation
+}
+
+// Admission and idempotent lookup share the operation lock: another kind of
+// operation cannot evict a completed request between checking and charging it.
+func (c *Controller) beginOperationAdmitted(kind, key string, timeout time.Duration, fn func(context.Context) (any, error), admit func() error) (Operation, error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return Operation{Kind: kind, Status: "failed", Error: "Application is stopping"}
+		return Operation{Kind: kind, Status: "failed", Error: "Application is stopping"}, nil
 	}
 	if key != "" {
 		if id, ok := c.requestKeys[kind+":"+key]; ok {
 			if existing := c.operations[id]; existing != nil {
 				copy := *existing
 				c.mu.Unlock()
-				return copy
+				return copy, nil
 			}
 		}
 	}
@@ -84,7 +91,13 @@ func (c *Controller) beginOperation(kind, key string, timeout time.Duration, fn 
 	}
 	if running >= 8 {
 		c.mu.Unlock()
-		return Operation{Kind: kind, Status: "failed", Error: "Operation limit reached; retry after current tasks finish"}
+		return Operation{Kind: kind, Status: "failed", Error: "Operation limit reached; retry after current tasks finish"}, nil
+	}
+	if admit != nil {
+		if err := admit(); err != nil {
+			c.mu.Unlock()
+			return Operation{}, err
+		}
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, timeout)
 	op := &Operation{ID: randomID("op"), Kind: kind, Status: "running", Stage: kind, Started: c.now(), cancel: cancel}
@@ -132,7 +145,7 @@ func (c *Controller) beginOperation(kind, key string, timeout time.Duration, fn 
 			op.Error = safeMessage(err, c.doc.Config)
 		}
 	}()
-	return copy
+	return copy, nil
 }
 
 func (c *Controller) Operations() []Operation {
@@ -162,8 +175,6 @@ func (c *Controller) Diagnose(target string, outbounds []string, withTLS bool, k
 }
 
 func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options kone.DiagnosticOptions, key string) (Operation, error) {
-	c.diagnosticAdmission.Lock()
-	defer c.diagnosticAdmission.Unlock()
 	options, err := options.Normalize()
 	if err != nil {
 		return Operation{}, err
@@ -191,23 +202,19 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 			return Operation{}, errors.New("unknown or non-dialing outbound")
 		}
 	}
-	// Charge actual requested probes, not idempotent retries. Concurrency alone
-	// would still permit an unlimited sequence of fast UDP datagrams.
-	c.mu.Lock()
-	_, duplicate := c.requestKeys["diagnostics:"+key]
-	if key == "" || !duplicate {
+	// Called under the operation lock only for an admitted new request.
+	admit := func() error {
 		now := c.now()
 		if now.Sub(c.diagnosticRate.start) >= time.Minute {
 			c.diagnosticRate = rateWindow{start: now}
 		}
 		if c.diagnosticRate.count+len(outbounds) > 32 {
-			c.mu.Unlock()
-			return Operation{}, ErrDiagnosticRateLimit
+			return ErrDiagnosticRateLimit
 		}
 		c.diagnosticRate.count += len(outbounds)
+		return nil
 	}
-	c.mu.Unlock()
-	return c.beginOperation("diagnostics", key, 20*time.Second, func(ctx context.Context) (any, error) {
+	return c.beginOperationAdmitted("diagnostics", key, 20*time.Second, func(ctx context.Context) (any, error) {
 		select {
 		case c.probeSlots <- struct{}{}:
 		default:
@@ -265,5 +272,5 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 			}
 		}
 		return map[string]any{"target": target, "protocol": options.Protocol, "results": results, "suggest_proxy": suggested, "automatic_rule": false}, nil
-	}), nil
+	}, admit)
 }

@@ -215,3 +215,21 @@ func TestUDPDiagnosticCancellationClosesBlockedSocket(t *testing.T) {
 		t.Fatal("UDP write ignored cancellation")
 	}
 }
+
+func TestDiagnosticsRejectMappedAndZonedUnspecifiedTargetsBeforeDialing(t *testing.T) {
+	one := udpDiagnosticEngine(t)
+	one.policy.Load().outbounds.dial = func(context.Context, string, string) (net.Conn, error) {
+		t.Fatal("unspecified diagnostic targets must never open a socket")
+		return nil, errors.New("unexpected dial")
+	}
+	for _, target := range []string{"[::ffff:0.0.0.0]:53", "[::%lo0]:53", "[::ffff:224.0.0.1]:53"} {
+		require.Error(t, ValidateDiagnosticTarget(target), target)
+		for _, protocol := range []string{"tcp", "udp"} {
+			result, err := one.ProbeDiagnosticRequestVersion(t.Context(), BuiltinDirect, target, DiagnosticOptions{Protocol: protocol}, 0)
+			require.NoError(t, err)
+			require.Equal(t, "failed", result.Status)
+			require.Equal(t, "configuration", result.Stage)
+		}
+	}
+	require.NoError(t, ValidateDiagnosticTarget("[fe80::1%lo0]:53"), "link-local servers retain their explicit interface zone")
+}

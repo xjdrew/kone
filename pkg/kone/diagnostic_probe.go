@@ -46,6 +46,7 @@ func ValidateDiagnosticTarget(target string) error {
 		return errors.New("invalid target port")
 	}
 	if address, err := netip.ParseAddr(host); err == nil {
+		address = address.Unmap().WithZone("")
 		if address.IsUnspecified() || address.IsMulticast() {
 			return errors.New("target cannot be unspecified or multicast")
 		}

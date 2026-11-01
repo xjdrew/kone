@@ -1,6 +1,7 @@
 package kone
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net"
@@ -58,6 +59,76 @@ func TestDarwinIPv6ForeignAndReplacedRoutesArePreserved(t *testing.T) {
 	message.Addrs[unix.RTAX_GATEWAY] = &route.Inet6Addr{IP: netip.MustParseAddr("fd7a:203::9").As16()}
 	require.ErrorContains(t, cleanup(t.Context()), "ownership")
 	require.Equal(t, []int{unix.RTM_ADD}, *operations)
+}
+
+func TestDarwinKernelConnectedIPv6PrefixIsOwnedByItsAddress(t *testing.T) {
+	prefix := netip.MustParsePrefix("fd7a:203::/120")
+	_, subnet, _ := net.ParseCIDR(prefix.String())
+	addresses := []netip.Prefix{netip.MustParsePrefix("fd7a:203::1/120"), netip.MustParsePrefix("fe80::beef/64")}
+	for _, gateway := range []string{"fd7a:203::1", "fe80::beef"} {
+		t.Run(gateway, func(t *testing.T) {
+			r, messages, operations := testDarwinRouteTable()
+			r.interfacePrefixes = func(*net.Interface) ([]netip.Prefix, error) { return addresses, nil }
+			connected := darwinRouteMessage(unix.RTM_ADD, prefix, &net.Interface{Name: "utun7", Index: 7})
+			connected.Index, connected.Flags = 7, unix.RTF_UP
+			connected.Addrs[unix.RTAX_GATEWAY] = &route.Inet6Addr{IP: netip.MustParseAddr(gateway).As16(), ZoneID: 7}
+			*messages = []route.Message{connected}
+			cleanup, err := r.AddRoute(t.Context(), newMemoryDevice(), subnet)
+			require.NoError(t, err)
+			require.Nil(t, cleanup, "kernel connected route follows the owned alias/device; never issue an explicit delete")
+			require.Empty(t, *operations)
+			for _, change := range []string{"index", "gateway", "zone", "scope", "static", "indirect", "reject", "blackhole", "host", "address-prefix", "no-address"} {
+				bad := *connected
+				bad.Addrs = append([]route.Addr(nil), connected.Addrs...)
+				local := append([]netip.Prefix(nil), addresses...)
+				switch change {
+				case "index":
+					bad.Index = 9
+				case "gateway":
+					bad.Addrs[unix.RTAX_GATEWAY] = &route.Inet6Addr{IP: netip.MustParseAddr("fe80::dead").As16(), ZoneID: 7}
+				case "zone":
+					bad.Addrs[unix.RTAX_GATEWAY] = &route.Inet6Addr{IP: netip.MustParseAddr(gateway).As16(), ZoneID: 9}
+				case "scope":
+					bad.Flags |= unix.RTF_IFSCOPE
+				case "static":
+					bad.Flags |= unix.RTF_STATIC
+				case "indirect":
+					bad.Flags |= unix.RTF_GATEWAY
+				case "reject":
+					bad.Flags |= unix.RTF_REJECT
+				case "blackhole":
+					bad.Flags |= unix.RTF_BLACKHOLE
+				case "host":
+					bad.Flags |= unix.RTF_HOST
+				case "address-prefix":
+					local[0] = netip.MustParsePrefix("fd7a:203::1/119")
+				case "no-address":
+					local = nil
+				}
+				require.False(t, darwinConnectedIPv6Route(&bad, prefix, 7, local), "%s cannot establish connected route ownership", change)
+			}
+		})
+	}
+}
+
+func TestDarwinConnectedIPv6GatewayNormalizesKernelEmbeddedScope(t *testing.T) {
+	prefix := netip.MustParsePrefix("fd7a:203::/120")
+	message := darwinRouteMessage(unix.RTM_ADD, prefix, &net.Interface{Name: "utun7", Index: 7})
+	message.Index, message.Flags = 7, unix.RTF_UP
+	linkLocal := netip.MustParseAddr("fe80::beef").As16()
+	message.Addrs[unix.RTAX_GATEWAY] = &route.Inet6Addr{IP: linkLocal}
+	wire, err := message.Marshal()
+	require.NoError(t, err)
+	position := bytes.Index(wire, linkLocal[:])
+	require.Positive(t, position)
+	wire[position+2], wire[position+3] = 0, 7 // XNU/KAME's internal interface index
+	messages, err := route.ParseRIB(route.RIBTypeRoute, wire)
+	require.NoError(t, err)
+	actual := messages[0].(*route.RouteMessage)
+	gateway := actual.Addrs[unix.RTAX_GATEWAY].(*route.Inet6Addr)
+	require.Equal(t, 7, gateway.ZoneID)
+	require.Equal(t, linkLocal, gateway.IP)
+	require.True(t, darwinConnectedIPv6Route(actual, prefix, 7, []netip.Prefix{netip.MustParsePrefix("fd7a:203::1/120"), netip.MustParsePrefix("fe80::beef/64")}))
 }
 
 func TestDarwinIPv6AliasABIAndCanceledCall(t *testing.T) {
