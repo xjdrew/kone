@@ -739,9 +739,24 @@ function confirmDirectCapture(document) {
   dialog("启用直连接管", "当前规则仅使用直连或拒绝，不经过代理。", null, [
     button("取消", closeDialog, "ghost", false),
     button("确认启用接管", () => action(async () => {
-      await endpoints.save({ base_version: document.version, config: document.config, inbound: document.inbound, direct_only_confirmed: true,
+      const epoch = model.authEpoch;
+      const editor = model.editor;
+      const sameBase = model.config?.version === document.version && !model.versionConflict;
+      const saved = await endpoints.save({ base_version: document.version, config: document.config, inbound: document.inbound, direct_only_confirmed: true,
         credential_actions: Object.fromEntries(list(document.config?.outbounds).map(outbound => [outbound.name, { action: "preserve", original_name: outbound.name }])) });
-      await loadConfig(true);
+      if (!currentAuth(epoch)) return;
+      if (model.editor || model.dirty || model.settingsLocalDirty) {
+        // This write confirms the saved document, never the open draft. Its
+        // known metadata-only revision can advance that draft's base only if
+        // both started from the same saved revision and no conflict appeared.
+        if (sameBase && model.editor === editor && model.config?.version === document.version && !model.versionConflict && saved.version === document.version + 1) {
+          model.config = saved.config ? saved : { ...document, ...saved, direct_only_confirmed: true };
+        } else {
+          model.versionConflict = true;
+          updateEditorConflict();
+          await loadConfig(false);
+        }
+      } else await loadConfig(true);
       closeDialog();
       await watchOperation(await endpoints.lifecycle("start"));
       notice("接管已启用。", "success");

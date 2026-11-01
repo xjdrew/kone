@@ -687,7 +687,7 @@ async function navigateSettings(page, section) {
 }
 
 async function saveOutbound(page) {
-  await page.locator("[data-editor-save]").click();
+  await page.locator("[data-outbound-editor] [data-editor-save]").click();
 }
 
 async function dismissOutboundTestSuggestion(page) {
@@ -1371,20 +1371,55 @@ test("@compat direct-only capture uses one short confirmation and remembers the 
   expect(data.requests.some((request) => request.path === "/readiness")).toBe(false);
 });
 
-test("direct-only confirmation preserves saved settings while an editor contains an unsaved draft", async ({ page }) => {
-  const data = await mount(page, { directOnly: true });
-  const saved = structuredClone(data.config.config);
-  await navigate(page, "outbounds");
-  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
-  await page.locator("#outbound-name-0").fill("Unsaved proxy draft");
-  await page.locator("#lifecycle-toggle").dispatchEvent("click");
-  await page.getByRole("button", { name: "确认启用接管", exact: true }).click();
-  await expect(page.locator("#runtime-status")).toContainText("正在接管");
-  const confirmation = data.writes.find((write) => write.path === "/config");
-  expect(confirmation.body.config).toEqual(saved);
-  expect(confirmation.body.direct_only_confirmed).toBe(true);
-  expect(data.config.config.outbounds[0].name).toBe("Proxy A");
-});
+for (const externalChange of [false, true]) {
+  test(`@compat direct-only confirmation preserves an outbound draft ${externalChange ? "without rebasing an external configuration change" : "and saves it using the confirmed version"}`, async ({ page }) => {
+    const data = await mount(page, { directOnly: true });
+    await navigate(page, "outbounds");
+    await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+    await page.locator("#outbound-name-0").fill("Unsaved proxy draft");
+    await page.locator("#outbound-username-0").fill("unsaved-user");
+    await page.locator("#outbound-password-0").fill("unsaved-password");
+    if (externalChange) {
+      data.config.config.general["log-level"] = "debug";
+      data.config.version = 2;
+      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+      await expect(page.locator("[data-outbound-conflict]")).toBeVisible();
+    }
+    const saved = structuredClone(data.config.config);
+    await page.locator("#lifecycle-toggle").dispatchEvent("click");
+    await page.getByRole("button", { name: "确认启用接管", exact: true }).click();
+    await expect(page.locator("#runtime-status")).toContainText("正在接管");
+    const confirmation = data.writes.find((write) => write.path === "/config");
+    expect(confirmation.body.config).toEqual(saved);
+    expect(confirmation.body.direct_only_confirmed).toBe(true);
+    expect(confirmation.body.credential_actions["Proxy A"]).toEqual({ action: "preserve", original_name: "Proxy A" });
+    expect(data.config.config.outbounds[0].name).toBe("Proxy A");
+    await expect(page.locator("#outbound-name-0")).toHaveValue("Unsaved proxy draft");
+    await expect(page.locator("#outbound-username-0")).toHaveValue("unsaved-user");
+    await expect(page.locator("#outbound-password-0")).toHaveValue("unsaved-password");
+    await expect(page.locator("[data-outbound-editor] [data-editor-save]")).toBeEnabled();
+    await saveOutbound(page);
+    await expect.poll(() => data.writes.filter((write) => write.path === "/config")).toHaveLength(2);
+    const draftSave = data.writes.filter((write) => write.path === "/config").at(-1);
+    expect(draftSave.body.config.outbounds[0]).toMatchObject({ id: "outbound-id-1", name: "Unsaved proxy draft" });
+    expect(draftSave.body.credential_actions["Unsaved proxy draft"]).toEqual({ action: "replace", original_name: "Proxy A", username: "unsaved-user", password: "unsaved-password" });
+    if (externalChange) {
+      expect(draftSave.body.base_version).toBe(1);
+      await expect(page.locator("#page-notice")).toContainText("其他页面或文件修改");
+      await expect(page.locator("#outbound-name-0")).toHaveValue("Unsaved proxy draft");
+      await expect(page.locator("#outbound-password-0")).toHaveValue("unsaved-password");
+      expect(data.config.version).toBe(3);
+      expect(data.config.config).toEqual(saved);
+    } else {
+      expect(draftSave.body.base_version).toBe(2);
+      await dismissOutboundTestSuggestion(page);
+      await expect(page.locator('[data-outbound-row="0"]')).toContainText("Unsaved proxy draft");
+      expect(data.config.version).toBe(3);
+      expect(data.config.direct_only_confirmed).toBe(true);
+    }
+    expect(data.writes.some((write) => write.path === "/outbounds/test")).toBe(false);
+  });
+}
 
 test("dialogs without footer actions do not display placeholder values", async ({ page }) => {
   await mount(page, { bootstrapPage: "diagnostics" });
@@ -1583,7 +1618,7 @@ test("partial outbound credentials stay in the form and explicit clearing remove
   expect(data.requests.some((request) => request.path === "/outbounds/test")).toBe(false);
 });
 
-test("testing an outbound draft is explicit, preserves stored credentials and invalidates evidence after edits", async ({ page }) => {
+test("@compat testing an outbound draft is explicit, preserves stored credentials and invalidates evidence after edits", async ({ page }) => {
   const data = await mount(page, { asyncHealth: true });
   const saved = structuredClone(data.config);
   await navigate(page, "outbounds");
@@ -1672,7 +1707,7 @@ test("Shadowsocks transport success without target verification stays unverified
   await expect(page.locator('[data-outbound-row="0"] .outbound-status-line')).not.toContainText(/成功|可用/);
 });
 
-test("UDP fallback appears only after an explicit unsupported result and an unknown result stays unverified", async ({ page }) => {
+test("@compat UDP fallback appears only after an explicit unsupported result and an unknown result stays unverified", async ({ page }) => {
   const data = await mount(page);
   await navigate(page, "outbounds");
   await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
@@ -2336,7 +2371,7 @@ test("Other drilldown reads every original contributor in bounded requests and l
   await expect(page.getByText("固定观察快照", { exact: false })).toBeVisible();
 });
 
-test("temporary domain rules and outbound disable are explicit saved drafts with stable identities", async ({
+test("@compat temporary domain rules and outbound disable are explicit saved drafts with stable identities", async ({
   page,
 }) => {
   const data = await mount(page);

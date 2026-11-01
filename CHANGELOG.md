@@ -34,6 +34,7 @@
 
 ## Bugfixes
 
+- Keep unsaved proxy edits when enabling direct-only capture.
 - Preserve editor drafts and return navigation during browser history changes and configuration refreshes.
 - Keep Windows packaging from changing tracked frontend files solely because of line endings.
 - Keep gateway capture stable when using the gVisor stack.
