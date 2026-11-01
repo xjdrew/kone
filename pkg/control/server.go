@@ -269,6 +269,21 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 				return c.Start(ctx)
 			}
 		case "recover":
+			if session.Remote || !localRemote(r) {
+				apiError(w, 403, "local_only", "Confirm network recovery from the local KONE console")
+				return
+			}
+			var request struct {
+				Confirm bool `json:"confirm"`
+			}
+			if err := readJSON(w, r, &request); err != nil {
+				respondError(err)
+				return
+			}
+			if !request.Confirm {
+				apiError(w, 400, "confirmation_required", "Explicitly confirm recovery of verified KONE network records")
+				return
+			}
 			actionFn = c.Recover
 		case "exit":
 			actionFn = func(context.Context) error { c.cancel(); return nil }

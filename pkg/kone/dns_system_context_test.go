@@ -62,6 +62,22 @@ func TestWindowsDNSContextNRPTExactNamesAndAdapterScopes(t *testing.T) {
 	require.True(t, context.Scopes[1].Unavailable)
 }
 
+func TestWindowsDNSContextExcludesOwnedResolverFromAutomaticUpstreams(t *testing.T) {
+	observed, err := parseWindowsDNSContext([]byte(`{"owned_excluded":true,"default_servers":["192.0.2.53"],"links":[],"nrpt":[]}`))
+	require.NoError(t, err)
+	cfg := defaultConfig().DNS
+	cfg.Servers = []string{"10.207.0.1:53"}
+	merged := mergeSystemDNSContext(cfg, observed, nil)
+	require.Equal(t, []string{"192.0.2.53:53"}, merged.Servers)
+	require.NotContains(t, merged.Servers, "10.207.0.1:53")
+	observed, err = parseWindowsDNSContext([]byte(`{"owned_excluded":true,"default_servers":[],"links":[],"nrpt":[]}`))
+	require.NoError(t, err)
+	require.True(t, observed.RequireManual)
+	require.NotEmpty(t, observed.Warnings)
+	merged = mergeSystemDNSContext(cfg, observed, nil)
+	require.Empty(t, merged.Servers, "an unavailable original resolver must not silently reuse KONE")
+}
+
 func TestDarwinDNSContextScopesPortsAndMulticastBoundary(t *testing.T) {
 	context, err := parseDarwinDNSContext([]byte("DNS configuration\nresolver #1\n  search domain[0] : home.test\n  nameserver[0] : 192.0.2.53\n  if_index : 2 (en0)\nresolver #2\n  domain : corp.test\n  nameserver[0] : 10.0.0.53\n  port : 5353\n  if_index : 7 (utun3)\n  flags : Scoped, Request A records\nresolver #3\n  domain : local\n  options : mdns\n"))
 	require.NoError(t, err)

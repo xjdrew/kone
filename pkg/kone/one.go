@@ -172,6 +172,9 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	if err := effective.Validate(); err != nil {
 		return nil, err
 	}
+	if err := validateDNSListenerUpstreams(cfg.Core, dnsCfg); err != nil {
+		return nil, err
+	}
 	p, err := NewOutbounds(cfg.Outbounds)
 	if err != nil {
 		return nil, err
@@ -409,10 +412,10 @@ func (one *One) Run(parent context.Context) (result error) {
 	if err := stack.Start(); err != nil {
 		return fmt.Errorf("start TUN stack: %w", err)
 	}
-	if dnsConn, err = lc.ListenPacket(ctx, "udp", one.dns.server.Addr); err != nil {
+	if dnsConn, err = lc.ListenPacket(ctx, one.dns.server.Net, one.dns.server.Addr); err != nil {
 		return fmt.Errorf("DNS listener: %w", err)
 	}
-	if dnsTCP, err = lc.Listen(ctx, "tcp", one.dns.server.Addr); err != nil {
+	if dnsTCP, err = lc.Listen(ctx, one.dns.tcpServer.Net, one.dns.server.Addr); err != nil {
 		return fmt.Errorf("DNS TCP listener: %w", err)
 	}
 	dnsTCP = &ownedListener{Listener: dnsTCP}

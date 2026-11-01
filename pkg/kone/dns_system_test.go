@@ -14,7 +14,7 @@ func TestSystemDNSOptInAndPlatformBoundary(t *testing.T) {
 	cleanup, err := (systemNetwork{}).ConfigureSystemDNS(context.Background(), nil, CoreConfig{}, DNSConfig{})
 	require.NoError(t, err)
 	require.Nil(t, cleanup)
-	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		require.True(t, SupportsSystemDNS())
 		return
 	}

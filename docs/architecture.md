@@ -12,7 +12,7 @@ KONE 的核心链路是：**客户端 → 内核路由 → TUN → sing-tun → 
 | KONE 主机内核 | 按路由把报文送往 TUN；处理 system/mixed 的客户端侧 TCP 状态；把回注报文送回本机应用或 LAN |
 | TUN 设备 | 用户态读取发往虚拟接口的 IP 报文；写入的 IP 报文作为接收流量回注内核。Linux TUN、macOS utun、Windows Wintun 是平台实现 |
 | sing-tun 协议栈 | 处理报文、透明 TCP 会话映射和 UDP 会话，调用 KONE 流处理器，恢复响应地址 |
-| KONE DNS 服务 / Fake-IP 映射表 | UDP/TCP 查询、私有域名分流、真实响应缓存与有界历史；按规则返回 Fake-IP、真实响应或 REFUSED，Linux/Windows 可选 IPv6 地址族 |
+| KONE DNS 服务 / Fake-IP 映射表 | UDP/TCP 查询、私有域名分流、真实响应缓存与有界历史；按规则返回 Fake-IP、真实响应或 REFUSED，三平台可选 IPv6 地址族 |
 | KONE 流处理器 | 从 Fake-IP 恢复域名，读取配置快照，选择出站及 UDP 策略，管理连接生命周期 |
 | 出站执行器 | 内置 direct/reject；HTTP/HTTPS CONNECT 支持 TCP，SOCKS5 和受支持的 Shadowsocks AEAD 方法支持 TCP/UDP |
 | 上游代理服务器 / 目标服务 | 代理服务器执行代理协议并连接目标；目标服务处理客户端应用请求 |
@@ -172,7 +172,7 @@ sequenceDiagram
 
 Linux/Raspberry Pi 网关保留两种捕获方式：Fake-IP 子网/显式 CIDR 路由，或 `core.auto-route = true` 的两条 IPv4 `/1` 路由。后者保留原默认路由，更具体的系统路由仍优先；进入 TUN 后再按规则选择代理、直连或拒绝。管理员负责 LAN forwarding、DHCP、NAT/防火墙和回程路由，见[网关指南](guides/how-to-use-with-raspberry-pi.md)。
 
-`core.outbound-interface` 把代理传输、直连 TCP/UDP 和默认上游 DNS 绑定到真实出口，避免再次被全局路由捕获；专用 DNS 可绑定所属接口。回环代理和本地 DNS stub 保留回环路径。Linux/Windows 显式设置 `core.ipv6-network` 后支持 Fake-AAAA、CIDR6、TCP/UDP 和独立的 IPv6 捕获路由；默认不启用，macOS 当前拒绝启用，见 [IPv6 边界](ipv6.md)。未启用时，IPv6 业务可能绕过 KONE。
+`core.outbound-interface` 把代理传输、直连 TCP/UDP 和默认上游 DNS 绑定到真实出口，避免再次被全局路由捕获；专用 DNS 可绑定所属接口。回环代理和本地 DNS stub 保留回环路径。Linux/macOS/Windows 显式设置 `core.ipv6-network` 后支持 Fake-AAAA、CIDR6、TCP/UDP 和独立的 IPv6 捕获路由；默认不启用，见 [IPv6 边界](ipv6.md)。未启用时，IPv6 业务可能绕过 KONE。
 
 `Run(ctx)` 统一拥有设备、协议栈、DNS/管理监听和路由：失败逆序回滚，取消或信号退出关闭活动流量、恢复自有网络设置、关闭设备并等待任务结束。不会删除他人设备/路由；强杀和断电无法执行清理。配置快照原子发布，域名规则、代理 URL 与 UDP 回退可以热更新；core、DNS、管理/日志或 CIDR 捕获变化要求重启。详见[运行可靠性](runtime.md)。
 

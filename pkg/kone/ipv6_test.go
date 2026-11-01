@@ -33,7 +33,7 @@ func TestIPv6ConfigurationBoundsAndPlatformAdmission(t *testing.T) {
 	require.Equal(t, "fd7a:203::1/120", configuration.Core.IPv6Network)
 	if !SupportsIPv6Capture() {
 		_, err := FromConfig(configuration)
-		require.ErrorContains(t, err, "only on Linux and Windows")
+		require.ErrorContains(t, err, "supported only on Linux, Windows and macOS")
 	} else {
 		one, err := FromConfig(configuration)
 		require.NoError(t, err)

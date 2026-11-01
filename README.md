@@ -9,7 +9,7 @@ Its original [K1 dial mark](docs/branding.md) represents reliable guidance for n
 
 ## Features
 
-- Route application and LAN traffic through proxies without configuring every application.
+- Route application and LAN traffic through proxies without configuring every application, with optional IPv6 capture.
 - Use HTTP/HTTPS, SOCKS5 and Shadowsocks outbounds, with direct and reject policies.
 - Select system, gVisor or mixed networking at runtime; every package includes all three.
 - Inspect traffic, DNS history, routing decisions and recent runtime logs.

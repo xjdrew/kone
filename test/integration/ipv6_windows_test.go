@@ -50,125 +50,6 @@ func (s *windowsIPv6Fault) ListenPacket(ctx context.Context, network, address st
 	return s.ListenConfig.ListenPacket(ctx, network, address)
 }
 
-type windowsSOCKSSeen struct {
-	protocol, hostname string
-}
-
-func windowsSOCKSPeer(t *testing.T) (string, <-chan windowsSOCKSSeen) {
-	t.Helper()
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	packet, err := net.ListenPacket("udp4", "127.0.0.1:0")
-	require.NoError(t, err)
-	seen := make(chan windowsSOCKSSeen, 8)
-	var workers sync.WaitGroup
-	var mu sync.Mutex
-	active := map[net.Conn]bool{}
-	readTarget := func(reader io.Reader, kind byte) (string, error) {
-		size := 0
-		switch kind {
-		case 1:
-			size = 4
-		case 4:
-			size = 16
-		case 3:
-			var length [1]byte
-			if _, err := io.ReadFull(reader, length[:]); err != nil {
-				return "", err
-			}
-			size = int(length[0])
-		default:
-			return "", fmt.Errorf("invalid address kind")
-		}
-		address := make([]byte, size+2)
-		if _, err := io.ReadFull(reader, address); err != nil {
-			return "", err
-		}
-		if kind == 3 {
-			return string(address[:size]), nil
-		}
-		return net.IP(address[:size]).String(), nil
-	}
-	workers.Add(2)
-	go func() {
-		defer workers.Done()
-		for {
-			connection, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			active[connection] = true
-			mu.Unlock()
-			workers.Add(1)
-			go func() {
-				defer workers.Done()
-				defer connection.Close()
-				defer func() { mu.Lock(); delete(active, connection); mu.Unlock() }()
-				connection.SetDeadline(time.Now().Add(10 * time.Second))
-				var hello [2]byte
-				if _, err := io.ReadFull(connection, hello[:]); err != nil || hello[0] != 5 || hello[1] > 8 {
-					return
-				}
-				if _, err := io.ReadFull(connection, make([]byte, int(hello[1]))); err != nil {
-					return
-				}
-				connection.Write([]byte{5, 0})
-				var request [4]byte
-				if _, err := io.ReadFull(connection, request[:]); err != nil {
-					return
-				}
-				hostname, err := readTarget(connection, request[3])
-				if err != nil {
-					return
-				}
-				if request[1] == 1 {
-					seen <- windowsSOCKSSeen{"tcp", hostname}
-					connection.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, 0, 0})
-					io.Copy(connection, connection)
-				} else if request[1] == 3 {
-					_, port, _ := net.SplitHostPort(packet.LocalAddr().String())
-					var value int
-					fmt.Sscan(port, &value)
-					connection.Write([]byte{5, 0, 0, 1, 127, 0, 0, 1, byte(value >> 8), byte(value)})
-					connection.SetDeadline(time.Time{})
-					io.Copy(io.Discard, connection)
-				}
-			}()
-		}
-	}()
-	go func() {
-		defer workers.Done()
-		buffer := make([]byte, 65535)
-		for {
-			n, source, err := packet.ReadFrom(buffer)
-			if err != nil {
-				return
-			}
-			if n < 4 || buffer[0] != 0 || buffer[1] != 0 || buffer[2] != 0 {
-				continue
-			}
-			hostname, err := readTarget(strings.NewReader(string(buffer[4:n])), buffer[3])
-			if err != nil {
-				continue
-			}
-			seen <- windowsSOCKSSeen{"udp", hostname}
-			packet.WriteTo(buffer[:n], source)
-		}
-	}()
-	t.Cleanup(func() {
-		listener.Close()
-		packet.Close()
-		mu.Lock()
-		for connection := range active {
-			connection.Close()
-		}
-		mu.Unlock()
-		workers.Wait()
-	})
-	return "socks5://" + listener.Addr().String(), seen
-}
-
 func windowsIPv6Config(t *testing.T, stack, suffix string) *kone.KoneConfig {
 	t.Helper()
 	if os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("KONE_WINDOWS_SYSTEM_TEST") != "1" {
@@ -263,7 +144,7 @@ func TestSystemWindowsIPv6Wintun(t *testing.T) {
 
 func testWindowsIPv6Traffic(t *testing.T, stack string) {
 	cfg := windowsIPv6Config(t, stack, "traffic")
-	socks, socksSeen := windowsSOCKSPeer(t)
+	socks, socksSeen := ipv6SOCKSPeer(t)
 	ssTCP, ssTCPSeen := ssInteropPeer(t, "aes-128-gcm", "tcp", false)
 	ssUDP, ssUDPSeen := ssInteropPeer(t, "chacha20-ietf-poly1305", "udp", false)
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -350,7 +231,7 @@ func testWindowsIPv6Traffic(t *testing.T, stack string) {
 		require.NoError(t, err)
 		require.Equal(t, payload, response)
 	}
-	for _, expected := range []windowsSOCKSSeen{{"tcp", "socks6.example"}, {"udp", "socks6.example"}, {"tcp", "fd7a:205::9"}, {"udp", "fd7a:205::9"}} {
+	for _, expected := range []ipv6SOCKSSeen{{"tcp", "socks6.example"}, {"udp", "socks6.example"}, {"tcp", "fd7a:205::9"}, {"udp", "fd7a:205::9"}} {
 		select {
 		case seen := <-socksSeen:
 			require.Equal(t, expected, seen)

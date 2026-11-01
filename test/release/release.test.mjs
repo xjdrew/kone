@@ -254,7 +254,7 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
   for (const name of ["TestSystemDarwinUTUN", "TestSystemDarwinDNSGuidance", "TestDarwinOwnedSystemDNSSessionDeath"])
     assert.ok(nativeMac.includes(`-test.list '^${name}$' | grep -qx ${name}`), `${name} must be present in the native binary`);
   const nativeMacRun = await taskImplementation("ci-macos-tun");
-  assert.match(nativeMacRun, /-test\.run '\^TestSystemDarwin\(UTUN\|DNSGuidance\)\$' -test\.v/);
+  assert.match(nativeMacRun, /-test\.run '\^TestSystemDarwin\(UTUN\|DNSGuidance\|IPv6\)\$' -test\.v/);
   assert.match(nativeMacRun, /stacks=\(system gvisor mixed\)/);
   assert.match(nativeMacRun, /--- PASS: TestSystemDarwinUTUN\/\$stack\/\$case/);
   assert.match(nativeMacRun, /--- PASS: TestSystemDarwinDNSGuidance\/\$stack\/late-failure=\$failure/);
@@ -296,6 +296,9 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
     assert.ok(nativeWindows.includes(`'${name}'`));
   assert.match(nativeWindows, /\$passed -notcontains "TestSystemWindowsIPv6Wintun\/\$stack\/\$case"/);
   assert.match(nativeWindows, /\$passed -notcontains "TestSystemWindowsWintun\/\$stack\/occupied=\$occupied"/);
+  for (const name of ["resolver_restore", "startup_conflict", "external_change", "crash_pending=false", "crash_pending=true"])
+    assert.ok(nativeWindows.includes(`'${name}'`), `require the actual Windows DNS leaf ${name}`);
+  assert.match(nativeWindows, /TestSystemWindowsDNS\/\$stack\/\$case/);
   assert.match(nativeWindows, /Unexpected stack executed in this test process/);
   assert.match(nativeWindows, /KONE_TEST_STACK -ceq 'gvisor' -and \$stacks -cnotcontains 'gvisor'/);
   assert.match(nativeWindows, /Historical source has no gvisor runtime mode/);

@@ -32,7 +32,7 @@ func (e *logNetworkEngine) Run(ctx context.Context) error {
 
 func TestHelperRuntimeLogsTravelPrivateIPCAndRemainAfterShutdown(t *testing.T) {
 	cfg := kone.DefaultConfig()
-	cfg.DNS.Servers = []string{"127.0.0.1:53"}
+	cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 	store := logstore.NewWithOptions(logstore.Options{Capacity: 3})
 	for range 5 {
 		store.Append(logstore.Record{Level: "INFO", Message: "early helper startup"})
@@ -118,7 +118,7 @@ func TestHelperRuntimeLogsTravelPrivateIPCAndRemainAfterShutdown(t *testing.T) {
 
 func TestHelperStartupFailureLogsFlushBeforeIPCCloses(t *testing.T) {
 	cfg := kone.DefaultConfig()
-	cfg.DNS.Servers = []string{"127.0.0.1:53"}
+	cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 	commandsParent, commandsHelper := net.Pipe()
 	eventsParent, eventsHelper := net.Pipe()
 	store := logstore.New()
@@ -145,7 +145,7 @@ func TestHelperStartupFailureLogsFlushBeforeIPCCloses(t *testing.T) {
 
 func TestHelperLogBatchInputBoundsCursorReplayAndTimeout(t *testing.T) {
 	cfg := kone.DefaultConfig()
-	cfg.DNS.Servers = []string{"127.0.0.1:53"}
+	cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 	remote, err := NewRemote(cfg, func(context.Context) (io.ReadWriteCloser, io.ReadWriteCloser, error) { return nil, nil, nil })
 	require.NoError(t, err)
 	callback := &callbacks{engine: remote}

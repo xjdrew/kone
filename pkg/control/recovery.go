@@ -3,6 +3,8 @@ package control
 import (
 	"context"
 	"errors"
+
+	"github.com/xjdrew/kone/pkg/kone"
 )
 
 // Recovery never deletes an interface just because its name looks familiar.
@@ -12,12 +14,36 @@ func (c *Controller) Recover(ctx context.Context) error {
 	c.actions.Lock()
 	defer c.actions.Unlock()
 	c.mu.Lock()
-	active := c.engine != nil
+	active := c.engine != nil || c.captureLocked() || c.state == "running" || c.state == "degraded" || c.state == "stopping" || c.state == "preflight"
+	closed := c.closed
 	c.mu.Unlock()
+	if closed {
+		return errors.New("application is stopping")
+	}
 	if active {
 		return errors.New("pause capture before inspecting recovery")
 	}
 	report, err := c.InspectRecovery(ctx)
+	if err == nil {
+		recoverDNS := c.recoverSystemDNS
+		if recoverDNS == nil {
+			recoverDNS = kone.RecoverSystemDNS
+		}
+		for _, lease := range report.SystemDNS {
+			if !lease.CanRecover {
+				continue
+			}
+			if err = ctx.Err(); err != nil {
+				break
+			}
+			if err = recoverDNS(ctx, lease.ID); err != nil {
+				break
+			}
+		}
+		if err == nil {
+			report, err = c.InspectRecovery(ctx)
+		}
+	}
 	if err == nil && report.Required && !report.CanClear {
 		err = errors.New(report.NextAction)
 	}

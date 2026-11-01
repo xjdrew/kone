@@ -36,14 +36,16 @@ type CaptureData interface {
 	ClearObservation() error
 }
 type Options struct {
-	Directory        string
-	Version          string
-	Factory          Factory
-	Preflight        func(context.Context, *kone.KoneConfig) kone.PreflightReport
-	Probe            func(context.Context, *kone.KoneConfig, string, string, bool) ProbeResult
-	Now              func() time.Time
-	ConfigureLogging func(kone.GeneralConfig) error
-	LogStore         *logstore.Store
+	Directory                string
+	Version                  string
+	Factory                  Factory
+	Preflight                func(context.Context, *kone.KoneConfig) kone.PreflightReport
+	Probe                    func(context.Context, *kone.KoneConfig, string, string, bool) ProbeResult
+	InspectSystemDNSRecovery func(context.Context) ([]kone.SystemDNSRecoveryEntry, error)
+	RecoverSystemDNS         func(context.Context, string) error
+	Now                      func() time.Time
+	ConfigureLogging         func(kone.GeneralConfig) error
+	LogStore                 *logstore.Store
 }
 type Controller struct {
 	mu                            sync.Mutex
@@ -61,6 +63,8 @@ type Controller struct {
 	factory                       Factory
 	preflight                     func(context.Context, *kone.KoneConfig) kone.PreflightReport
 	probe                         func(context.Context, *kone.KoneConfig, string, string, bool) ProbeResult
+	inspectSystemDNSRecovery      func(context.Context) ([]kone.SystemDNSRecoveryEntry, error)
+	recoverSystemDNS              func(context.Context, string) error
 	now                           func() time.Time
 	bootstrap                     string
 	bootstrapExpiry               time.Time
@@ -137,11 +141,18 @@ func New(options Options) (*Controller, error) {
 	if options.Probe == nil {
 		options.Probe = probeTarget
 	}
+	if options.InspectSystemDNSRecovery == nil {
+		options.InspectSystemDNSRecovery = kone.InspectSystemDNSRecovery
+	}
+	if options.RecoverSystemDNS == nil {
+		options.RecoverSystemDNS = kone.RecoverSystemDNS
+	}
 	if err := os.MkdirAll(options.Directory, 0700); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Controller{directory: options.Directory, version: options.Version, factory: options.Factory, preflight: options.Preflight, probe: options.Probe, now: options.Now, state: "paused", bootstrap: randomToken(), bootstrapExpiry: options.Now().Add(5 * time.Minute), sessions: map[string]*Session{}, pairs: map[string]Pairing{}, operations: map[string]*Operation{}, requestKeys: map[string]string{}, probeSlots: make(chan struct{}, 4), ctx: ctx, cancel: cancel}
+	c.inspectSystemDNSRecovery, c.recoverSystemDNS = options.InspectSystemDNSRecovery, options.RecoverSystemDNS
 	if err := c.initAuthentication(); err != nil {
 		cancel()
 		return nil, err

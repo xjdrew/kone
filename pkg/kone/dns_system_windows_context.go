@@ -15,7 +15,9 @@ $ifaces=@(Get-NetIPInterface); $routes=@(Get-NetRoute | Select-Object -First 409
 [pscustomobject]@{links=$links;nrpt=$nrpt;routes=$routes;search=@((Get-DnsClientGlobalSetting).SuffixSearchList)} | ConvertTo-Json -Depth 7 -Compress`
 
 type windowsDNSContext struct {
-	Links []struct {
+	DefaultServers []string `json:"default_servers"`
+	OwnedExcluded  bool     `json:"owned_excluded"`
+	Links          []struct {
 		Name    string   `json:"name"`
 		Index   int      `json:"index"`
 		Suffix  string   `json:"suffix"`
@@ -84,6 +86,14 @@ func parseWindowsDNSContext(raw []byte) (DNSSystemContext, error) {
 	var data windowsDNSContext
 	if err := json.Unmarshal(raw, &data); err != nil {
 		return context, errors.New("invalid Windows DNS context JSON")
+	}
+	if data.OwnedExcluded {
+		context.ownedDefaultExcluded = true
+		context.DefaultServers, _ = normalizedSystemServers(data.DefaultServers)
+		if len(context.DefaultServers) == 0 {
+			context.RequireManual = true
+			context.Warnings = append(context.Warnings, "The original Windows resolver is unavailable; configure explicit DNS servers")
+		}
 	}
 	if len(data.Links) > 128 || len(data.NRPT) > 64 || len(data.Routes) > 4096 {
 		context.RequireManual = true

@@ -46,13 +46,14 @@ type RecoveryItem struct {
 }
 
 type RecoveryReport struct {
-	Required   bool           `json:"required"`
-	RunID      string         `json:"run_id,omitempty"`
-	RecordedAt time.Time      `json:"recorded_at,omitempty"`
-	Ownership  string         `json:"ownership"`
-	CanClear   bool           `json:"can_clear"`
-	Items      []RecoveryItem `json:"items"`
-	NextAction string         `json:"next_action,omitempty"`
+	Required   bool                          `json:"required"`
+	RunID      string                        `json:"run_id,omitempty"`
+	RecordedAt time.Time                     `json:"recorded_at,omitempty"`
+	Ownership  string                        `json:"ownership"`
+	CanClear   bool                          `json:"can_clear"`
+	Items      []RecoveryItem                `json:"items"`
+	NextAction string                        `json:"next_action,omitempty"`
+	SystemDNS  []kone.SystemDNSRecoveryEntry `json:"system_dns,omitempty"`
 }
 
 func validRunID(id string) bool {
@@ -179,7 +180,36 @@ func (c *Controller) readRecoveryJournal(migrate bool) (recoveryJournal, error) 
 // InspectRecovery never changes system networking. A matching name or index is
 // deliberately insufficient evidence to delete a surviving interface.
 func (c *Controller) InspectRecovery(ctx context.Context) (RecoveryReport, error) {
-	return c.inspectRecovery(ctx, net.Interfaces)
+	report, journalErr := c.inspectRecovery(ctx, net.Interfaces)
+	inspect := c.inspectSystemDNSRecovery
+	if inspect == nil {
+		inspect = kone.InspectSystemDNSRecovery
+	}
+	entries, dnsErr := inspect(ctx)
+	return mergeSystemDNSRecovery(report, entries, journalErr, dnsErr)
+}
+
+func mergeSystemDNSRecovery(report RecoveryReport, entries []kone.SystemDNSRecoveryEntry, journalErr, dnsErr error) (RecoveryReport, error) {
+	if dnsErr != nil {
+		report.Required, report.CanClear = true, false
+		report.Ownership = "unverified"
+		report.Items = append(report.Items, RecoveryItem{Kind: "system_dns", Status: "unverified", Message: "Machine resolver leases could not be inspected; DNS recovery must be verified before restarting capture"})
+		report.NextAction = "Inspect Windows resolver lease status before clearing the capture record"
+		return report, errors.Join(journalErr, dnsErr)
+	}
+	if len(entries) > 0 {
+		report.Required, report.CanClear = true, false
+		report.SystemDNS = append([]kone.SystemDNSRecoveryEntry(nil), entries...)
+		report.Ownership = "recorded"
+		report.NextAction = "Explicitly recover the owned Windows DNS lease with administrator authorization before restarting capture"
+		for _, entry := range entries {
+			report.Items = append(report.Items, RecoveryItem{Kind: "system_dns", Identity: entry.ID, Status: entry.Status, Message: entry.Message})
+			if !entry.CanRecover {
+				report.NextAction = "Pause the active DNS owner or inspect external resolver changes; KONE will not remove unverified policy"
+			}
+		}
+	}
+	return report, journalErr
 }
 
 func (c *Controller) inspectRecovery(ctx context.Context, interfaces func() ([]net.Interface, error)) (RecoveryReport, error) {

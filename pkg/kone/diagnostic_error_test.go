@@ -59,7 +59,7 @@ func TestDiagnosticSeparatesDNSConnectAuthenticationAndPolicy(t *testing.T) {
 func TestShadowsocksDiagnosticTransportSuccessIsNotTargetReachability(t *testing.T) {
 	cleanProxyEnv(t)
 	cfg := DefaultConfig()
-	cfg.DNS.Servers = []string{"127.0.0.1:53"}
+	cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 	cfg.Outbounds = []OutboundConfig{{Name: "encrypted", URL: "ss://aes-128-gcm:secret@127.0.0.1:8388"}}
 	one, err := FromConfig(cfg)
 	require.NoError(t, err)

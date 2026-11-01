@@ -146,6 +146,12 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 			return 3
 		}
 		controlOptions := control.Options{Directory: *directory, Version: options.version, LogStore: options.logs}
+		controlOptions.RecoverSystemDNS = func(ctx context.Context, id string) error {
+			return selectSystemDNSRecovery(ctx, id, func() bool { return runtime.GOOS == "windows" && desktop.NeedsHelper() }, kone.RecoverSystemDNS,
+				func(ctx context.Context, id string) error {
+					return desktop.RecoverSystemDNS(ctx, id, launchManagedHelper)
+				})
+		}
 		controlOptions.ConfigureLogging = func(general kone.GeneralConfig) error { return configureLogging(general, *debug) }
 		if desktop.PrivilegeSeparationAvailable() {
 			if controlOptions.Directory == "" {

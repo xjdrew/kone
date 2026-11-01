@@ -1,6 +1,6 @@
 # 系统 DNS 引导
 
-`dns.system` 将“运行一个 DNS 服务”和“引导本机系统查询该服务”分开。CLI/TOML 默认 `false`；Linux/macOS 管理模式首次初始化会选择 `true`，但仍需预检通过并由用户显式启用接管。既有配置的选择不会被重置。该设置不改变 HTTP/SOCKS 代理、DHCP、路由器或其他机器的 DNS。网关上的 LAN 客户端仍需由管理员配置 DNS/网关。
+`dns.system` 将“运行一个 DNS 服务”和“引导本机系统查询该服务”分开。CLI/TOML 默认 `false`；Linux/macOS/Windows 管理模式首次初始化会选择 `true`，但仍需预检通过并由用户显式启用接管。既有配置的选择不会被重置。该设置不改变 HTTP/SOCKS 代理、DHCP、路由器或其他机器的 DNS。网关上的 LAN 客户端仍需由管理员配置 DNS/网关。
 
 ## Linux：只管理本次创建的 TUN link
 
@@ -32,9 +32,17 @@ Darwin utun 是点对点设备，自有 DNS 的系统入口使用已独占监听
 
 生命周期同时监测会话死亡、自有键变化与 utun 身份变化；异常会触发统一停止，避免系统引导已消失而界面继续表示正常。一次性 macOS runner 对同一程序的 system/gvisor/mixed 逐栈验收临时原始解析器、实际系统顺序与查询、DNS 就绪后的故障恢复，以及运行中第二实例的原始上游发现；另有独立的精确子进程句柄终止和会话恢复验收，前后核对物理 DNS 与默认路由。结果以对应 SHA 的实际执行为准。特殊 VPN、应用自带解析器及部署环境仍需单独验收，不能从这些用例推断全部兼容。
 
-## Windows
+## Windows：独占的本地 NRPT 引导
 
-当前 `system = true` 在 Windows 明确拒绝，界面不会提供可启用的系统引导开关。Windows 保留自有 Wintun 适配器 DNS/metric 配置与恢复；这不等同覆盖 NRPT、所有 VPN、应用自带解析器或全部系统 DNS。
+Windows 支持 `system = true`，要求 `listen-port = 53`。DNS 监听就绪后，KONE 为本次 Wintun 地址创建一条本地 NRPT 根规则 `.`，并确认它在有效策略中被选中。Windows DNS API 优先查询 NRPT；单纯降低适配器 metric 不能保证所有系统查询都选择该适配器。[Windows 名称解析顺序](https://learn.microsoft.com/windows/security/operating-system-security/network-security/vpn/vpn-name-resolution)
+
+物理/VPN 适配器的 DNS、metric 和默认路由不会被该引导改写，更具体的内网/VPN NRPT 规则保持优先。已有根规则、域策略使本地规则无效、要求加密 DNS 的全局策略，或无法验证的旧租约会阻止启动；KONE 不替换这些策略。启动前发现真实上游，并排除已有 KONE 根规则和 Wintun DNS 地址，避免第二实例把查询递归送回 KONE。企业 VPN、DoH/DoT 和应用自带解析器仍需按实际部署验收。
+
+根规则是持久的 Windows 配置。KONE 先在 `HKLM\SOFTWARE\Kone\DNSLeases` 写入最小所有权记录，再创建含随机标识的 NRPT 规则；记录只允许管理员/SYSTEM 修改，不含代理配置或凭据。全局互斥量防止不同管理配置或 CLI 同时接管根规则。正常退出、启动失败或父进程退出时，持有租约的进程先核对并撤销自己的规则，再关闭 DNS。系统 DNS 缓存不会被全机清空。[NRPT 规则接口](https://learn.microsoft.com/powershell/module/dnsclient/add-dnsclientnrptrule)
+
+如果租约进程也被强制终止，规则可能在 Wintun 消失后仍然存在。重新打开本机 Web 管理，在恢复区域检查并显式执行恢复，Windows 会请求管理员授权。恢复重新验证机器记录及完整规则，只删除仍与本次租约相符的规则；即使崩溃发生在 Windows 生成规则 GUID 与回写 GUID 之间，也可依据随机标识找回。仍在运行的其他实例、被外部更改或无法证实的规则均保留并提示人工检查，不能通过清除管理记录掩盖尚未恢复的 DNS。
+
+一次性 Windows CI runner 对 system/gvisor/mixed 分别验证系统 API → KONE Fake-IP、内网规则保留、正常恢复、根规则冲突、外部改动保留，以及强杀租约进程/接管进程后的完整与未回写 GUID 两种恢复。测试使用 `Resolve-DnsName`，不使用会绕过 NRPT 的 `nslookup` 或显式 DNS 服务器参数；前后比较物理适配器 DNS、metric 和默认路由。实际结果以对应 SHA 的 CI 为准。[Microsoft 对 NRPT 验证工具的说明](https://learn.microsoft.com/windows/client-management/mdm/vpnv2-csp)
 
 应用内部缓存、已缓存 Fake-IP、DoH/DoT 或其他旁路解析有各自的生存期。暂停接管与恢复系统 DNS 不会神奇地清除所有应用缓存，也不声称观察到绕开 KONE 的查询。
 

@@ -197,6 +197,16 @@ func readDNSCommandInput(ctx context.Context, input, name string, arguments ...s
 }
 
 func readDNSSystemContext() (DNSSystemContext, error) {
+	if runtime.GOOS == "windows" {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		base := dnsconfig.ReadDnsConfig()
+		var servers []string
+		if base != nil {
+			servers = base.Servers
+		}
+		return readWindowsOwnedDNSContext(ctx, servers)
+	}
 	return readDNSSystemContextFor(runtime.GOOS, dnsconfig.ReadDnsConfig(), readDNSCommand, readDarwinDNSStore)
 }
 

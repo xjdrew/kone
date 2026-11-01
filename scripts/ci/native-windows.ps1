@@ -57,8 +57,17 @@ foreach ($stack in $stacks) {
       throw "Missing actual IPv4 pass: $stack/occupied=$occupied"
     }
   }
+  # Current source adds machine-level resolver leases. Historical release SHAs
+  # retain their original DNS behavior and have no such native test cases.
+  if (Test-Path -LiteralPath 'pkg/kone/dns_system_windows.go') {
+    foreach ($case in @('resolver_restore', 'startup_conflict', 'external_change', 'crash_pending=false', 'crash_pending=true')) {
+      if ($passed -notcontains "TestSystemWindowsDNS/$stack/$case") {
+        throw "Missing actual Windows system DNS pass: $stack/$case"
+      }
+    }
+  }
   $unexpected = @($events | Where-Object {
-    $_.Test -match '^TestSystemWindows(Wintun|IPv6Wintun)/([^/]+)/' -and $Matches[2] -cne $stack
+    $_.Test -match '^TestSystemWindows(Wintun|IPv6Wintun|DNS)/([^/]+)/' -and $Matches[2] -cne $stack
   })
   if ($unexpected.Count -ne 0) {
     throw 'Unexpected stack executed in this test process'

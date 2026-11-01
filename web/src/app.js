@@ -745,6 +745,18 @@ async function refreshState() {
   }
 }
 async function lifecycle(actionName) {
+	if (actionName === "recover") {
+		if (!canManage() || captureLocked() || model.state.remote_session) return;
+		return dialog("确认恢复 KONE 网络", "仅清理已验证属于 KONE 且已经失效的 DNS 记录；外部修改和所有权不明的记录会保留。", note("Windows 普通权限运行时，仅在确有可恢复 DNS 记录时请求管理员授权。不会启用接管或修改 HTTP 代理。", "warning"), [
+			button("取消", closeDialog, "ghost", false),
+			button("确认检查并恢复", () => action(async () => {
+				closeDialog();
+				const result = await watchOperation(await endpoints.lifecycle("recover", { confirm: true }));
+				await loadPageData();
+				showResult("网络恢复", result);
+			}), "danger"),
+		]);
+	}
   if (actionName === "start") {
     const readiness = await action(() => endpoints.readiness());
     if (!readiness) return;
@@ -3153,6 +3165,10 @@ function renderSettingsEditor() {
           ),
         ) : null,
       model.recoveryError && note(model.recoveryError, "error"),
+      list(network.system_dns).length ? h("div", { class: "panel-list", "data-system-dns-recovery": "" },
+        h("h3", {}, "系统 DNS 恢复记录"),
+        list(network.system_dns).map(entry => row(entry.device_name || "KONE DNS", `${explainError(entry.message)}${entry.can_recover ? " · 可确认恢复；必要时请求管理员权限" : " · 保留记录，不自动清理"}`, badge(entry.status))),
+      ) : null,
       h(
         "div",
         { class: "form-section button-row" },
@@ -3163,10 +3179,10 @@ function renderSettingsEditor() {
           !canManage() || !running(),
         ),
         button(
-          "检查并恢复",
+          list(network.system_dns).some(entry => entry.can_recover) ? "恢复已验证的 DNS 记录" : "检查并恢复",
           () => lifecycle("recover"),
           "",
-          !canManage() || running(),
+          !canManage() || captureLocked() || model.state.remote_session,
         ),
       ),
     ),

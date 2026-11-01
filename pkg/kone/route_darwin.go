@@ -29,7 +29,7 @@ var darwinRouteSequence atomic.Uint32
 
 func newDarwinRoutes() darwinRoutes {
 	return darwinRoutes{exchange: exchangeDarwinRoute, interfaceByName: net.InterfaceByName, read: func() ([]route.Message, error) {
-		data, err := route.FetchRIB(unix.AF_INET, route.RIBTypeRoute, 0)
+		data, err := route.FetchRIB(unix.AF_UNSPEC, route.RIBTypeRoute, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -38,40 +38,53 @@ func newDarwinRoutes() darwinRoutes {
 }
 
 func darwinPrefix(subnet *net.IPNet) (netip.Prefix, error) {
-	if subnet == nil || subnet.IP.To4() == nil {
-		return netip.Prefix{}, errors.New("Darwin route requires an IPv4 prefix")
+	if subnet == nil {
+		return netip.Prefix{}, errors.New("Darwin route requires an IP prefix")
 	}
 	bits, size := subnet.Mask.Size()
-	if size != 32 {
-		return netip.Prefix{}, errors.New("invalid IPv4 route mask")
+	address, ok := netip.AddrFromSlice(subnet.IP)
+	if !ok || bits < 0 || size != address.Unmap().BitLen() {
+		return netip.Prefix{}, errors.New("invalid IP route mask")
 	}
-	address, _ := netip.AddrFromSlice(subnet.IP.To4())
-	return netip.PrefixFrom(address, bits).Masked(), nil
+	return netip.PrefixFrom(address.Unmap(), bits).Masked(), nil
 }
 
 func darwinMessagePrefix(message *route.RouteMessage) (netip.Prefix, bool) {
 	if len(message.Addrs) <= unix.RTAX_DST {
 		return netip.Prefix{}, false
 	}
-	destination, ok := message.Addrs[unix.RTAX_DST].(*route.Inet4Addr)
-	if !ok {
+	var destination netip.Addr
+	switch addr := message.Addrs[unix.RTAX_DST].(type) {
+	case *route.Inet4Addr:
+		destination = netip.AddrFrom4(addr.IP)
+	case *route.Inet6Addr:
+		if addr.ZoneID != 0 {
+			return netip.Prefix{}, false // KONE capture prefixes are unscoped ULA
+		}
+		destination = netip.AddrFrom16(addr.IP)
+	default:
 		return netip.Prefix{}, false
 	}
 	bits := 0
 	if message.Flags&unix.RTF_HOST != 0 {
-		bits = 32
+		bits = destination.BitLen()
 	} else if len(message.Addrs) > unix.RTAX_NETMASK && message.Addrs[unix.RTAX_NETMASK] != nil {
-		mask, ok := message.Addrs[unix.RTAX_NETMASK].(*route.Inet4Addr)
-		if !ok {
+		var mask net.IPMask
+		switch addr := message.Addrs[unix.RTAX_NETMASK].(type) {
+		case *route.Inet4Addr:
+			mask = net.IPMask(addr.IP[:])
+		case *route.Inet6Addr:
+			mask = net.IPMask(addr.IP[:])
+		default:
 			return netip.Prefix{}, false
 		}
 		var size int
-		bits, size = net.IPMask(mask.IP[:]).Size()
-		if size != 32 {
+		bits, size = mask.Size()
+		if size != destination.BitLen() {
 			return netip.Prefix{}, false
 		}
 	}
-	return netip.PrefixFrom(netip.AddrFrom4(destination.IP), bits).Masked(), true
+	return netip.PrefixFrom(destination, bits).Masked(), true
 }
 
 func darwinPrefixRoutes(messages []route.Message, prefix netip.Prefix) []*route.RouteMessage {
@@ -99,15 +112,20 @@ func darwinOwnedRoute(message *route.RouteMessage, prefix netip.Prefix, index in
 }
 
 func darwinRouteMessage(kind int, prefix netip.Prefix, device *net.Interface) *route.RouteMessage {
-	mask := net.CIDRMask(prefix.Bits(), 32)
+	mask := net.CIDRMask(prefix.Bits(), prefix.Addr().BitLen())
 	flags := unix.RTF_UP | unix.RTF_STATIC
-	if prefix.Bits() == 32 {
+	if prefix.Bits() == prefix.Addr().BitLen() {
 		flags |= unix.RTF_HOST
 	}
 	addresses := make([]route.Addr, unix.RTAX_MAX)
-	addresses[unix.RTAX_DST] = &route.Inet4Addr{IP: prefix.Addr().As4()}
 	addresses[unix.RTAX_GATEWAY] = &route.LinkAddr{Index: device.Index, Name: device.Name}
-	addresses[unix.RTAX_NETMASK] = &route.Inet4Addr{IP: [4]byte(mask)}
+	if prefix.Addr().Is4() {
+		addresses[unix.RTAX_DST] = &route.Inet4Addr{IP: prefix.Addr().As4()}
+		addresses[unix.RTAX_NETMASK] = &route.Inet4Addr{IP: [4]byte(mask)}
+	} else {
+		addresses[unix.RTAX_DST] = &route.Inet6Addr{IP: prefix.Addr().As16()}
+		addresses[unix.RTAX_NETMASK] = &route.Inet6Addr{IP: [16]byte(mask)}
+	}
 	return &route.RouteMessage{Version: unix.RTM_VERSION, Type: kind, Flags: flags, ID: uintptr(os.Getpid()), Seq: int(darwinRouteSequence.Add(1) & 0x7fffffff), Addrs: addresses}
 }
 

@@ -65,9 +65,9 @@ suffix = "168.192.in-addr.arpa"
 servers = ["192.168.1.53"]
 ```
 
-上面的参数均为可选项，含义及全部默认值见完整示例。`listen-port` 是 KONE DNS 服务端口，同时监听 UDP/TCP；Linux/Windows 使用 TUN 地址，macOS 使用本机回环入口；`servers` 是实际解析使用的上游，两者不同。上游 UDP 响应截断时，使用同一上游和出口重试 TCP。支持 IPv6 上游 DNS 和 AAAA 查询；Linux/Windows 可另外显式启用 IPv6 接管，默认只接管 IPv4。
+上面的参数均为可选项，含义及全部默认值见完整示例。`listen-port` 是 KONE DNS 服务端口，同时监听 UDP/TCP；Linux/Windows 使用 TUN 地址，macOS 使用本机回环入口；`servers` 是实际解析使用的上游，两者不同。上游 UDP 响应截断时，使用同一上游和出口重试 TCP。支持 IPv6 上游 DNS 和 AAAA 查询；Linux/macOS/Windows 可另外显式启用 IPv6 接管，默认只接管 IPv4。
 
-`system` 默认 `false`，将运行 DNS 服务与引导本机系统 DNS 分开；管理模式在支持的 Linux/macOS 首次初始化时默认开启，仍需用户明确启用接管。Linux 只管理本次 TUN 的 resolved link，macOS 只创建会话拥有的临时解析服务，退出先恢复引导再关闭 DNS。Windows 保留自有适配器 DNS 行为并拒绝此选项。既有配置中的显式选择不会被升级重置；具体前提、恢复与 VPN 边界见 [系统 DNS 引导](system-dns.md)。
+`system` 默认 `false`，将运行 DNS 服务与引导本机系统 DNS 分开；三平台管理模式首次初始化时默认开启，仍需用户明确启用接管。Linux 只管理本次 TUN 的 resolved link，macOS 只创建会话拥有的临时解析服务，Windows 使用自有 NRPT 根规则且要求端口 53，退出先恢复引导再关闭 DNS。Windows 根策略或严格加密策略冲突时拒绝启用，异常遗留可在本机管理中显式提权恢复。既有配置中的显式选择不会被升级重置；具体前提、恢复与 VPN 边界见 [系统 DNS 引导](system-dns.md)。
 自动上游仅在创建 engine 时发现一次，生效服务器保存在运行实例中，配置仍保留“自动”状态。规则热更新不会重新读取已经被 KONE 改写的 Windows 网卡 DNS；改变 DNS 设置或系统网络需要重启。
 
 `[[dns.rules]]` 使用最长域名后缀匹配，自身和子域名均匹配，`suffix = "."` 为显式兜底。匹配后只查询该条规则中的服务器；超时或 NXDOMAIN 不会触发默认/公共 DNS 回退。反向解析域名也使用相同机制。同组上游并发解析，等待其他上游结果后才接受否定响应，避免较快的 NXDOMAIN 掩盖另一台服务器的有效回答。每组最多 16 台上游，最多 64 条分流规则。
@@ -87,7 +87,7 @@ servers = ["192.168.1.53"]
 - 支持 `http://host:port`、`https://host:port`、`socks5://host:port`、`ss://method:password@host:port`，端口必须显式提供；前三种 URL 不允许路径、查询或 fragment。SS 允许 SIP002 的可选末尾 `/` 和标签，支持 Base64URL 编码的用户信息；不支持插件查询参数。IPv6 主机使用方括号。
 - 代理出站使用 `name`、`url` 和可选的 `udp-fallback`；旧的出站 `type` 字段应删除，否则会报未知配置键。名称必须非空、唯一，不含控制字符或首尾空白，URL 必须合法；内置出站不能通过配置声明或覆盖。
 - 规则引用已配置的代理名或内置小写 `direct` / `reject`，引用区分大小写。`direct`、`reject` 及其大小写变体均不能用作代理名称。没有规则匹配时使用内置 `direct`。
-- 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 需要配置 `core.ipv6-network`，当前支持 Linux/Windows 启动 IPv6 接管。
+- 支持 `DOMAIN`、`DOMAIN-SUFFIX`、`DOMAIN-KEYWORD`、`IP-CIDR`、`GEOIP`、`FINAL`；`FINAL` 必须最后出现且没有 `pattern`。`IP-CIDR6` 需要配置 `core.ipv6-network`，支持 Linux/macOS/Windows 的 IPv6 接管。
 - `DOMAIN-SUFFIX = example.com` 匹配自身和子域名，不匹配 `1example.com`。`DIRECT` CIDR 例外会保留规则优先级。
 
 原始域名、已知 CNAME 和已知 IP 的匹配共用配置中的规则顺序，选择最早的显式命中；后面的 `FINAL` 不会覆盖前面的显式 `DOMAIN direct`。受保护的代理端点绕过始终优先，没有显式命中时才使用默认 `direct`。没有真实 DNS 证据时只判断已知域名，不为了猜测地址规则而提前向本机解析器查询代理业务域名。
@@ -127,7 +127,7 @@ servers = ["192.168.1.53"]
 - `core.network` 的接口地址之后一个地址供协议栈使用，两者均不会分配为 Fake-IP。该地址必须保留至少一个后继主机地址。
 - 旧 `tcp-listen-port`、`udp-listen-port`、`tcp-nat-port-start/end`、`udp-nat-port-start/end` 已移除，旧配置必须删除这些键，严格校验会明确报错。内部监听和会话映射由 sing-tun 分配。
 
-IPv6 默认关闭，Linux/Windows 可通过 `core.ipv6-network` 显式启用；`core.auto-route6` 独立控制 IPv6 全局路由，需要指定真实出口。macOS 在 IPv6 后端未完成平台验收前明确拒绝启用。更换协议栈不改变出站协议能力。IPv6 细节见 [IPv6 配置与边界](ipv6.md)，LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
+IPv6 默认关闭，Linux/macOS/Windows 可通过 `core.ipv6-network` 显式启用；`core.auto-route6` 独立控制 IPv6 全局路由，需要指定真实出口。更换协议栈不改变出站协议能力。IPv6 细节见 [IPv6 配置与边界](ipv6.md)，LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
 
 ## UDP 策略与显式回退
 

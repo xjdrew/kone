@@ -27,7 +27,7 @@ func TestGeoIPImportRestartAndRollback(t *testing.T) {
 	directory := t.TempDir()
 	repository, err := geoip.OpenRepository(directory)
 	require.NoError(t, err)
-	configuration, err := kone.ParseConfig([]byte("[dns]\nservers=['127.0.0.1:53']\n[[rules]]\ntype='GEOIP'\npattern='CN'\noutbound='reject'\n[[rules]]\ntype='FINAL'\noutbound='direct'"))
+	configuration, err := kone.ParseConfig([]byte("[dns]\nservers=['127.0.0.1:5353']\n[[rules]]\ntype='GEOIP'\npattern='CN'\noutbound='reject'\n[[rules]]\ntype='FINAL'\noutbound='direct'"))
 	require.NoError(t, err)
 	one, err := kone.FromConfig(configuration, kone.WithGeoIPDatabase(repository.Current()))
 	require.NoError(t, err)
@@ -113,7 +113,7 @@ func TestBundledGeoIPAttributionAndRoutingShareOneSnapshot(t *testing.T) {
 	for _, key := range []string{"http_proxy", "https_proxy", "socks_proxy", "HTTP_PROXY", "HTTPS_PROXY", "SOCKS_PROXY"} {
 		t.Setenv(key, "")
 	}
-	configuration, err := kone.ParseConfig([]byte("[dns]\nservers=['127.0.0.1:53']\n[[rules]]\ntype='GEOIP'\npattern='US'\noutbound='reject'\n[[rules]]\ntype='FINAL'\noutbound='direct'"))
+	configuration, err := kone.ParseConfig([]byte("[dns]\nservers=['127.0.0.1:5353']\n[[rules]]\ntype='GEOIP'\npattern='US'\noutbound='reject'\n[[rules]]\ntype='FINAL'\noutbound='direct'"))
 	require.NoError(t, err)
 	one, err := kone.FromConfig(configuration)
 	require.NoError(t, err)

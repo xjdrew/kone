@@ -37,5 +37,5 @@ foreach ($stack in @('system', 'gvisor', 'mixed')) {
   const calls = result.stdout.trim().split(/\r?\n/).map(line => JSON.parse(line));
   assert.equal(calls.length, 3);
   for (const [index, stack] of ["system", "gvisor", "mixed"].entries())
-    assert.deepEqual(calls[index], ["tool", "test2json", "-t", "-p", "github.com/xjdrew/kone/test/integration", binary, "-test.run", `^TestSystemWindows(Wintun|IPv6Wintun)$/^${stack}$`, "-test.v=test2json", "-test.failfast", "-test.count=1", "-test.timeout", "12m"]);
+    assert.deepEqual(calls[index], ["tool", "test2json", "-t", "-p", "github.com/xjdrew/kone/test/integration", binary, "-test.run", `^TestSystemWindows(Wintun|IPv6Wintun|DNS)$/^${stack}$`, "-test.v=test2json", "-test.failfast", "-test.count=1", "-test.timeout", "12m"]);
 });

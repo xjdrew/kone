@@ -132,6 +132,7 @@ type helperService struct {
 	canceledProbes map[string]time.Time
 	logForwarder   *helperLogForwarder
 	configureLogs  func(kone.GeneralConfig) error
+	recoverDNS     func(context.Context, string) error
 }
 
 func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
@@ -480,6 +481,10 @@ func (s *helperService) Stop(_ Empty, reply *StopReply) error {
 // Losing either parent connection cancels Run and executes its full rollback.
 // Its factory injection is for isolated tests and does not expose a public API.
 func ServeHelper(ctx context.Context, commands, events io.ReadWriteCloser, factory EngineFactory, logging ...HelperLogging) error {
+	return serveHelper(ctx, commands, events, factory, kone.RecoverSystemDNS, logging...)
+}
+
+func serveHelper(ctx context.Context, commands, events io.ReadWriteCloser, factory EngineFactory, recoverDNS func(context.Context, string) error, logging ...HelperLogging) error {
 	if commands == nil || events == nil {
 		return errors.New("private helper requires both IPC streams")
 	}
@@ -492,7 +497,7 @@ func ServeHelper(ctx context.Context, commands, events io.ReadWriteCloser, facto
 	defer events.Close()
 	commands = disconnectStream{ReadWriteCloser: commands, disconnected: cancel}
 	events = disconnectStream{ReadWriteCloser: events, disconnected: cancel}
-	service := &helperService{ctx: ctx, factory: factory, events: rpc.NewClient(events)}
+	service := &helperService{ctx: ctx, factory: factory, events: rpc.NewClient(events), recoverDNS: recoverDNS}
 	if len(logging) > 0 && logging[0].Store != nil {
 		service.logForwarder = &helperLogForwarder{store: logging[0].Store, client: service.events}
 		service.configureLogs = logging[0].Configure

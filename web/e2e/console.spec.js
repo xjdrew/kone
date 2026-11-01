@@ -170,6 +170,7 @@ async function mount(page, options = {}) {
       data.loggedIn = true;
       return respond({
         role: data.role,
+        remote_session: Boolean(data.remoteSession),
         csrf_token: "test-csrf",
         session_id: "test-session",
       });
@@ -202,6 +203,7 @@ async function mount(page, options = {}) {
         control_state: "ready",
         host: "Gateway · 测试主机",
         role: data.role,
+        remote_session: Boolean(data.remoteSession),
         capabilities: {
           stacks: ["system", "gvisor", "mixed"],
           tcp: true,
@@ -449,7 +451,7 @@ async function mount(page, options = {}) {
         trust_required: true,
       });
     if (path === "/recovery")
-      return respond({ required: Boolean(data.recoveryRequired), ownership: data.recoveryRequired ? "owned" : "none", items: [] });
+      return respond({ required: Boolean(data.recoveryRequired), ownership: data.recoveryRequired ? "owned" : "none", items: [], system_dns: data.systemDNSRecovery || [] });
     if (path === "/geoip" && method === "PUT")
       return respond({
         saved: {
@@ -506,6 +508,13 @@ async function mount(page, options = {}) {
         checks: [{ name: "configuration", ok: true }],
       });
     if (path.startsWith("/lifecycle/")) {
+      if (path.endsWith("recover")) {
+        if (!body?.confirm || data.remoteSession) return respond({ error: { message: "Confirm recovery locally" } }, 403);
+        data.systemDNSRecovery = (data.systemDNSRecovery || []).filter(entry => !entry.can_recover);
+        data.recoveryRequired = data.systemDNSRecovery.length > 0;
+        data.state = data.recoveryRequired ? "recovery_required" : "paused";
+        return respond({ status: "completed", message: "Recovery inspected" });
+      }
       data.state = path.endsWith("pause") ? "paused" : "running";
       return respond({ status: "completed", message: "Operation completed" });
     }
@@ -1187,6 +1196,34 @@ test("untrusted domain and error strings render as text, never executable markup
   );
   expect(await page.locator("tbody img").count()).toBe(0);
   expect(dialogs).toBe(0);
+});
+
+test("@compat Windows DNS recovery requires confirmation and never enables capture", async ({ page }) => {
+  const data = await mount(page, { recoveryRequired: true, systemDNSRecovery: [{ id: "a".repeat(32), device_name: "owned-kone", status: "orphaned", can_recover: true, message: "Verified orphan lease" }] });
+  await navigate(page, "settings");
+  await expect(page.locator("[data-system-dns-recovery]")).toContainText("owned-kone");
+  await page.getByRole("button", { name: "恢复已验证的 DNS 记录", exact: true }).click();
+  await expect(page.locator("#detail-dialog")).toContainText("不会启用接管或修改 HTTP 代理");
+  expect(data.writes.some(write => write.path === "/lifecycle/recover")).toBe(false);
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByRole("button", { name: "恢复已验证的 DNS 记录", exact: true }).click();
+  await page.getByRole("button", { name: "确认检查并恢复", exact: true }).click();
+  await expect.poll(() => data.writes.filter(write => write.path === "/lifecycle/recover").length).toBe(1);
+  expect(data.writes.find(write => write.path === "/lifecycle/recover").body).toEqual({ confirm: true });
+  expect(data.state).toBe("paused");
+  expect(data.writes.some(write => ["/lifecycle/start", "/lifecycle/resume"].includes(write.path))).toBe(false);
+});
+
+for (const condition of ["remote", "read_only", "running"]) test(`DNS recovery cannot request authorization while ${condition}`, async ({ page }) => {
+  const data = await mount(page, { remoteSession: condition === "remote", role: condition === "read_only" ? "read" : "admin", systemDNSRecovery: [{ id: "a".repeat(32), device_name: "owned-kone", status: "orphaned", can_recover: true, message: "Verified orphan lease" }] });
+  if (condition === "running") {
+    data.state = "running";
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  }
+  await navigate(page, "settings");
+  await expect(page.getByRole("button", { name: "恢复已验证的 DNS 记录", exact: true })).toBeDisabled();
+  expect(data.writes.some(write => write.path === "/lifecycle/recover")).toBe(false);
 });
 
 test("diagnosis sends one explicit TCP target and never replays business payload", async ({
