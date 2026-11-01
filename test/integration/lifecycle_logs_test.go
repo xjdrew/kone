@@ -17,11 +17,13 @@ import (
 )
 
 func TestRuntimeLogsExplainStartupCaptureAndPauseWithoutSyntheticRecords(t *testing.T) {
-	// Exercise the production HTTP/authentication/logging path. Replace only
-	// the privileged engine so no host networking or upstream proxy is touched.
+	// Exercise production HTTP/authentication/logging with a fake engine and
+	// machine DNS inspector; no host policy, networking or proxy is touched.
 	c, err := control.New(control.Options{Directory: t.TempDir(), Factory: func(*kone.KoneConfig) (control.Engine, error) {
 		return &isolatedEngine{ready: make(chan struct{}), stop: make(chan struct{})}, nil
-	}, Preflight: func(context.Context, *kone.KoneConfig) kone.PreflightReport { return kone.PreflightReport{Ready: true} }})
+	}, Preflight: func(context.Context, *kone.KoneConfig) kone.PreflightReport { return kone.PreflightReport{Ready: true} },
+		InspectSystemDNSRecovery: func(context.Context) ([]kone.SystemDNSRecoveryEntry, error) { return nil, nil },
+	})
 	require.NoError(t, err)
 	defer c.Close()
 	server := httptest.NewServer(c.Handler())
@@ -77,7 +79,7 @@ func TestRuntimeLogsExplainStartupCaptureAndPauseWithoutSyntheticRecords(t *test
 			var current control.Operation
 			call("GET", "operations/"+operation.ID, nil, &current)
 			return current.Status == "succeeded"
-		}, 2*time.Second, time.Millisecond)
+		}, 2*time.Second, 50*time.Millisecond)
 	}
 	var completed logstore.Page
 	call("GET", "logs?min_level=info", nil, &completed)

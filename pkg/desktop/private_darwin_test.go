@@ -112,7 +112,7 @@ func TestDarwinAuthenticatedPrivateHelperLifecycleWithoutNetworkChanges(t *testi
 	for _, disconnect := range []bool{false, true} {
 		t.Run(strconv.FormatBool(disconnect), func(t *testing.T) {
 			cfg := kone.DefaultConfig()
-			cfg.DNS.Servers = []string{"127.0.0.1:53"}
+			cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 			var child *exec.Cmd
 			var childOutput bytes.Buffer
 			remote, err := darwinNewEngine(cfg, func(ctx context.Context, executable string, args []string) error {

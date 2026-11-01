@@ -37,14 +37,17 @@ type CaptureData interface {
 	ClearObservation() error
 }
 type Options struct {
-	Directory        string
-	Version          string
-	Factory          Factory
-	Preflight        func(context.Context, *kone.KoneConfig) kone.PreflightReport
-	Probe            func(context.Context, *kone.KoneConfig, string, string, bool) ProbeResult
-	Now              func() time.Time
-	ConfigureLogging func(kone.GeneralConfig) error
-	LogStore         *logstore.Store
+	Directory                string
+	Version                  string
+	Factory                  Factory
+	Preflight                func(context.Context, *kone.KoneConfig) kone.PreflightReport
+	Probe                    func(context.Context, *kone.KoneConfig, string, string, bool) ProbeResult
+	ProbeUDP                 func(context.Context, *kone.KoneConfig, string, string, kone.DiagnosticOptions) ProbeResult
+	InspectSystemDNSRecovery func(context.Context) ([]kone.SystemDNSRecoveryEntry, error)
+	RecoverSystemDNS         func(context.Context, string) error
+	Now                      func() time.Time
+	ConfigureLogging         func(kone.GeneralConfig) error
+	LogStore                 *logstore.Store
 }
 type Controller struct {
 	mu                            sync.Mutex
@@ -62,6 +65,10 @@ type Controller struct {
 	factory                       Factory
 	preflight                     func(context.Context, *kone.KoneConfig) kone.PreflightReport
 	probe                         func(context.Context, *kone.KoneConfig, string, string, bool) ProbeResult
+	probeUDP                      func(context.Context, *kone.KoneConfig, string, string, kone.DiagnosticOptions) ProbeResult
+	diagnosticRate                rateWindow
+	inspectSystemDNSRecovery      func(context.Context) ([]kone.SystemDNSRecoveryEntry, error)
+	recoverSystemDNS              func(context.Context, string) error
 	now                           func() time.Time
 	bootstrap                     string
 	bootstrapExpiry               time.Time
@@ -82,6 +89,7 @@ type Controller struct {
 	configureLogging              func(kone.GeneralConfig) error
 	logs                          *logstore.Store
 	health                        *outboundHealthStore
+	geoIPCache                    geoIPStatusCache
 	credentials                   *passwordCredentials
 }
 type State struct {
@@ -138,11 +146,22 @@ func New(options Options) (*Controller, error) {
 	if options.Probe == nil {
 		options.Probe = probeTarget
 	}
+	if options.ProbeUDP == nil {
+		options.ProbeUDP = probeUDPTarget
+	}
+	if options.InspectSystemDNSRecovery == nil {
+		options.InspectSystemDNSRecovery = kone.InspectSystemDNSRecovery
+	}
+	if options.RecoverSystemDNS == nil {
+		options.RecoverSystemDNS = kone.RecoverSystemDNS
+	}
 	if err := os.MkdirAll(options.Directory, 0700); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Controller{directory: options.Directory, version: options.Version, factory: options.Factory, preflight: options.Preflight, probe: options.Probe, now: options.Now, state: "paused", bootstrap: randomToken(), bootstrapExpiry: options.Now().Add(5 * time.Minute), sessions: map[string]*Session{}, pairs: map[string]Pairing{}, operations: map[string]*Operation{}, requestKeys: map[string]string{}, probeSlots: make(chan struct{}, 4), ctx: ctx, cancel: cancel}
+	c.inspectSystemDNSRecovery, c.recoverSystemDNS = options.InspectSystemDNSRecovery, options.RecoverSystemDNS
+	c.probeUDP = options.ProbeUDP
 	if err := c.initAuthentication(); err != nil {
 		cancel()
 		return nil, err
@@ -278,7 +297,7 @@ func (c *Controller) Validate(request SaveRequest) (map[string]any, error) {
 }
 
 func restartRequired(next, current Document) bool {
-	return next.Inbound != current.Inbound || !reflect.DeepEqual(next.Config.Core, current.Config.Core) || !reflect.DeepEqual(next.Config.DNS, current.Config.DNS) || !reflect.DeepEqual(next.Config.General, current.Config.General) || cidrChanges(next.Config, current.Config)
+	return next.Inbound != current.Inbound || !reflect.DeepEqual(next.Config.Core, current.Config.Core) || !reflect.DeepEqual(next.Config.DNS, current.Config.DNS) || !reflect.DeepEqual(next.Config.General, current.Config.General) || next.Config.GeoIP != current.Config.GeoIP || cidrChanges(next.Config, current.Config)
 }
 
 func cidrChanges(a, b *kone.KoneConfig) bool {

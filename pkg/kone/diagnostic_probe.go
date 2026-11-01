@@ -32,6 +32,10 @@ type DiagnosticResult struct {
 	Host                   DiagnosticHost      `json:"host"`
 	Protocols              DiagnosticProtocols `json:"protocols"`
 	Progress               DiagnosticProgress  `json:"progress"`
+	DNSName                string              `json:"dns_name,omitempty"`
+	DNSType                string              `json:"dns_type,omitempty"`
+	DNSRCode               string              `json:"dns_rcode,omitempty"`
+	DNSTruncated           bool                `json:"dns_truncated,omitempty"`
 }
 
 func ValidateDiagnosticTarget(target string) error {
@@ -47,6 +51,7 @@ func ValidateDiagnosticTarget(target string) error {
 		return errors.New("invalid target port")
 	}
 	if address, err := netip.ParseAddr(host); err == nil {
+		address = address.Unmap().WithZone("")
 		if address.IsUnspecified() || address.IsMulticast() {
 			return errors.New("target cannot be unspecified or multicast")
 		}

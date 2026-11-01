@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"runtime"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,11 @@ func (d *Dns) ipv6Servers(cfg DNSConfig) *ipv6DNSServers {
 	}
 	prefix := netip.MustParsePrefix(d.one.policy.Load().cfg.Core.IPv6Network)
 	address := net.JoinHostPort(prefix.Addr().String(), strconv.Itoa(int(cfg.ListenPort)))
+	if runtime.GOOS == "darwin" {
+		// A utun address is a point-to-point endpoint, not a reliable local
+		// DNS socket address. Match Darwin's existing loopback IPv4 entry.
+		address = net.JoinHostPort("::1", strconv.Itoa(int(cfg.ListenPort)))
+	}
 	server := func(network string) *dns.Server {
 		return &dns.Server{Net: network, Addr: address, Handler: d, UDPSize: int(cfg.PacketSize), ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
 	}

@@ -218,6 +218,8 @@ func (e *RemoteEngine) Run(parent context.Context) error {
 		request.GeoIP = database.Bytes()
 		request.GeoIPSHA256 = database.Metadata().SHA256
 		request.GeoIPBuiltin = database.Metadata().Builtin
+		request.GeoIPFormat = database.Metadata().Format
+		request.GeoIPProvider = database.Metadata().Provider
 	}
 	call := client.Go("Network.Start", request, &reply, make(chan *rpc.Call, 1))
 	select {
@@ -435,7 +437,7 @@ func (e *RemoteEngine) ApplyGeoIPDatabase(database *geoip.Database, version uint
 		return errors.New("GeoIP database is nil")
 	}
 	var reply Empty
-	err := e.call("GeoIP", GeoIPRequest{Data: database.Bytes(), SHA256: database.Metadata().SHA256, Builtin: database.Metadata().Builtin, BaseVersion: version}, &reply, 10*time.Second)
+	err := e.call("GeoIP", GeoIPRequest{Data: database.Bytes(), SHA256: database.Metadata().SHA256, Builtin: database.Metadata().Builtin, Format: database.Metadata().Format, Provider: database.Metadata().Provider, BaseVersion: version}, &reply, 10*time.Second)
 	if err == nil {
 		e.mu.Lock()
 		e.geoIP = database
@@ -457,7 +459,15 @@ func (e *RemoteEngine) ProbeDiagnostic(ctx context.Context, outbound, target str
 	return e.ProbeDiagnosticVersion(ctx, outbound, target, withTLS, 0)
 }
 func (e *RemoteEngine) ProbeDiagnosticVersion(ctx context.Context, outbound, target string, withTLS bool, expectedVersion uint64) (kone.DiagnosticResult, error) {
+	return e.ProbeDiagnosticRequestVersion(ctx, outbound, target, kone.DiagnosticOptions{TLS: withTLS}, expectedVersion)
+}
+
+func (e *RemoteEngine) ProbeDiagnosticRequestVersion(ctx context.Context, outbound, target string, options kone.DiagnosticOptions, expectedVersion uint64) (kone.DiagnosticResult, error) {
 	var reply kone.DiagnosticResult
+	options, err := options.Normalize()
+	if err != nil {
+		return reply, err
+	}
 	if err := ctx.Err(); err != nil {
 		return reply, err
 	}
@@ -496,7 +506,11 @@ func (e *RemoteEngine) ProbeDiagnosticVersion(ctx context.Context, outbound, tar
 	if deadline, ok := ctx.Deadline(); ok && time.Until(deadline) < budget {
 		budget = time.Until(deadline)
 	}
-	call := client.Go("Network.Probe", ProbeRequest{ID: id, Outbound: outbound, Target: target, TLS: withTLS, TimeoutMS: budget.Milliseconds(), ExpectedVersion: expectedVersion, Deadline: time.Now().Add(budget), ReportProgress: true}, &reply, make(chan *rpc.Call, 1))
+	method := "Network.Probe"
+	if options.Protocol == "udp" {
+		method = "Network.ProbeUDP"
+	}
+	call := client.Go(method, ProbeRequest{ID: id, Outbound: outbound, Target: target, TLS: options.TLS, Options: options, TimeoutMS: budget.Milliseconds(), ExpectedVersion: expectedVersion, Deadline: time.Now().Add(budget), ReportProgress: true}, &reply, make(chan *rpc.Call, 1))
 	select {
 	case result := <-call.Done:
 		if err := ctx.Err(); err != nil {

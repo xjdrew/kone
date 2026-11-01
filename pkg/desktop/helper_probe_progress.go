@@ -112,6 +112,9 @@ func (receiver *callbacks) ProbeProgress(event ProbeProgressEvent, _ *Empty) err
 // configuration, URLs with userinfo, mutable pointers, maps or slices.
 func safeProbeProgress(input kone.DiagnosticResult) kone.DiagnosticResult {
 	result := kone.DiagnosticResult{Stage: input.Stage, Status: input.Status, Host: input.Host, Protocols: input.Protocols, Progress: input.Progress, ConfigVersion: input.ConfigVersion}
+	if input.Protocol == "tcp" || input.Protocol == "udp" {
+		result.Protocol = input.Protocol
+	}
 	safe := func(text string) string { return logstore.RedactText(text) }
 	result.Stage, result.Status = safe(result.Stage), safe(result.Status)
 	if result.Host.Address != "" && kone.ValidateDiagnosticTarget(result.Host.Address) != nil {

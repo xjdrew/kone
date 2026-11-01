@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/xjdrew/kone/pkg/control"
+	"github.com/xjdrew/kone/pkg/kone"
 )
 
 func TestExplicitOutboundProbeReportsLiveProgressAndMeasuredEvidenceOverHTTP(t *testing.T) {
@@ -35,7 +37,7 @@ func TestExplicitOutboundProbeReportsLiveProgressAndMeasuredEvidenceOverHTTP(t *
 	}))
 	defer proxy.Close()
 	defer unblock()
-	c, err := control.New(control.Options{Directory: t.TempDir()})
+	c, err := control.New(control.Options{Directory: t.TempDir(), InspectSystemDNSRecovery: func(context.Context) ([]kone.SystemDNSRecoveryEntry, error) { return nil, nil }})
 	require.NoError(t, err)
 	defer c.Close()
 	server := httptest.NewServer(c.Handler())
@@ -75,6 +77,7 @@ func TestExplicitOutboundProbeReportsLiveProgressAndMeasuredEvidenceOverHTTP(t *
 	call("POST", "auth/password", map[string]any{"password": "outbound-evidence-password", "confirm_password": "outbound-evidence-password"})
 	doc := call("GET", "config", nil)
 	config := doc["config"].(map[string]any)
+	config["dns"] = map[string]any{"system": false, "servers": []string{"127.0.0.1:9"}}
 	config["outbounds"] = []map[string]any{{"name": "measured", "url": strings.Replace(proxy.URL, "://", "://probe-user:private-probe-key@", 1)}}
 	config["rules"] = []map[string]any{{"type": "FINAL", "outbound": "measured"}}
 	saved := call("PUT", "config", map[string]any{"base_version": doc["version"], "config": config, "inbound": doc["inbound"]})

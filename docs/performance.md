@@ -25,6 +25,7 @@ CI 的质量任务保留可复现性能基线，不设置未经校准的“最�
 | `BenchmarkObservationQueries` | 保留 2048 记录、128 活动流，Snapshot/Sankey，附带或不附带两个更新 worker | 查询与数据更新并发时的 CPU/分配；画像只跑此基准 |
 | `BenchmarkObservationBoundedLoad` | 4096 目标周转，明细上限 512、路径上限 128 加其他 | 容量/淘汰行为及 `retained_records`、`retained_paths`，不承诺无限保留 |
 | `BenchmarkQuery`、`BenchmarkImmutableDatabaseLookup`、`BenchmarkBuiltinDecode` | 内置/可替换 GeoIP 的确定性地址查找与解码 | 地址归属查找及初始化代价，不表示网络连通性 |
+| `BenchmarkSyntheticMMDBCountryLookup` | 两段文档地址的 IPv4/IPv6 合成 MMDB | MMDB 读取接口开销，不代表完整供应商数据库、加载时间或 Raspberry Pi 硬件性能 |
 
 观察基准中的载荷字节是合成计数。Go 输出的 `MB/s` 表示该计数操作承载的模拟字节量，**不能称为 TUN 吞吐、实际 TCP/UDP 转发速度或链路带宽**。这些指标描述共用的核心算法，不表示已经测量不同协议栈的报文处理差异。
 

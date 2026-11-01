@@ -1,4 +1,4 @@
-//go:build !linux && !darwin
+//go:build !linux && !darwin && !windows
 
 package kone
 
@@ -11,7 +11,7 @@ func SupportsSystemDNS() bool { return false }
 
 func CheckSystemDNS(_ context.Context, cfg DNSConfig) error {
 	if cfg.System {
-		return errors.New("dns.system is supported on Linux with systemd-resolved and on macOS; Windows configures only its owned TUN adapter DNS")
+		return errors.New("dns.system is supported on Linux with systemd-resolved, macOS and Windows")
 	}
 	return nil
 }

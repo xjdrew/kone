@@ -2,9 +2,13 @@ package kone
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
+	"runtime"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -12,13 +16,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TCP and UDP have separate port spaces. Hold the UDP allocation while trying
+// TCP, then release the whole attempt only for an actual cross-protocol clash.
+func dnsFixtureAddressInUse(err error) bool {
+	// Windows exposes WSAEADDRINUSE rather than its POSIX compatibility errno.
+	return errors.Is(err, syscall.EADDRINUSE) || runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(10048))
+}
+
+func bindDNSFixturePair(listenPacket func(string, string) (net.PacketConn, error), listenTCP func(string, string) (net.Listener, error)) (net.PacketConn, net.Listener, error) {
+	var conflict error
+	for range 32 {
+		udp, err := listenPacket("udp4", "127.0.0.1:0")
+		if err != nil {
+			return nil, nil, err
+		}
+		tcp, err := listenTCP("tcp4", udp.LocalAddr().String())
+		if err == nil {
+			return udp, tcp, nil
+		}
+		udp.Close()
+		if !dnsFixtureAddressInUse(err) {
+			return nil, nil, err
+		}
+		conflict = err
+	}
+	return nil, nil, fmt.Errorf("could not bind a shared TCP/UDP DNS fixture port after 32 attempts: %w", conflict)
+}
+
 func startDNSListeners(t *testing.T, udpHandler, tcpHandler dns.Handler) string {
 	t.Helper()
-	tcp, err := net.Listen("tcp4", "127.0.0.1:0")
+	udp, tcp, err := bindDNSFixturePair(net.ListenPacket, net.Listen)
 	require.NoError(t, err)
 	t.Cleanup(func() { tcp.Close() })
-	udp, err := net.ListenPacket("udp4", tcp.Addr().String())
-	require.NoError(t, err)
 	t.Cleanup(func() { udp.Close() })
 	udpReady, tcpReady := make(chan struct{}), make(chan struct{})
 	servers := []*dns.Server{

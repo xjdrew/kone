@@ -369,6 +369,7 @@ func NewDns(one *One, cfg DNSConfig) (*Dns, error) {
 		return &dns.Server{Net: network, Addr: addr, Handler: d, UDPSize: int(cfg.PacketSize), ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
 	}
 	d.server, d.tcpServer = makeServer("udp"), makeServer("tcp")
+	configureDNSListenerFamilies(d)
 	d.ipv6 = d.ipv6Servers(cfg)
 	client := dns.Client{UDPSize: cfg.PacketSize, Timeout: time.Duration(cfg.ReadTimeout+cfg.WriteTimeout) * time.Second, ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
 	udpClient, tcpClient := client, client

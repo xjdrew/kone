@@ -20,16 +20,17 @@ import (
 // PF_ROUTE directly; only a matching kernel acknowledgement establishes a new
 // route's ownership. Cleanup rechecks the actual prefix, gateway and interface.
 type darwinRoutes struct {
-	exchange        func(context.Context, *route.RouteMessage) (bool, *route.RouteMessage, error)
-	read            func() ([]route.Message, error)
-	interfaceByName func(string) (*net.Interface, error)
+	exchange          func(context.Context, *route.RouteMessage) (bool, *route.RouteMessage, error)
+	read              func() ([]route.Message, error)
+	interfaceByName   func(string) (*net.Interface, error)
+	interfacePrefixes func(*net.Interface) ([]netip.Prefix, error)
 }
 
 var darwinRouteSequence atomic.Uint32
 
 func newDarwinRoutes() darwinRoutes {
-	return darwinRoutes{exchange: exchangeDarwinRoute, interfaceByName: net.InterfaceByName, read: func() ([]route.Message, error) {
-		data, err := route.FetchRIB(unix.AF_INET, route.RIBTypeRoute, 0)
+	return darwinRoutes{exchange: exchangeDarwinRoute, interfaceByName: net.InterfaceByName, interfacePrefixes: nativeDarwinAddressOps().prefixes, read: func() ([]route.Message, error) {
+		data, err := route.FetchRIB(unix.AF_UNSPEC, route.RIBTypeRoute, 0)
 		if err != nil {
 			return nil, err
 		}
@@ -38,40 +39,53 @@ func newDarwinRoutes() darwinRoutes {
 }
 
 func darwinPrefix(subnet *net.IPNet) (netip.Prefix, error) {
-	if subnet == nil || subnet.IP.To4() == nil {
-		return netip.Prefix{}, errors.New("Darwin route requires an IPv4 prefix")
+	if subnet == nil {
+		return netip.Prefix{}, errors.New("Darwin route requires an IP prefix")
 	}
 	bits, size := subnet.Mask.Size()
-	if size != 32 {
-		return netip.Prefix{}, errors.New("invalid IPv4 route mask")
+	address, ok := netip.AddrFromSlice(subnet.IP)
+	if !ok || bits < 0 || size != address.Unmap().BitLen() {
+		return netip.Prefix{}, errors.New("invalid IP route mask")
 	}
-	address, _ := netip.AddrFromSlice(subnet.IP.To4())
-	return netip.PrefixFrom(address, bits).Masked(), nil
+	return netip.PrefixFrom(address.Unmap(), bits).Masked(), nil
 }
 
 func darwinMessagePrefix(message *route.RouteMessage) (netip.Prefix, bool) {
 	if len(message.Addrs) <= unix.RTAX_DST {
 		return netip.Prefix{}, false
 	}
-	destination, ok := message.Addrs[unix.RTAX_DST].(*route.Inet4Addr)
-	if !ok {
+	var destination netip.Addr
+	switch addr := message.Addrs[unix.RTAX_DST].(type) {
+	case *route.Inet4Addr:
+		destination = netip.AddrFrom4(addr.IP)
+	case *route.Inet6Addr:
+		if addr.ZoneID != 0 {
+			return netip.Prefix{}, false // KONE capture prefixes are unscoped ULA
+		}
+		destination = netip.AddrFrom16(addr.IP)
+	default:
 		return netip.Prefix{}, false
 	}
 	bits := 0
 	if message.Flags&unix.RTF_HOST != 0 {
-		bits = 32
+		bits = destination.BitLen()
 	} else if len(message.Addrs) > unix.RTAX_NETMASK && message.Addrs[unix.RTAX_NETMASK] != nil {
-		mask, ok := message.Addrs[unix.RTAX_NETMASK].(*route.Inet4Addr)
-		if !ok {
+		var mask net.IPMask
+		switch addr := message.Addrs[unix.RTAX_NETMASK].(type) {
+		case *route.Inet4Addr:
+			mask = net.IPMask(addr.IP[:])
+		case *route.Inet6Addr:
+			mask = net.IPMask(addr.IP[:])
+		default:
 			return netip.Prefix{}, false
 		}
 		var size int
-		bits, size = net.IPMask(mask.IP[:]).Size()
-		if size != 32 {
+		bits, size = mask.Size()
+		if size != destination.BitLen() {
 			return netip.Prefix{}, false
 		}
 	}
-	return netip.PrefixFrom(netip.AddrFrom4(destination.IP), bits).Masked(), true
+	return netip.PrefixFrom(destination, bits).Masked(), true
 }
 
 func darwinPrefixRoutes(messages []route.Message, prefix netip.Prefix) []*route.RouteMessage {
@@ -98,16 +112,44 @@ func darwinOwnedRoute(message *route.RouteMessage, prefix netip.Prefix, index in
 	return !requireStatic || message.Flags&unix.RTF_STATIC != 0
 }
 
+// XNU's nd6_prefix_onlink_common uses an IPv6 interface address (preferably its
+// link-local one) as the connected prefix route's gateway, rather than AF_LINK.
+// Reuse only the kernel-style, unscoped route for an address prefix actually
+// assigned to this exclusive device. It is released with that alias/device;
+// this does not establish ownership of any explicit static capture route.
+func darwinConnectedIPv6Route(message *route.RouteMessage, prefix netip.Prefix, index int, addresses []netip.Prefix) bool {
+	actual, ok := darwinMessagePrefix(message)
+	if !prefix.Addr().Is6() || !ok || actual != prefix || message.Index != index ||
+		message.Flags&unix.RTF_UP == 0 || message.Flags&(unix.RTF_GATEWAY|unix.RTF_REJECT|unix.RTF_BLACKHOLE|unix.RTF_IFSCOPE|unix.RTF_STATIC|unix.RTF_HOST) != 0 || len(message.Addrs) <= unix.RTAX_GATEWAY {
+		return false
+	}
+	gateway, ok := message.Addrs[unix.RTAX_GATEWAY].(*route.Inet6Addr)
+	if !ok || gateway.ZoneID != 0 && gateway.ZoneID != index {
+		return false
+	}
+	addressMatch, gatewayMatch := false, false
+	for _, address := range addresses {
+		addressMatch = addressMatch || address.Masked() == prefix
+		gatewayMatch = gatewayMatch || address.Addr() == netip.AddrFrom16(gateway.IP)
+	}
+	return addressMatch && gatewayMatch
+}
+
 func darwinRouteMessage(kind int, prefix netip.Prefix, device *net.Interface) *route.RouteMessage {
-	mask := net.CIDRMask(prefix.Bits(), 32)
+	mask := net.CIDRMask(prefix.Bits(), prefix.Addr().BitLen())
 	flags := unix.RTF_UP | unix.RTF_STATIC
-	if prefix.Bits() == 32 {
+	if prefix.Bits() == prefix.Addr().BitLen() {
 		flags |= unix.RTF_HOST
 	}
 	addresses := make([]route.Addr, unix.RTAX_MAX)
-	addresses[unix.RTAX_DST] = &route.Inet4Addr{IP: prefix.Addr().As4()}
 	addresses[unix.RTAX_GATEWAY] = &route.LinkAddr{Index: device.Index, Name: device.Name}
-	addresses[unix.RTAX_NETMASK] = &route.Inet4Addr{IP: [4]byte(mask)}
+	if prefix.Addr().Is4() {
+		addresses[unix.RTAX_DST] = &route.Inet4Addr{IP: prefix.Addr().As4()}
+		addresses[unix.RTAX_NETMASK] = &route.Inet4Addr{IP: [4]byte(mask)}
+	} else {
+		addresses[unix.RTAX_DST] = &route.Inet6Addr{IP: prefix.Addr().As16()}
+		addresses[unix.RTAX_NETMASK] = &route.Inet6Addr{IP: [16]byte(mask)}
+	}
 	return &route.RouteMessage{Version: unix.RTM_VERSION, Type: kind, Flags: flags, ID: uintptr(os.Getpid()), Seq: int(darwinRouteSequence.Add(1) & 0x7fffffff), Addrs: addresses}
 }
 
@@ -133,6 +175,15 @@ func (r darwinRoutes) AddRoute(ctx context.Context, device Device, subnet *net.I
 		// a second explicit route or delete anything outside that interface.
 		if len(existing) == 1 && darwinOwnedRoute(existing[0], prefix, identity.Index, false) {
 			return nil, nil
+		}
+		if len(existing) == 1 && prefix.Addr().Is6() && r.interfacePrefixes != nil {
+			addresses, err := r.interfacePrefixes(identity)
+			if err != nil {
+				return nil, fmt.Errorf("verify connected IPv6 route: %w", err)
+			}
+			if darwinConnectedIPv6Route(existing[0], prefix, identity.Index, addresses) {
+				return nil, nil
+			}
 		}
 		return nil, fmt.Errorf("route %s already exists outside the owned interface: %w", prefix, unix.EEXIST)
 	}

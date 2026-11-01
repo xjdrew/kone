@@ -12,9 +12,10 @@ import (
 )
 
 type repositoryManifest struct {
-	Format   int    `json:"format"`
-	Current  string `json:"current"`
-	Previous string `json:"previous,omitempty"`
+	Format        int               `json:"format"`
+	Current       string            `json:"current"`
+	Previous      string            `json:"previous,omitempty"`
+	MMDBProviders map[string]string `json:"mmdb_providers,omitempty"`
 }
 
 // Repository retains the active file and one rollback file. No source URL is
@@ -24,6 +25,7 @@ type Repository struct {
 	mu                sync.Mutex
 	directory         string
 	current, previous *Database
+	mmdbProviders     map[string]string
 }
 
 func repositoryKey(database *Database) string {
@@ -51,6 +53,7 @@ func OpenRepository(directory string) (*Repository, error) {
 	if err != nil {
 		return nil, err
 	}
+	r.mmdbProviders = manifest.MMDBProviders
 	r.current, err = r.read(manifest.Current)
 	if err != nil {
 		return nil, fmt.Errorf("active GeoIP data is invalid; repair or explicitly restore the previous manifest: %w", err)
@@ -81,22 +84,48 @@ func ResetBuiltin(directory string) error {
 }
 
 func readRepositoryManifest(directory string) (repositoryManifest, error) {
+	manifest, _, err := readRepositoryManifestSnapshot(directory)
+	return manifest, err
+}
+
+func readRepositoryManifestSnapshot(directory string) (repositoryManifest, []byte, error) {
 	var manifest repositoryManifest
-	file, err := os.Open(filepath.Join(directory, "manifest.json"))
+	path := filepath.Join(directory, "manifest.json")
+	before, err := os.Lstat(path)
 	if err != nil {
-		return manifest, err
+		return manifest, nil, err
+	}
+	if !before.Mode().IsRegular() || before.Size() > 4096 {
+		return manifest, nil, errors.New("GeoIP repository manifest must be a regular file within 4096 bytes")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return manifest, nil, err
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 || !os.SameFile(before, info) {
+		return manifest, nil, errors.New("GeoIP repository manifest changed during inspection")
+	}
 	data, err := io.ReadAll(io.LimitReader(file, 4097))
 	if err != nil || len(data) > 4096 || rejectDuplicateKeys(data) != nil {
-		return manifest, errors.New("invalid GeoIP repository manifest")
+		return manifest, nil, errors.New("invalid GeoIP repository manifest")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil || manifest.Format != 1 || manifest.Current == "" {
-		return manifest, errors.New("invalid GeoIP repository manifest")
+	if err := decoder.Decode(&manifest); err != nil || (manifest.Format != 1 && manifest.Format != 2) || manifest.Current == "" {
+		return manifest, nil, errors.New("invalid GeoIP repository manifest")
 	}
-	return manifest, nil
+	if len(manifest.MMDBProviders) > 2 || (manifest.Format == 1 && len(manifest.MMDBProviders) != 0) {
+		return manifest, nil, errors.New("invalid GeoIP MMDB manifest entries")
+	}
+	for digest, provider := range manifest.MMDBProviders {
+		_, valid := FindProvider(provider)
+		if !validDigest(digest) || !valid || (digest != manifest.Current && digest != manifest.Previous) {
+			return manifest, nil, errors.New("invalid GeoIP MMDB manifest entry")
+		}
+	}
+	return manifest, data, nil
 }
 
 // RecoverPrevious is an explicit repair action for a damaged active artifact.
@@ -110,7 +139,7 @@ func RecoverPrevious(directory string) (*Repository, error) {
 	if manifest.Previous == "" {
 		return nil, errors.New("no previous GeoIP data is available")
 	}
-	r := &Repository{directory: directory}
+	r := &Repository{directory: directory, mmdbProviders: manifest.MMDBProviders}
 	database, err := r.read(manifest.Previous)
 	if err != nil {
 		return nil, err
@@ -128,11 +157,31 @@ func (r *Repository) read(key string) (*Database, error) {
 	if !validDigest(key) {
 		return nil, errors.New("invalid GeoIP manifest digest")
 	}
-	file, err := os.Open(filepath.Join(r.directory, key+".json"))
+	extension := ".json"
+	if r.mmdbProviders[key] != "" {
+		extension = ".mmdb"
+	}
+	path := filepath.Join(r.directory, key+extension)
+	limit := int64(MaxFileSize)
+	if extension == ".mmdb" {
+		limit = MaxMMDBFileSize
+	}
+	before, err := os.Lstat(path)
+	if err != nil || !before.Mode().IsRegular() || before.Size() > limit {
+		return nil, errors.New("GeoIP repository data is absent or not a regular file within the format size limit")
+	}
+	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > limit || !os.SameFile(before, info) {
+		return nil, errors.New("GeoIP repository file changed during inspection")
+	}
+	if provider := r.mmdbProviders[key]; provider != "" {
+		return LoadMMDB(file, key, provider)
+	}
 	return Load(file, key)
 }
 
@@ -174,6 +223,15 @@ func writeRepositoryFile(path string, data []byte) error {
 
 func (r *Repository) publish(current, previous *Database) error {
 	manifest := repositoryManifest{Format: 1, Current: repositoryKey(current), Previous: repositoryKey(previous)}
+	for _, database := range []*Database{current, previous} {
+		if database != nil && database.mmdb != nil {
+			if manifest.MMDBProviders == nil {
+				manifest.MMDBProviders = map[string]string{}
+			}
+			manifest.MMDBProviders[repositoryKey(database)] = database.metadata.Provider
+			manifest.Format = 2
+		}
+	}
 	data, err := json.Marshal(manifest)
 	if err != nil {
 		return err
@@ -183,12 +241,13 @@ func (r *Repository) publish(current, previous *Database) error {
 	}
 	oldCurrent, oldPrevious := r.current, r.previous
 	r.current, r.previous = current, previous
+	r.mmdbProviders = manifest.MMDBProviders
 	// Own only content-addressed files named in our previous manifest. Do not
 	// sweep arbitrary files from the profile directory or remove staged data.
 	for _, old := range []*Database{oldCurrent, oldPrevious} {
 		key := repositoryKey(old)
 		if key != "" && key != "builtin" && key != manifest.Current && key != manifest.Previous {
-			_ = os.Remove(filepath.Join(r.directory, key+".json"))
+			_ = os.Remove(filepath.Join(r.directory, key+databaseExtension(old)))
 		}
 	}
 	return nil
@@ -199,12 +258,36 @@ func (r *Repository) Install(data []byte, expectedSHA256 string) (*Database, err
 	if err != nil {
 		return nil, err
 	}
+	return r.install(database)
+}
+
+func databaseExtension(database *Database) string {
+	if database != nil && database.mmdb != nil {
+		return ".mmdb"
+	}
+	return ".json"
+}
+
+func (r *Repository) InstallMMDB(data []byte, expectedSHA256, provider string) (*Database, error) {
+	database, err := LoadMMDB(bytes.NewReader(data), expectedSHA256, provider)
+	if err != nil {
+		return nil, err
+	}
+	return r.install(database)
+}
+
+func (r *Repository) install(database *Database) (*Database, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for _, existing := range []*Database{r.current, r.previous} {
+		if existing != nil && repositoryKey(database) == repositoryKey(existing) && database.metadata.Provider != existing.metadata.Provider {
+			return nil, errors.New("the same GeoIP bytes are already associated with a different provider")
+		}
+	}
 	if repositoryKey(database) == repositoryKey(r.current) {
 		return r.current, nil
 	}
-	path := filepath.Join(r.directory, database.metadata.SHA256+".json")
+	path := filepath.Join(r.directory, database.metadata.SHA256+databaseExtension(database))
 	if err := writeRepositoryFile(path, database.data); err != nil {
 		return nil, err
 	}

@@ -10,6 +10,7 @@ import (
 )
 
 var errAutomaticRecovery = errors.New("Could not restore the previous capture automatically; check the host network and runtime logs, then retry")
+var errSystemDNSRecoveryRequired = errors.New("Previous Windows system DNS requires explicit recovery from the local console; inspect the DNS lease, confirm recovery and authorize administrator access")
 
 // Recovery never deletes an interface just because its name looks familiar.
 // Kernel-owned transient TUN resources normally disappear with the old process;
@@ -18,9 +19,13 @@ func (c *Controller) Recover(ctx context.Context) error {
 	c.actions.Lock()
 	defer c.actions.Unlock()
 	c.mu.Lock()
-	active := c.engine != nil
-	cfg := c.doc.Config
+	active := c.engine != nil || c.captureLocked() || c.state == "running" || c.state == "degraded" || c.state == "stopping" || c.state == "preflight"
+	closed := c.closed
+	cfg := cloneDocument(c.doc).Config
 	c.mu.Unlock()
+	if closed {
+		return errors.New("application is stopping")
+	}
 	if active {
 		return errors.New("pause capture before inspecting recovery")
 	}
@@ -49,6 +54,46 @@ func (c *Controller) inspectAndClearRecovery(ctx context.Context, automatic bool
 		}
 		c.logEvent(level, "Previous capture resource inspected", slog.String("stage", "recovery"), slog.Bool("automatic", automatic), slog.String("run_id", report.RunID), slog.String("ownership", report.Ownership), slog.String("kind", item.Kind), slog.String("identity", item.Identity), slog.String("status", item.Status), slog.String("detail", safeMessage(errors.New(item.Message), cfg)))
 	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil && len(report.SystemDNS) > 0 {
+		if automatic {
+			// A machine-wide NRPT mutation is deliberately outside automatic
+			// capture-record maintenance, including when resetting settings.
+			err = errSystemDNSRecoveryRequired
+		} else {
+			initialRunID := report.RunID
+			recoverDNS := c.recoverSystemDNS
+			if recoverDNS == nil {
+				recoverDNS = kone.RecoverSystemDNS
+			}
+			for _, lease := range report.SystemDNS {
+				if !lease.CanRecover {
+					continue
+				}
+				if err = ctx.Err(); err != nil {
+					break
+				}
+				c.logEvent(slog.LevelInfo, "Restoring explicitly confirmed machine DNS lease", slog.String("stage", "recovery"), slog.Bool("automatic", false), slog.String("lease_id", lease.ID))
+				if err = recoverDNS(ctx, lease.ID); err != nil {
+					break
+				}
+			}
+			if err == nil {
+				err = ctx.Err()
+			}
+			if err == nil {
+				report, err = c.InspectRecovery(ctx)
+				if err == nil && report.RunID != "" && report.RunID != initialRunID {
+					err = errors.New("the capture recovery record changed during DNS restoration")
+				}
+			}
+		}
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err == nil && report.Required && !report.CanClear {
 		err = errors.New(report.NextAction)
 	}
@@ -69,7 +114,13 @@ func (c *Controller) inspectAndClearRecovery(ctx context.Context, automatic bool
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
-		return errAutomaticRecovery
+		if errors.Is(err, errSystemDNSRecoveryRequired) {
+			return err
+		}
+		if automatic {
+			return errAutomaticRecovery
+		}
+		return errors.New(safeMessage(err, cfg))
 	}
 	message := "No previous capture resources require cleanup"
 	if report.Required {

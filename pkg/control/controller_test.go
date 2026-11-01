@@ -54,6 +54,9 @@ func testController(t *testing.T, options Options) *Controller {
 	if options.Factory == nil {
 		options.Factory = func(*kone.KoneConfig) (Engine, error) { return newMemoryEngine(), nil }
 	}
+	if options.InspectSystemDNSRecovery == nil {
+		options.InspectSystemDNSRecovery = func(context.Context) ([]kone.SystemDNSRecoveryEntry, error) { return nil, nil }
+	}
 	c, err := New(options)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })

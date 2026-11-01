@@ -61,7 +61,7 @@ func TestActiveHelperOutboundProbeStreamsRealStagesThroughPrivateRPC(t *testing.
 	defer proxy.Close()
 	defer unblock()
 	helperDone := make(chan error, 1)
-	c, err := control.New(control.Options{Directory: t.TempDir(), Preflight: func(context.Context, *kone.KoneConfig) kone.PreflightReport { return kone.PreflightReport{Ready: true} }, Factory: func(cfg *kone.KoneConfig) (control.Engine, error) {
+	c, err := control.New(control.Options{Directory: t.TempDir(), InspectSystemDNSRecovery: func(context.Context) ([]kone.SystemDNSRecoveryEntry, error) { return nil, nil }, Preflight: func(context.Context, *kone.KoneConfig) kone.PreflightReport { return kone.PreflightReport{Ready: true} }, Factory: func(cfg *kone.KoneConfig) (control.Engine, error) {
 		commandsParent, commandsHelper := net.Pipe()
 		eventsParent, eventsHelper := net.Pipe()
 		go func() {
@@ -81,6 +81,7 @@ func TestActiveHelperOutboundProbeStreamsRealStagesThroughPrivateRPC(t *testing.
 	defer c.Close()
 	document := c.Document()
 	config := document["config"].(map[string]any)
+	config["dns"] = map[string]any{"system": false, "servers": []string{"127.0.0.1:9"}}
 	config["outbounds"] = []map[string]any{{"name": "measured", "url": proxy.URL}}
 	config["rules"] = []map[string]any{{"type": "FINAL", "outbound": "measured"}}
 	_, err = c.Save(control.SaveRequest{BaseVersion: c.State().SavedVersion, Config: config, Inbound: document["inbound"].(control.Inbound)})

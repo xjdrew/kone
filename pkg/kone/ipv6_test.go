@@ -31,9 +31,10 @@ func TestIPv6ConfigurationBoundsAndPlatformAdmission(t *testing.T) {
 	configuration, err := ParseConfig([]byte("[core]\nipv6-network='fd7a:203::1/120'\n[[rules]]\ntype='IP-CIDR6'\npattern='2001:db8::/64'\noutbound='reject'"))
 	require.NoError(t, err)
 	require.Equal(t, "fd7a:203::1/120", configuration.Core.IPv6Network)
+	configuration.DNS.Servers = []string{"127.0.0.1:9"} // Platform admission does not depend on the host resolver.
 	if !SupportsIPv6Capture() {
 		_, err := FromConfig(configuration)
-		require.ErrorContains(t, err, "only on Linux and Windows")
+		require.ErrorContains(t, err, "supported only on Linux, Windows and macOS")
 	} else {
 		one, err := FromConfig(configuration)
 		require.NoError(t, err)

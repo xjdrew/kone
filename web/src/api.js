@@ -174,7 +174,7 @@ export const endpoints = {
   save: (body) => request("/config", "PUT", body),
   apply: (body) => request("/config/apply", "POST", body),
   undo: (body) => request("/config/undo", "POST", body),
-  lifecycle: (action) => request(`/lifecycle/${action}`, "POST", {}),
+  lifecycle: (action, body = {}) => request(`/lifecycle/${action}`, "POST", body),
   traffic: (query) => request(`/traffic?${new URLSearchParams(query)}`),
   flows: (query) => request(`/flows?${new URLSearchParams(query || {})}`),
   flow: (id) => request(`/flows/${encodeURIComponent(id)}`),

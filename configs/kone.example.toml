@@ -14,7 +14,7 @@
 # TUN 的 IPv4 主机地址/前缀，也是 Fake-IP 地址池；避免与现有网络冲突。
 # 当前支持 /8.. /30，并为 TUN 地址后的协议栈地址保留空间。
 # network = "10.192.0.1/16"
-# 可选 Linux/Windows IPv6 TUN/Fake-IP 网段；空字符串关闭。当前 macOS 明确拒绝启用。
+# 可选 Linux/macOS/Windows IPv6 TUN/Fake-IP 网段；空字符串关闭。
 # 启用时指定不冲突的 ULA 主机/前缀（/64.. /120），例如 fd7a:203::1/120。
 # ipv6-network = ""
 # IPv6 全局接管；需要非空 ipv6-network 和真实出口 outbound-interface。
@@ -22,7 +22,7 @@
 # auto-route6 = false
 # 同一安装包包含三种协议栈，运行时选择，无需另行编译。
 # system：系统 TCP + sing-tun UDP；gvisor：gVisor TCP + UDP；mixed：系统 TCP + gVisor UDP。
-# 协议栈选择不改变代理协议能力；IPv6 需另外显式配置，支持 Linux/Windows。
+# 协议栈选择不改变代理协议能力；IPv6 需另外显式配置，支持 Linux/macOS/Windows。
 # 显式选择协议栈；省略时也默认为 system。修改后需要重启。
 stack = "system"
 # true 添加两条 /1 路由接管 IPv4；保留原默认路由，更具体路由仍优先。
@@ -36,9 +36,10 @@ stack = "system"
 # [dns] 整段可省略；默认在启动前读取当前系统 DNS，用于真实域名解析。
 # 系统上游会固定到本次运行，规则热更新不会重读已指向 KONE 的网卡 DNS。
 # [dns]
-# 可选系统 DNS 引导：Linux 使用 resolved 自有 link，macOS 使用自有临时解析服务。
-# Linux 需要已有 resolved stub；两平台均验证真实上游，只恢复自有状态，不覆盖物理/VPN DNS。
-# CLI 默认 false；管理模式 Linux/macOS 首次默认 true，可在界面关闭。Windows true 会阻断启用。
+# 可选系统 DNS 引导：Linux 使用 resolved 自有 link，macOS 使用临时解析服务，Windows 使用自有 NRPT 根规则。
+# Linux 需要已有 resolved stub；三平台均验证真实上游，只恢复自有状态，不覆盖物理/VPN DNS。
+# Windows 要求监听端口为 53；已有根规则、域策略或严格加密策略冲突时拒绝启用。
+# CLI 默认 false；三平台管理模式首次默认 true，可在界面关闭，既有选择保持不变。
 # system = false
 # 上游 DNS 地址；省略或 [] 使用系统 DNS，不内置公共 DNS 作为回退。
 # 可指定 IPv4/IPv6 地址和端口，例如 ["1.1.1.1", "[2001:4860:4860::8888]:53"]。
@@ -73,6 +74,19 @@ stack = "system"
 # suffix = "168.192.in-addr.arpa"
 # servers = ["192.168.1.53"]
 
+# GeoIP 国家规则的数据源；整段省略使用内置 DB-IP IPv4 离线库。
+# 管理界面通过 GeoIP 面板上传，不接受本地文件路径；以下用于 CLI 文件模式。
+# [geoip]
+# builtin | kone-json | dbip-lite | ipinfo-lite | maxmind-geolite2。
+# 后三者读取已解压的国家 MMDB，支持其中的 IPv4/IPv6 记录；不自动下载。
+# provider = "builtin"
+# 外部数据必填：本地文件路径，相对于本 TOML 文件；也可填绝对路径。
+# JSON 上限 32 MiB；MMDB 上限 64 MiB。builtin 时必须留空。
+# file = ""
+# 外部数据必填：整个解压后文件的 64 位小写 SHA256，启动前验证。
+# builtin 时留空；更换来源、文件或摘要需要重启。获取方式与许可见 docs/geoip.md。
+# sha256 = ""
+
 # 出站数组只需声明代理，填写 name（规则引用的唯一名称）和 url 即可。
 # direct（直连）和 reject（拒绝）是内置出站，无需声明；名称及其大小写变体保留。
 # 只使用内置出站时可省略整个 outbounds 数组。
@@ -98,8 +112,8 @@ url = "http://127.0.0.1:8080"
 
 # 规则按顺序匹配，outbound 引用代理名称或内置 direct、reject（小写）。
 # direct：KONE 接收后直接连接目标；reject：拒绝连接，域名 DNS 查询返回 REFUSED。
-# type：DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD、IP-CIDR、GEOIP、FINAL。
-# pattern：域名/后缀/关键词、IPv4 CIDR 或大写两字母国家代码；FINAL 不填。
+# type：DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD、IP-CIDR、IP-CIDR6、GEOIP、FINAL。
+# pattern：域名/后缀/关键词、IPv4/IPv6 CIDR 或大写两字母国家代码；FINAL 不填。
 # FINAL 可省略，但写出时必须是最后一条；没有匹配规则时隐式直连。
 [[rules]]
 # 可选稳定规则标识与来源；管理界面自动分配，手写配置可省略。

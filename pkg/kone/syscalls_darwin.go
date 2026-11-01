@@ -8,6 +8,9 @@ import (
 )
 
 func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) (Cleanup, error) {
+	if cfg.IPv6Network != "" {
+		return n.configureDarwinDualStack(ctx, d, cfg, nativeDarwinAddressOps())
+	}
 	ip, subnet, _ := net.ParseCIDR(cfg.Network)
 	_, err := n.run(ctx, "ifconfig", d.Name(), ip.String(), ip.String(), "mtu", strconv.Itoa(MTU), "netmask", net.IP(subnet.Mask).String(), "up")
 	if err != nil {

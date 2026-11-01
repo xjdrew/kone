@@ -172,6 +172,9 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	if err := effective.Validate(); err != nil {
 		return nil, err
 	}
+	if err := validateDNSListenerUpstreams(cfg.Core, dnsCfg); err != nil {
+		return nil, err
+	}
 	p, err := NewOutbounds(cfg.Outbounds)
 	if err != nil {
 		return nil, err
@@ -184,7 +187,11 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	one.flows = &flowHandler{one: one}
 	database := one.initialGeoIP
 	if database == nil {
-		database = geoip.Builtin()
+		filename, _ := cfg.source.(string)
+		database, err = cfg.GeoIP.load(filename)
+		if err != nil {
+			return nil, err
+		}
 	}
 	rule := NewRuleWithGeoIP(cfg.Rule, cfg.Outbounds, database)
 	p.bypassEndpoints(rule)
@@ -239,8 +246,8 @@ func (one *One) ReloadVersion(cfg *KoneConfig, revision uint64) error {
 		}
 		return result
 	}
-	if !reflect.DeepEqual(cfg.Core, old.cfg.Core) || !reflect.DeepEqual(cfg.DNS, old.cfg.DNS) || cfg.General != old.cfg.General || !reflect.DeepEqual(cidrs(cfg), cidrs(old.cfg)) {
-		return errors.New("changes to general/core/dns or IP-CIDR routes require restart")
+	if !reflect.DeepEqual(cfg.Core, old.cfg.Core) || !reflect.DeepEqual(cfg.DNS, old.cfg.DNS) || cfg.General != old.cfg.General || cfg.GeoIP != old.cfg.GeoIP || !reflect.DeepEqual(cidrs(cfg), cidrs(old.cfg)) {
+		return errors.New("changes to general/core/dns/geoip or IP-CIDR routes require restart")
 	}
 	p, err := NewOutbounds(cfg.Outbounds)
 	if err != nil {
@@ -409,10 +416,10 @@ func (one *One) Run(parent context.Context) (result error) {
 	if err := stack.Start(); err != nil {
 		return fmt.Errorf("start TUN stack: %w", err)
 	}
-	if dnsConn, err = lc.ListenPacket(ctx, "udp", one.dns.server.Addr); err != nil {
+	if dnsConn, err = lc.ListenPacket(ctx, one.dns.server.Net, one.dns.server.Addr); err != nil {
 		return fmt.Errorf("DNS listener: %w", err)
 	}
-	if dnsTCP, err = lc.Listen(ctx, "tcp", one.dns.server.Addr); err != nil {
+	if dnsTCP, err = lc.Listen(ctx, one.dns.tcpServer.Net, one.dns.server.Addr); err != nil {
 		return fmt.Errorf("DNS TCP listener: %w", err)
 	}
 	dnsTCP = &ownedListener{Listener: dnsTCP}

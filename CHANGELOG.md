@@ -2,6 +2,10 @@
 
 ## Features
 
+- Diagnose UDP paths with validated DNS responses through direct, SOCKS5 and Shadowsocks outbounds.
+- Guide Windows system DNS through KONE, with explicit recovery after abnormal exit.
+- Support optional IPv6 capture on macOS.
+- Select DB-IP, IPinfo Lite or MaxMind GeoLite2 country databases, including IPv6 GeoIP rules.
 - Configure proxy protocols, addresses and authentication in compact forms and follow live connection checks with measured latency.
 - Include system, gVisor and mixed stacks in every build, selected at runtime with system as the default.
 - Record management startup, capture lifecycle and network helper progress in runtime logs.
@@ -34,6 +38,7 @@
 
 ## Bugfixes
 
+- Reject invalid diagnostic addresses and consistently enforce probe limits.
 - Keep unsaved proxy edits when enabling direct-only capture.
 - Preserve editor drafts and return navigation during browser history changes and configuration refreshes.
 - Keep Windows packaging from changing tracked frontend files solely because of line endings.

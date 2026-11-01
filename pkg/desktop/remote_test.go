@@ -91,7 +91,7 @@ func (e *fakeNetworkEngine) Close() error {
 func helperHarness(t *testing.T, wait bool) (*RemoteEngine, *fakeNetworkEngine, <-chan error) {
 	t.Helper()
 	cfg := kone.DefaultConfig()
-	cfg.DNS.Servers = []string{"127.0.0.1:53"}
+	cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 	fake := newFakeNetworkEngine(t, cfg)
 	fake.wait = wait
 	commandParent, commandHelper := net.Pipe()
@@ -153,7 +153,7 @@ func TestRemoteHelperReportsRealSnapshotsAndPreservesFinalEvidence(t *testing.T)
 	require.NoError(t, err)
 	require.True(t, status.Current.Builtin)
 	cfg := kone.DefaultConfig()
-	cfg.DNS.Servers = []string{"127.0.0.1:53"}
+	cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 	require.NoError(t, remote.ReloadVersion(cfg, 8))
 	require.NoError(t, remote.Close())
 	require.NoError(t, <-done)
@@ -300,7 +300,7 @@ func TestRemoteDiagnosticUsesRunningRevisionAndCancelKeepsCaptureAlive(t *testin
 
 func TestHelperRemembersCancellationBeforeProbeRegistration(t *testing.T) {
 	cfg := kone.DefaultConfig()
-	cfg.DNS.Servers = []string{"127.0.0.1:53"}
+	cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 	fake := newFakeNetworkEngine(t, cfg)
 	defer fake.Close()
 	fake.probe = func(context.Context, string, string, bool, uint64) (kone.DiagnosticResult, error) {

@@ -631,6 +631,13 @@ function updateAuthPresentation() {
 }
 function updateShell() {
   updateAuthPresentation();
+  const attribution = document.querySelector("#geoip-attribution");
+  if (attribution) {
+    const active = (running() && model.geoip?.running?.current) || model.geoip?.saved;
+    const source = list(model.geoip?.providers).find(item => item.id === active?.provider);
+    attribution.textContent = source?.attribution || (active?.builtin || !active ? "IP Geolocation by DB-IP" : "GeoIP 数据与许可");
+    attribution.href = source?.attribution_url || (active?.builtin || !active ? "https://db-ip.com" : "#settings");
+  }
   const status = document.querySelector("#runtime-status");
   const state = runtime();
   status.className = `status ${model.online && running() ? "running" : ["starting", "stopping", "preflight", "pausing"].includes(state) ? "working" : !model.online || ["error", "recovery_failed", "invalid_config"].includes(state) ? "error" : ""}`;
@@ -718,6 +725,19 @@ async function refreshState() {
   }
 }
 async function lifecycle(actionName) {
+	if (actionName === "recover") {
+		if (!canManage() || captureLocked() || model.state.remote_session) return;
+		return dialog("确认恢复 KONE 网络", "仅清理已验证属于 KONE 且已经失效的 DNS 记录；外部修改和所有权不明的记录会保留。", note("Windows 普通权限运行时，仅在确有可恢复 DNS 记录时请求管理员授权。不会启用接管或修改 HTTP 代理。", "warning"), [
+			button("取消", closeDialog, "ghost", false),
+			button("确认检查并恢复", () => action(async () => {
+				closeDialog();
+				const result = await watchOperation(await endpoints.lifecycle("recover", { confirm: true }));
+				await loadPageData();
+				render();
+				showResult("网络恢复", result);
+			}), "danger"),
+		]);
+	}
   if (actionName === "start") {
     const document = await action(() => endpoints.config());
     if (!document) return;
@@ -2723,6 +2743,10 @@ function renderDiagnosticsEditor() {
           const result = await endpoints.diagnose({
             target,
             tls: fields.get("tls") === "on",
+            ...(fields.get("protocol") === "udp" ? {
+              protocol: "udp", udp_mode: "dns", dns_name: fields.get("dns_name"),
+              dns_type: fields.get("dns_type"), address_family: fields.get("address_family"),
+            } : {}),
             outbounds: ["direct", fields.get("outbound")].filter(
               (value, index, values) =>
                 value && values.indexOf(value) === index,
@@ -2756,7 +2780,7 @@ function renderDiagnosticsEditor() {
         }),
         h(
           "small",
-          {},
+          { id: "diagnose-target-hint" },
           "仅对已观察目标或你明确输入的目标发起有限探测，不扫描网段。",
         ),
       ),
@@ -2801,14 +2825,39 @@ function renderDiagnosticsEditor() {
         h("label", { for: "diagnose-protocol" }, "协议"),
         h(
           "select",
-          { id: "diagnose-protocol", name: "protocol", disabled: !canManage() },
+          { id: "diagnose-protocol", name: "protocol", disabled: !canManage(), onchange: event => {
+            const udp = event.target.value === "udp", form = event.target.form;
+            form.querySelectorAll("[data-udp-option]").forEach(node => { node.hidden = !udp; });
+            form.querySelector("#diagnose-tls").disabled = udp || !canManage();
+            if (udp) form.querySelector("#diagnose-tls").checked = false;
+            if (udp) form.querySelector("#diagnose-target").value = "";
+            form.querySelector("#diagnose-target").placeholder = udp ? "192.168.1.1" : "example.com";
+            form.querySelector("#diagnose-port").value = udp ? 53 : 443;
+            form.querySelector('label[for="diagnose-target"]').textContent = udp ? "DNS 服务器域名或 IP" : "目标域名或 IP";
+            form.querySelector("#diagnose-target-hint").textContent = udp
+              ? "填写明确提供 DNS 服务的服务器。收到匹配响应才说明该 DNS/UDP 路径可达，不代表 QUIC 或其他 UDP 业务成功；不会回退 TCP 或直连。"
+              : "仅对已观察目标或你明确输入的目标发起有限探测，不扫描网段。";
+          } },
           h("option", { value: "tcp" }, "TCP"),
           h(
             "option",
-            { value: "udp", disabled: true },
-            "UDP · 尚无独立探测能力",
+            { value: "udp" },
+            "UDP · 独立 DNS 响应验证",
           ),
         ),
+      ),
+      h("div", { class: "field wide", hidden: true, "data-udp-option": "" },
+        h("label", { for: "diagnose-dns-name" }, "探测 DNS 查询名称"),
+        h("input", { id: "diagnose-dns-name", name: "dns_name", value: "example.com", maxlength: 253, disabled: !canManage() }),
+      ),
+      h("div", { class: "field", hidden: true, "data-udp-option": "" },
+        h("label", { for: "diagnose-dns-type" }, "DNS 查询类型"),
+        h("select", { id: "diagnose-dns-type", name: "dns_type", disabled: !canManage() }, h("option", { value: "A" }, "A"), h("option", { value: "AAAA" }, "AAAA")),
+      ),
+      h("div", { class: "field", hidden: true, "data-udp-option": "" },
+        h("label", { for: "diagnose-address-family" }, "DNS 服务器地址族"),
+        h("select", { id: "diagnose-address-family", name: "address_family", disabled: !canManage() }, h("option", { value: "auto" }, "自动"), h("option", { value: "ipv4" }, "IPv4"), h("option", { value: "ipv6" }, "IPv6")),
+        h("small", {}, "服务器的传输地址族与查询 A/AAAA 是不同设置。"),
       ),
       h(
         "div",
@@ -2836,7 +2885,7 @@ function renderDiagnosticsEditor() {
     readonlyNote(),
     renderLogs(),
     note(
-      "TCP 连接成功只说明该传输阶段可达，不代表应用业务成功。直连与代理都失败时，需要分别查看解析、认证和连接阶段。",
+      "TCP 连接或 UDP/DNS 响应只说明所列协议、端点和阶段可达，不代表应用业务成功。UDP 必须明确指定 DNS 服务器，不会向任意业务端口发送试探载荷。",
     ),
     card(
       "对比直连与代理",
@@ -2953,7 +3002,7 @@ function showTask(task) {
             results.map((result) =>
               row(
                 result.outbound || "未知出站",
-                `${{ target_tls: "目标 TLS", proxy_transport: "代理外层传输", proxy_auth: "代理认证", proxy_handshake: "代理握手", connect: "目标连接", dns: "DNS 解析" }[result.stage] || result.stage || "未知阶段"} · ${result.message || ""}${result.peer_kind === "proxy_endpoint" ? " · 地址证据仅为代理端点，真实业务地址未知" : ""}${result.dns_path ? ` · DNS ${result.dns_path}` : ""}`,
+                `${{ target_tls: "目标 TLS", proxy_transport: "代理外层传输", proxy_auth: "代理认证", proxy_handshake: "代理握手", proxy_association: "UDP 代理关联", capability: "出站协议能力", udp_write: "UDP 发送", udp_response: "UDP/DNS 响应验证", connect: "目标连接", dns: "DNS 解析" }[result.stage] || result.stage || "未知阶段"} · ${result.message || ""}${result.peer_kind === "proxy_endpoint" ? " · 地址证据仅为代理端点，真实业务地址未知" : ""}${result.dns_path ? ` · DNS ${result.dns_path}` : ""}${result.protocol === "udp" && result.dns_rcode ? ` · ${result.dns_rcode}${result.dns_truncated ? " · 截断响应，未重试 TCP" : ""}` : ""}`,
                 h(
                   "div",
                   {},
@@ -2982,7 +3031,7 @@ function showTask(task) {
       ),
     ),
     [
-      target &&
+      target && (task.result?.protocol || results[0]?.protocol || "tcp") !== "udp" &&
         button(
           "建立精确规则草稿",
           () => {
@@ -2998,6 +3047,7 @@ function showTask(task) {
 
 function renderSettingsEditor() {
   const sessions = list(model.sessions.sessions || model.sessions);
+  const network = model.recovery || model.state.recovery || model.state.network || {};
   return [
     readonlyNote(),
     card(
@@ -3073,10 +3123,24 @@ function renderSettingsEditor() {
     ),
     card(
       "网络恢复",
-      "接管停止后会自动恢复网络；启动时自动处理上次残留，执行过程可在运行日志中查看。",
+      "接管停止后会自动恢复网络；启动时自动处理可安全确认的上次残留。系统 DNS 中无法自动处理的记录需在本机确认，不覆盖其他程序或用户的新设置。",
       button("查看运行日志", () => navigate("diagnostics"), "ghost", !model.online),
-      h("details", { class: "disclosure" }, h("summary", {}, "手动维护"),
-        button("修复网络", () => lifecycle("recover"), "", !canManage() || captureLocked())),
+      list(network.system_dns).length ? h("div", { class: "panel-list", "data-system-dns-recovery": "" },
+        h("h3", {}, "系统 DNS 恢复记录"),
+        list(network.system_dns).map(entry => row(entry.device_name || "KONE DNS", `${explainError(entry.message)}${entry.can_recover ? " · 可确认恢复；必要时请求管理员权限" : " · 保留记录，不自动清理"}`, badge(entry.status))),
+      ) : null,
+      h("details", { class: "disclosure", open: list(network.system_dns).some(entry => entry.can_recover) }, h("summary", {}, "手动维护"),
+        network.required && note(explainError(network.next_action || network.message || "请检查仍需处理的网络记录。"), "warning"),
+        model.recoveryError && note(model.recoveryError, "error"),
+        list(network.items).filter(item => item.kind !== "system_dns").map(item => row(item.identity || item.kind, explainError(item.message), badge(item.status))),
+        button(
+          list(network.system_dns).some(entry => entry.can_recover) ? "恢复已验证的 DNS 记录" : "修复网络",
+          () => lifecycle("recover"),
+          "",
+          !canManage() || captureLocked() || model.state.remote_session,
+          { "data-network-recovery": "" },
+        ),
+      ),
     ),
     renderGeoIP(),
     card(
@@ -3221,10 +3285,16 @@ function renderSettingsEditor() {
 }
 function renderGeoIP() {
   const saved = model.geoip?.saved || {};
+  const providerID = model.geoProvider || "kone-json";
+  const providers = list(model.geoip?.providers);
+  const provider = providers.find(item => item.id === providerID);
+  const activeProvider = providers.find(item => item.id === saved.provider);
+  const isMMDB = providerID !== "kone-json";
+  const maxSize = (isMMDB ? 64 : 32) * 1024 * 1024;
   const input = h("input", {
     id: "geoip-file",
     type: "file",
-    accept: ".json,application/json",
+    accept: isMMDB ? ".mmdb,application/octet-stream" : ".json,application/json",
     disabled: !canManage() || running(),
     onchange: (event) => {
       model.geoFile = event.target.files[0];
@@ -3234,6 +3304,7 @@ function renderGeoIP() {
   });
   const metadata = detailPairs([
     ["已保存版本", saved.version],
+    ["格式 / 地址范围", `${saved.data_format || "kone-json"} · ${saved.ipv4 === false ? "" : "IPv4"}${saved.ipv6 ? " / IPv6" : ""}`],
     ["来源", saved.source],
     ["许可", saved.license],
     ["许可地址", saved.license_url],
@@ -3241,7 +3312,7 @@ function renderGeoIP() {
       "发布 / 加载时间",
       `${time(saved.published_at)} / ${time(saved.loaded_at)}`,
     ],
-    ["IPv4 范围数量", saved.ranges],
+    ["地址范围数量", saved.ranges],
     ["SHA-256", saved.sha256],
     [
       "来源声明",
@@ -3251,9 +3322,10 @@ function renderGeoIP() {
   ]);
   return card(
     "GeoIP 数据",
-    "从可信来源手动选择 JSON 数据文件；只解释地址归属，不代表目标可达。",
+    "保留离线内置库，也可导入 DB-IP、IPinfo Lite 或 MaxMind 的国家 MMDB；只解释地址归属，不代表目标可达。",
     model.geoError && note(model.geoError, "error"),
     metadata,
+    activeProvider && h("p", { class: "muted" }, h("a", { href: activeProvider.attribution_url, target: "_blank", rel: "noopener noreferrer" }, activeProvider.attribution)),
     h(
       "p",
       { class: "muted" },
@@ -3267,7 +3339,7 @@ function renderGeoIP() {
         },
         "IP Geolocation by DB-IP",
       ),
-      "。IPv6 国家归属尚不支持。",
+      "。MMDB 的 IPv4 / IPv6 支持取决于导入文件的实际覆盖。",
     ),
     running() &&
       note(
@@ -3279,10 +3351,25 @@ function renderGeoIP() {
     h(
       "div",
       { class: "form-section form-grid" },
+      field("导入数据源 / 格式", providerID, value => {
+        model.geoProvider = value;
+        model.geoFile = null;
+        model.geoExpected = "";
+        render();
+      }, { id: "geoip-provider", wide: true, disabled: !canManage() || running(), options: [
+        { value: "kone-json", label: "自定义 KONE JSON（IPv4）" },
+        ...providers.map(item => ({ value: item.id, label: `${item.name} · MMDB` })),
+      ] }),
+      provider && h("div", { class: "field wide" },
+        h("p", { class: "muted" }, `更新：${({daily: "每天", monthly: "每月", "Tuesday and Friday": "每周二、五"})[provider.update_frequency] || provider.update_frequency}；${provider.account_required ? "需自行注册账号下载" : "无需账号"}。`),
+        h("a", { href: provider.source, target: "_blank", rel: "noopener noreferrer" }, "官方数据与下载"),
+        " · ", h("a", { href: provider.license_url, target: "_blank", rel: "noopener noreferrer" }, provider.license),
+        h("p", { class: "muted" }, provider.id === "maxmind-geolite2" ? "使用前请阅读并遵守 MaxMind 条款，包括新版本发布后 30 天内删除旧数据；KONE 不代办账号或接受许可。" : "请先阅读并遵守数据许可；从可信官方来源下载并解压后再导入。"),
+      ),
       h(
         "div",
         { class: "field wide" },
-        h("label", { for: "geoip-file" }, "GeoIP JSON 文件（上限 32 MiB）"),
+        h("label", { for: "geoip-file" }, isMMDB ? "GeoIP MMDB 文件（解压后上限 64 MiB）" : "GeoIP JSON 文件（上限 32 MiB）"),
         input,
         model.geoFile &&
           h(
@@ -3310,8 +3397,8 @@ function renderGeoIP() {
       button(
         "校验并准备更新",
         async () => {
-          if (!model.geoFile || model.geoFile.size > 32 * 1024 * 1024) {
-            notice("请选择不超过 32 MiB 的 GeoIP JSON 文件。", "error");
+          if (!model.geoFile || model.geoFile.size > maxSize) {
+            notice(`请选择不超过 ${isMMDB ? 64 : 32} MiB 的 GeoIP ${isMMDB ? "MMDB" : "JSON"} 文件。`, "error");
             return;
           }
           const expected = (model.geoExpected || "").trim().toLowerCase();
@@ -3336,6 +3423,7 @@ function renderGeoIP() {
             "校验通过。只保存该数据，不自动启用接管；新会话使用新数据，旧连接历史保持原解释。",
             detailPairs([
               ["文件", model.geoFile.name],
+              ["数据格式", isMMDB ? `${provider?.name || providerID} MMDB` : "KONE JSON"],
               ["SHA-256", digest],
               ["原版本", saved.version],
             ]),
@@ -3352,6 +3440,8 @@ function renderGeoIP() {
                         "If-Match": String(baseVersion),
                         "X-Content-SHA256": digest,
                         "X-GeoIP-Base-SHA256": baseSHA,
+                        "X-GeoIP-Format": isMMDB ? "mmdb" : "kone-json",
+                        "X-GeoIP-Provider": isMMDB ? providerID : "",
                       },
                     });
                     model.geoFile = null;
@@ -3995,7 +4085,7 @@ function renderSettingsDetail(section) {
   const result = h("section", { class: "settings-detail", "data-settings-detail": section, "aria-label": settingsSections[section][0] }, h("div", { "data-settings-access": "" }), lock, h("div", { "data-settings-conflict": "" }), content);
   for (const control of result.querySelectorAll("input,select,textarea,button")) {
     const formLocked = ["logs", "geoip"].includes(section) && captureLocked();
-    const dynamic = /修复网络|重启接管|创建只读授权码|创建管理授权码|校验并准备更新|回退.*GeoIP|尝试恢复/.test(control.textContent);
+    const dynamic = control.hasAttribute("data-network-recovery") || /修复网络|重启接管|创建只读授权码|创建管理授权码|校验并准备更新|回退.*GeoIP|尝试恢复/.test(control.textContent);
     control.dataset.settingsFixedDisabled = !dynamic && !control.hasAttribute("data-save") && control.disabled && canManage() && !formLocked ? "true" : "false";
   }
   // A single page title is sufficient for a focused setting.
@@ -4023,7 +4113,7 @@ function syncSettingsAccess() {
     if (control.matches("[data-settings-cancel]")) disabled = model.busy || model.authBusy || model.settingsLoading;
     if (control.matches("[data-settings-save]")) disabled ||= !model.dirty;
     if (control.dataset.sessionProtected === "true") disabled = true;
-    if (control.textContent === "修复网络") disabled ||= captureLocked();
+    if (control.hasAttribute("data-network-recovery")) disabled ||= captureLocked() || Boolean(model.state.remote_session);
     if (control.textContent === "重启接管") disabled ||= !running();
     if (["创建只读授权码", "创建管理授权码"].includes(control.textContent)) disabled ||= !model.lan.enabled;
     if (section === "geoip" && control.tagName === "BUTTON") {
@@ -4442,6 +4532,14 @@ async function loadPageData() {
       model.geoError = error.message;
       model.geoip = null;
     }
+    if (!currentAuth(epoch)) return;
+    try {
+      model.recovery = await request("/recovery");
+      model.recoveryError = null;
+    } catch (error) {
+      if (!currentAuth(epoch)) return;
+      model.recoveryError = error.message;
+    }
   }
 }
 async function refreshAll() {
@@ -4450,6 +4548,16 @@ async function refreshAll() {
   if (!await refreshState()) return;
   await loadConfig(false);
   if (!currentAuth(epoch)) return;
+  if (!model.geoip) {
+    try {
+      const status = await request("/geoip");
+      if (!currentAuth(epoch)) return;
+      model.geoip = status;
+    } catch {
+      if (!currentAuth(epoch)) return;
+      // A damaged dataset must not prevent access to configuration/recovery.
+    }
+  }
   await refreshTraffic();
   if (!currentAuth(epoch)) return;
   await loadPageData();

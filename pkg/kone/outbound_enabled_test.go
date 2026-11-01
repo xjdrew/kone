@@ -32,7 +32,7 @@ func TestDisabledOutboundNeverDialsFallsBackOrBypassesRules(t *testing.T) {
 		outbounds.bypassEndpoints(rule)
 		require.False(t, rule.Decide("127.0.0.1", "tcp", 443).Protected, "a disabled proxy endpoint is not permission to bypass a reject policy")
 		cfg := DefaultConfig()
-		cfg.DNS.Servers = []string{"127.0.0.1:53"}
+		cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 		cfg.Outbounds = config
 		cfg.Rule = []RuleConfig{{Schema: "FINAL", Outbound: "office"}}
 		require.NoError(t, cfg.Validate(), "rules may keep referencing disabled outbounds")
@@ -58,7 +58,7 @@ func TestOutboundEnableSnapshotCopiesPointersAndKeepsExistingPolicy(t *testing.T
 	cleanProxyEnv(t)
 	enabled := true
 	cfg := DefaultConfig()
-	cfg.DNS.Servers = []string{"127.0.0.1:53"}
+	cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 	cfg.Outbounds = []OutboundConfig{{ID: "stable-office", Name: "office", URL: "http://127.0.0.1:8080", Enabled: &enabled}}
 	cfg.Rule = []RuleConfig{{Schema: "FINAL", Outbound: "office"}}
 	one, err := FromConfig(cfg)

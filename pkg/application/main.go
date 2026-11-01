@@ -151,6 +151,12 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 		}
 		slog.Info("Starting KONE management", "stage", "startup", "version", options.version, "desktop", options.desktop, "capture", "paused")
 		controlOptions := control.Options{Directory: *directory, Version: options.version, LogStore: options.logs}
+		controlOptions.RecoverSystemDNS = func(ctx context.Context, id string) error {
+			return selectSystemDNSRecovery(ctx, id, func() bool { return runtime.GOOS == "windows" && desktop.NeedsHelper() }, kone.RecoverSystemDNS,
+				func(ctx context.Context, id string) error {
+					return desktop.RecoverSystemDNS(ctx, id, launchManagedHelper)
+				})
+		}
 		controlOptions.ConfigureLogging = func(general kone.GeneralConfig) error { return configureLogging(general, *debug) }
 		if desktop.PrivilegeSeparationAvailable() {
 			if controlOptions.Directory == "" {
@@ -267,6 +273,10 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 		return 2
 	}
 	if *check {
+		if err := cfg.ValidateGeoIPFile(); err != nil {
+			fmt.Fprintf(stderr, "GeoIP configuration error: %s\n", err)
+			return 2
+		}
 		fmt.Fprintln(stdout, "Configuration valid")
 		return 0
 	}

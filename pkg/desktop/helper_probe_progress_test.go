@@ -115,10 +115,38 @@ func TestNewRemoteProbeCanUseAnOlderHelperWithoutProgress(t *testing.T) {
 	require.Empty(t, engine.probeObservers, "completion must release per-request observers")
 }
 
+type legacyTCPProbeCounter struct{ calls atomic.Int32 }
+
+func (service *legacyTCPProbeCounter) Probe(_ LegacyProbeRequest, reply *kone.DiagnosticResult) error {
+	service.calls.Add(1)
+	*reply = kone.DiagnosticResult{Protocol: "tcp", Status: "reachable"}
+	return nil
+}
+
+func TestUDPDiagnosticCannotBeSilentlyDowngradedByAnOlderHelper(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+	legacy := &legacyTCPProbeCounter{}
+	server := rpc.NewServer()
+	require.NoError(t, server.RegisterName("Network", legacy))
+	go server.ServeConn(right)
+	client := rpc.NewClient(left)
+	defer client.Close()
+	engine := &RemoteEngine{client: client, requests: make(chan struct{}, 8)}
+	_, err := engine.ProbeDiagnosticRequestVersion(t.Context(), kone.BuiltinDirect, "127.0.0.1:53", kone.DiagnosticOptions{Protocol: "udp"}, 7)
+	require.ErrorContains(t, err, "ProbeUDP")
+	require.Zero(t, legacy.calls.Load(), "an ignored new gob field must not cause an unauthorized TCP probe")
+	require.Empty(t, engine.probeObservers)
+	require.Error(t, (&helperService{}).ProbeUDP(ProbeRequest{}, &kone.DiagnosticResult{}), "the UDP-only method cannot accept an implicit TCP request")
+}
+
 func TestProbeProgressWireSnapshotDropsSensitiveAndMutableFields(t *testing.T) {
 	latency := int64(12)
-	input := kone.DiagnosticResult{Target: "private-target", Outbound: "private-name", Message: "private-detail", ConnectLatencyMS: &latency, Host: kone.DiagnosticHost{Address: "http://user:private-key@host:80"}, Protocols: kone.DiagnosticProtocols{TCP: kone.DiagnosticCheck{Message: "http://user:private-key@host:80"}}}
+	input := kone.DiagnosticResult{Protocol: "udp", Target: "private-target", Outbound: "private-name", Message: "private-detail", ConnectLatencyMS: &latency, Host: kone.DiagnosticHost{Address: "http://user:private-key@host:80"}, Protocols: kone.DiagnosticProtocols{TCP: kone.DiagnosticCheck{Message: "http://user:private-key@host:80"}}}
 	result := safeProbeProgress(input)
+	require.Equal(t, "udp", result.Protocol)
+	require.Empty(t, safeProbeProgress(kone.DiagnosticResult{Protocol: "private-protocol"}).Protocol)
 	latency = 99
 	require.Equal(t, int64(12), *result.ConnectLatencyMS)
 	encoded, err := json.Marshal(result)

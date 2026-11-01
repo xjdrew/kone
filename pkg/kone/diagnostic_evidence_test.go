@@ -20,7 +20,7 @@ func TestRejectedDiagnosticNeverClaimsMeasuredConnectivity(t *testing.T) {
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			cfg := DefaultConfig()
-			cfg.DNS.Servers = []string{"127.0.0.1:53"}
+			cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 			one, err := FromConfig(cfg)
 			require.NoError(t, err)
 			defer one.Close()
@@ -49,7 +49,7 @@ func TestRejectedDiagnosticNeverClaimsMeasuredConnectivity(t *testing.T) {
 func TestCanceledEndpointProbeHasNoFailureOrLatencyEvidence(t *testing.T) {
 	cleanProxyEnv(t)
 	cfg := DefaultConfig()
-	cfg.DNS.Servers = []string{"127.0.0.1:53"}
+	cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 	one, err := FromConfig(cfg)
 	require.NoError(t, err)
 	defer one.Close()
