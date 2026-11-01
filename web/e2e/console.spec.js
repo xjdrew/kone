@@ -2625,6 +2625,7 @@ test("@compat log navigation responds while an older background poll is still pe
     await page.locator("[data-log-newer]").click();
     await expect.poll(() => displayedLogIDs(page)).toEqual(firstIDs);
     data.deferLogs = secondPoll;
+    releaseFirst();
     await expect.poll(() => secondPoll.started).toBe(true);
     await page.locator("[data-log-older]").click();
     await expect.poll(() => displayedLogIDs(page)).toEqual(secondIDs);
