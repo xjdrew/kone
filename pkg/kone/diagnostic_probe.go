@@ -27,6 +27,10 @@ type DiagnosticResult struct {
 	Time          time.Time `json:"time"`
 	Expires       time.Time `json:"expires"`
 	Scope         string    `json:"scope"`
+	DNSName       string    `json:"dns_name,omitempty"`
+	DNSType       string    `json:"dns_type,omitempty"`
+	DNSRCode      string    `json:"dns_rcode,omitempty"`
+	DNSTruncated  bool      `json:"dns_truncated,omitempty"`
 }
 
 func ValidateDiagnosticTarget(target string) error {

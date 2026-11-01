@@ -32,22 +32,27 @@ type NetworkEngine interface {
 type EngineFactory func(*kone.KoneConfig) (NetworkEngine, error)
 type Empty struct{}
 type StartRequest struct {
-	TOML         []byte
-	Version      uint64
-	GeoIP        []byte
-	GeoIPSHA256  string
-	GeoIPBuiltin bool
+	TOML          []byte
+	Version       uint64
+	GeoIP         []byte
+	GeoIPSHA256   string
+	GeoIPBuiltin  bool
+	GeoIPFormat   string
+	GeoIPProvider string
 }
 type GeoIPRequest struct {
 	Data        []byte
 	SHA256      string
 	Builtin     bool
+	Format      string
+	Provider    string
 	BaseVersion uint64
 }
 type ProbeRequest struct {
 	ID               string
 	Outbound, Target string
 	TLS              bool
+	Options          kone.DiagnosticOptions
 	TimeoutMS        int64
 	ExpectedVersion  uint64
 	Deadline         time.Time
@@ -167,7 +172,7 @@ func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
 		return err
 	}
 	if len(request.GeoIP) > 0 || request.GeoIPBuiltin {
-		if err = applyHelperGeoIP(engine, GeoIPRequest{Data: request.GeoIP, SHA256: request.GeoIPSHA256, Builtin: request.GeoIPBuiltin}); err != nil {
+		if err = applyHelperGeoIP(engine, GeoIPRequest{Data: request.GeoIP, SHA256: request.GeoIPSHA256, Builtin: request.GeoIPBuiltin, Format: request.GeoIPFormat, Provider: request.GeoIPProvider}); err != nil {
 			engine.Close()
 			return err
 		}
@@ -311,7 +316,15 @@ func applyHelperGeoIP(engine NetworkEngine, request GeoIPRequest) error {
 		if len(request.Data) > 0 || request.SHA256 != database.Metadata().SHA256 {
 			return errors.New("invalid builtin GeoIP marker")
 		}
+	} else if request.Format == "mmdb" {
+		database, err = geoip.LoadMMDB(bytes.NewReader(request.Data), request.SHA256, request.Provider)
+		if err != nil {
+			return err
+		}
 	} else {
+		if request.Format != "" && request.Format != "kone-json" {
+			return errors.New("unsupported GeoIP data format")
+		}
 		database, err = geoip.Load(bytes.NewReader(request.Data), request.SHA256)
 		if err != nil {
 			return err
@@ -365,6 +378,14 @@ func (s *helperService) Probe(request ProbeRequest, reply *kone.DiagnosticResult
 	if err := kone.ValidateDiagnosticTarget(request.Target); err != nil {
 		return err
 	}
+	options := request.Options
+	if options.Protocol == "" {
+		options.TLS = request.TLS
+	}
+	options, err := options.Normalize()
+	if err != nil {
+		return err
+	}
 	engine, err := s.current()
 	if err != nil {
 		return err
@@ -410,7 +431,17 @@ func (s *helperService) Probe(request ProbeRequest, reply *kone.DiagnosticResult
 	s.probes[request.ID] = cancel
 	s.mu.Unlock()
 	defer func() { cancel(); s.mu.Lock(); delete(s.probes, request.ID); s.mu.Unlock() }()
-	*reply, err = owner.ProbeDiagnosticVersion(ctx, request.Outbound, request.Target, request.TLS, request.ExpectedVersion)
+	if options.Protocol == "udp" {
+		udpOwner, ok := engine.(interface {
+			ProbeDiagnosticRequestVersion(context.Context, string, string, kone.DiagnosticOptions, uint64) (kone.DiagnosticResult, error)
+		})
+		if !ok {
+			return errors.New("helper engine UDP diagnostics are unavailable")
+		}
+		*reply, err = udpOwner.ProbeDiagnosticRequestVersion(ctx, request.Outbound, request.Target, options, request.ExpectedVersion)
+	} else {
+		*reply, err = owner.ProbeDiagnosticVersion(ctx, request.Outbound, request.Target, options.TLS, request.ExpectedVersion)
+	}
 	if err != nil {
 		return errors.New(helperError(err))
 	}

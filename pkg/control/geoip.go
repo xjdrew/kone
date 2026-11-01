@@ -12,13 +12,13 @@ import (
 )
 
 func (c *Controller) geoIPStatus() (map[string]any, error) {
-	repository, err := geoip.OpenRepository(filepath.Join(c.directory, "geoip"))
+	metadata, err := c.geoIPCache.load(filepath.Join(c.directory, "geoip"), geoip.OpenRepository)
 	if err != nil {
 		return nil, err
 	}
-	value := map[string]any{"saved": repository.Current().Metadata(), "restart_required": false}
-	if previous := repository.Previous(); previous != nil {
-		value["previous"] = previous.Metadata()
+	value := map[string]any{"saved": metadata.current, "restart_required": false, "providers": geoip.Providers()}
+	if metadata.hasPrevious {
+		value["previous"] = metadata.previous
 	}
 	c.mu.Lock()
 	engine := c.engine
@@ -31,7 +31,7 @@ func (c *Controller) geoIPStatus() (map[string]any, error) {
 			return nil, err
 		}
 		value["running"] = status
-		value["restart_required"] = status.Current.SHA256 != repository.Current().Metadata().SHA256
+		value["restart_required"] = status.Current.SHA256 != metadata.current.SHA256
 	}
 	return value, nil
 }
@@ -40,6 +40,10 @@ func (c *Controller) geoIPStatus() (map[string]any, error) {
 // source URL, and require paused capture so persistent/runtime state cannot
 // diverge across a crash between two independently owned publications.
 func (c *Controller) updateGeoIP(base uint64, expectedCurrent string, data []byte, digest string, rollback bool) (map[string]any, error) {
+	return c.updateGeoIPFormat(base, expectedCurrent, data, digest, "kone-json", "", rollback)
+}
+
+func (c *Controller) updateGeoIPFormat(base uint64, expectedCurrent string, data []byte, digest, format, provider string, rollback bool) (map[string]any, error) {
 	c.actions.Lock()
 	defer c.actions.Unlock()
 	c.mu.Lock()
@@ -66,7 +70,12 @@ func (c *Controller) updateGeoIP(base uint64, expectedCurrent string, data []byt
 	}
 	if rollback {
 		_, err = repository.Rollback()
+	} else if format == "mmdb" {
+		_, err = repository.InstallMMDB(data, digest, provider)
 	} else {
+		if format != "" && format != "kone-json" {
+			return nil, errors.New("GeoIP format must be kone-json or mmdb")
+		}
 		_, err = repository.Install(data, digest)
 	}
 	if err != nil {
@@ -80,6 +89,7 @@ func (c *Controller) geoIPRoute(w http.ResponseWriter, r *http.Request, rollback
 	var expectedCurrent string
 	var data []byte
 	var err error
+	format := r.Header.Get("X-GeoIP-Format")
 	if rollback {
 		var input struct {
 			BaseVersion uint64 `json:"base_version"`
@@ -92,15 +102,19 @@ func (c *Controller) geoIPRoute(w http.ResponseWriter, r *http.Request, rollback
 		base, err = strconv.ParseUint(r.Header.Get("If-Match"), 10, 64)
 		expectedCurrent = r.Header.Get("X-GeoIP-Base-SHA256")
 		if err == nil {
-			data, err = io.ReadAll(http.MaxBytesReader(w, r.Body, 32<<20))
+			limit := int64(geoip.MaxFileSize)
+			if format == "mmdb" {
+				limit = geoip.MaxMMDBFileSize
+			}
+			data, err = io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 			r.Body.Close()
 		}
 	}
 	if err != nil {
-		apiError(w, 400, "request", "Supply a valid base revision and a JSON dataset of at most 32 MiB")
+		apiError(w, 400, "request", "Supply a valid base revision and a JSON dataset up to 32 MiB or MMDB up to 64 MiB")
 		return
 	}
-	value, err := c.updateGeoIP(base, expectedCurrent, data, r.Header.Get("X-Content-SHA256"), rollback)
+	value, err := c.updateGeoIPFormat(base, expectedCurrent, data, r.Header.Get("X-Content-SHA256"), format, r.Header.Get("X-GeoIP-Provider"), rollback)
 	if err != nil {
 		status := 400
 		if errors.Is(err, ErrConflict) {

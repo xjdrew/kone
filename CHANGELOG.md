@@ -2,8 +2,10 @@
 
 ## Features
 
+- Diagnose UDP paths with validated DNS responses through direct, SOCKS5 and Shadowsocks outbounds.
 - Guide Windows system DNS through KONE, with explicit recovery after abnormal exit.
 - Support optional IPv6 capture on macOS.
+- Select DB-IP, IPinfo Lite or MaxMind GeoLite2 country databases, including IPv6 GeoIP rules.
 - Include system, gVisor and mixed stacks in every build, selected at runtime with system as the default.
 - Change the management password and reset all settings while capture is paused from Settings and Recovery.
 - Require a management password on first use and password authentication on later logins.

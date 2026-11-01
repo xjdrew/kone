@@ -94,7 +94,7 @@ func ssPeerWriteChunk(writer io.Writer, aead cipher.AEAD, nonce, payload []byte)
 	return err
 }
 
-func ssInteropPeer(t *testing.T, method, network string, tamper bool) (string, <-chan []byte) {
+func ssInteropPeer(t *testing.T, method, network string, tamper bool, transform ...func([]byte) []byte) (string, <-chan []byte) {
 	t.Helper()
 	length := 32
 	if method == "aes-128-gcm" {
@@ -174,6 +174,9 @@ func ssInteropPeer(t *testing.T, method, network string, tamper bool) (string, <
 			return
 		}
 		received <- plain
+		if len(transform) > 0 {
+			plain = transform[0](plain)
+		}
 		salt := make([]byte, length)
 		rand.Read(salt)
 		response, err := ssPeerCipher(method, "interop-password", salt)

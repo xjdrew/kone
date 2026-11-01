@@ -28,7 +28,9 @@ func TestInterruptedStartupRecoveryAllowsCaptureEndToEnd(t *testing.T) {
 	require.NoError(t, os.WriteFile(journal, data, 0600))
 	c, err := control.New(control.Options{Directory: directory, Factory: func(*kone.KoneConfig) (control.Engine, error) {
 		return &isolatedEngine{ready: make(chan struct{}), stop: make(chan struct{})}, nil
-	}, Preflight: func(context.Context, *kone.KoneConfig) kone.PreflightReport { return kone.PreflightReport{Ready: true} }})
+	}, Preflight: func(context.Context, *kone.KoneConfig) kone.PreflightReport { return kone.PreflightReport{Ready: true} },
+		InspectSystemDNSRecovery: func(context.Context) ([]kone.SystemDNSRecoveryEntry, error) { return nil, nil },
+	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	server := httptest.NewServer(c.Handler())
@@ -76,7 +78,11 @@ func TestInterruptedStartupRecoveryAllowsCaptureEndToEnd(t *testing.T) {
 	require.Equal(t, 200, status)
 	require.Equal(t, recovery["next_action"], report["next_action"])
 	for _, action := range []string{"recover", "start", "pause"} {
-		status, operation := call("POST", "lifecycle/"+action, map[string]any{})
+		body := map[string]any{}
+		if action == "recover" {
+			body["confirm"] = true
+		}
+		status, operation := call("POST", "lifecycle/"+action, body)
 		require.Equal(t, 202, status)
 		require.Eventually(t, func() bool {
 			status, value := call("GET", "operations/"+operation["id"].(string), nil)

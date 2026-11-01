@@ -25,7 +25,7 @@ pattern = "2001:db8:1234::/48"
 outbound = "reject"
 ```
 
-示例 CIDR 是文档地址，应替换为实际目标。规则顺序、协议/端口条件、`direct`/`reject` 和代理名称语义与 IPv4 相同；GEOIP 数据仍为 IPv4 范围，不会为 IPv6 地址虚构归属。修改 IPv6 地址、全局路由开关或 CIDR 捕获范围需要重启。
+示例 CIDR 是文档地址，应替换为实际目标。规则顺序、协议/端口条件、`direct`/`reject` 和代理名称语义与 IPv4 相同；内置和 JSON GeoIP 只有 IPv4 范围，IPv6 国家规则需导入包含 IPv6 记录的 [MMDB 数据源](geoip.md)，未知地址不猜测归属。修改 IPv6 地址、全局路由开关或 CIDR 捕获范围需要重启。
 
 ## DNS 与核心链路
 

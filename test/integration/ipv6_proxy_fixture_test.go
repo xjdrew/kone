@@ -20,7 +20,7 @@ func ipv6SOCKSPeer(t *testing.T) (string, <-chan ipv6SOCKSSeen) {
 	return ipv6SOCKSPeerOn(t, "127.0.0.1")
 }
 
-func ipv6SOCKSPeerOn(t *testing.T, host string) (string, <-chan ipv6SOCKSSeen) {
+func ipv6SOCKSPeerOn(t *testing.T, host string, transform ...func([]byte) []byte) (string, <-chan ipv6SOCKSSeen) {
 	t.Helper()
 	network := "4"
 	if net.ParseIP(host).To4() == nil {
@@ -138,7 +138,11 @@ func ipv6SOCKSPeerOn(t *testing.T, host string) (string, <-chan ipv6SOCKSSeen) {
 				continue
 			}
 			seen <- ipv6SOCKSSeen{"udp", hostname}
-			packet.WriteTo(buffer[:n], source)
+			response := buffer[:n]
+			if len(transform) > 0 {
+				response = transform[0](response)
+			}
+			packet.WriteTo(response, source)
 		}
 	}()
 	t.Cleanup(func() {

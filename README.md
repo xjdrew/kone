@@ -12,7 +12,8 @@ Its original [K1 dial mark](docs/branding.md) represents reliable guidance for n
 - Route application and LAN traffic through proxies without configuring every application, with optional IPv6 capture.
 - Use HTTP/HTTPS, SOCKS5 and Shadowsocks outbounds, with direct and reject policies.
 - Select system, gVisor or mixed networking at runtime; every package includes all three.
-- Inspect traffic, DNS history, routing decisions and recent runtime logs.
+- Inspect traffic, DNS history and runtime logs, and test TCP/UDP connectivity.
+- Use offline country data or import DB-IP, IPinfo and MaxMind databases for IPv4/IPv6 geographic rules.
 - Use a password-protected Web console, desktop tray/menu, or paired phone and tablet.
 - Preserve established connections during rule updates, roll back failed startup,
   and restore owned network settings on normal exit.

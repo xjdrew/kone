@@ -74,6 +74,19 @@ stack = "system"
 # suffix = "168.192.in-addr.arpa"
 # servers = ["192.168.1.53"]
 
+# GeoIP 国家规则的数据源；整段省略使用内置 DB-IP IPv4 离线库。
+# 管理界面通过 GeoIP 面板上传，不接受本地文件路径；以下用于 CLI 文件模式。
+# [geoip]
+# builtin | kone-json | dbip-lite | ipinfo-lite | maxmind-geolite2。
+# 后三者读取已解压的国家 MMDB，支持其中的 IPv4/IPv6 记录；不自动下载。
+# provider = "builtin"
+# 外部数据必填：本地文件路径，相对于本 TOML 文件；也可填绝对路径。
+# JSON 上限 32 MiB；MMDB 上限 64 MiB。builtin 时必须留空。
+# file = ""
+# 外部数据必填：整个解压后文件的 64 位小写 SHA256，启动前验证。
+# builtin 时留空；更换来源、文件或摘要需要重启。获取方式与许可见 docs/geoip.md。
+# sha256 = ""
+
 # 出站数组只需声明代理，填写 name（规则引用的唯一名称）和 url 即可。
 # direct（直连）和 reject（拒绝）是内置出站，无需声明；名称及其大小写变体保留。
 # 只使用内置出站时可省略整个 outbounds 数组。
@@ -98,8 +111,8 @@ url = "http://127.0.0.1:8080"
 
 # 规则按顺序匹配，outbound 引用代理名称或内置 direct、reject（小写）。
 # direct：KONE 接收后直接连接目标；reject：拒绝连接，域名 DNS 查询返回 REFUSED。
-# type：DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD、IP-CIDR、GEOIP、FINAL。
-# pattern：域名/后缀/关键词、IPv4 CIDR 或大写两字母国家代码；FINAL 不填。
+# type：DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD、IP-CIDR、IP-CIDR6、GEOIP、FINAL。
+# pattern：域名/后缀/关键词、IPv4/IPv6 CIDR 或大写两字母国家代码；FINAL 不填。
 # FINAL 可省略，但写出时必须是最后一条；没有匹配规则时隐式直连。
 [[rules]]
 # 可选稳定规则标识与来源；管理界面自动分配，手写配置可省略。

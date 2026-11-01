@@ -141,6 +141,9 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 			status = 409
 			code = "capture_locked"
 		}
+		if errors.Is(err, ErrDiagnosticRateLimit) {
+			status, code = 429, "diagnostic_rate_limit"
+		}
 		c.mu.Lock()
 		message := safeMessage(err, c.doc.Config)
 		c.mu.Unlock()
@@ -372,13 +375,13 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		var request struct {
 			Target    string   `json:"target"`
 			Outbounds []string `json:"outbounds"`
-			TLS       bool     `json:"tls"`
+			kone.DiagnosticOptions
 		}
 		if err := readJSON(w, r, &request); err != nil {
 			respondError(err)
 			return
 		}
-		op, err := c.Diagnose(request.Target, request.Outbounds, request.TLS, key)
+		op, err := c.DiagnoseProtocol(request.Target, request.Outbounds, request.DiagnosticOptions, key)
 		if err != nil {
 			respondError(err)
 			return

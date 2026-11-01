@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	maxminddb "github.com/oschwald/maxminddb-golang/v2"
 )
 
 const MaxFileSize = 32 << 20
@@ -66,6 +68,10 @@ type File struct {
 }
 
 type Metadata struct {
+	Provider     string    `json:"provider,omitempty"`
+	Format       string    `json:"data_format,omitempty"`
+	IPv4         bool      `json:"ipv4"`
+	IPv6         bool      `json:"ipv6"`
 	Version      string    `json:"version"`
 	Source       string    `json:"source"`
 	License      string    `json:"license"`
@@ -90,13 +96,21 @@ type Database struct {
 	metadata Metadata
 	ranges   []addressRange
 	data     []byte
+	mmdb     *maxminddb.Reader
 }
 
 func (d *Database) Metadata() Metadata {
 	if d == nil {
 		return Metadata{}
 	}
-	return d.metadata
+	metadata := d.metadata
+	if metadata.Format == "" {
+		metadata.Format, metadata.IPv4 = "kone-json", true
+		if metadata.Builtin {
+			metadata.Format, metadata.Provider = "packed", "dbip-lite"
+		}
+	}
+	return metadata
 }
 
 func (d *Database) Bytes() []byte {
@@ -107,7 +121,18 @@ func (d *Database) Bytes() []byte {
 }
 
 func (d *Database) Country(address netip.Addr) string {
-	if d == nil || !address.IsValid() || !address.Unmap().Is4() {
+	if d == nil || !address.IsValid() {
+		return ""
+	}
+	address = address.Unmap()
+	if d.mmdb != nil {
+		country, err := mmdbCountry(d.mmdb.Lookup(address), d.metadata.Provider)
+		if err != nil || country == "ZZ" {
+			return ""
+		}
+		return country
+	}
+	if !address.Is4() {
 		return ""
 	}
 	raw := address.Unmap().As4()
@@ -252,5 +277,5 @@ func Load(reader io.Reader, expectedSHA256 string) (*Database, error) {
 			return nil, fmt.Errorf("GeoIP range %d is reversed, unsorted or overlapping", i+1)
 		}
 	}
-	return &Database{metadata: Metadata{Version: file.Version, Source: file.Source, License: file.License, LicenseURL: file.LicenseURL, PublishedAt: file.PublishedAt, LoadedAt: time.Now().UTC(), SHA256: expectedSHA256, Ranges: len(ranges), Provenance: "provided metadata; source and license not independently certified"}, ranges: ranges, data: data}, nil
+	return &Database{metadata: Metadata{Format: "kone-json", IPv4: true, Version: file.Version, Source: file.Source, License: file.License, LicenseURL: file.LicenseURL, PublishedAt: file.PublishedAt, LoadedAt: time.Now().UTC(), SHA256: expectedSHA256, Ranges: len(ranges), Provenance: "provided metadata; source and license not independently certified"}, ranges: ranges, data: data}, nil
 }

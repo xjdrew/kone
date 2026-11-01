@@ -32,7 +32,7 @@ case "$1" in
     ;;
   tun)
     output="$RUNNER_TEMP/native-macos.log"
-    sudo -n env KONE_DARWIN_SYSTEM_TEST=1 KONE_DARWIN_DNS_SYSTEM_TEST=1 "$RUNNER_TEMP/kone-darwin-system.test" -test.run '^TestSystemDarwin(UTUN|DNSGuidance|IPv6)$' -test.v -test.timeout 8m 2>&1 | tee "$output"
+    sudo -n env GITHUB_ACTIONS=true KONE_DARWIN_SYSTEM_TEST=1 KONE_DARWIN_DNS_SYSTEM_TEST=1 "$RUNNER_TEMP/kone-darwin-system.test" -test.run '^TestSystemDarwin(UTUN|DNSGuidance|IPv6)$' -test.v -test.timeout 8m 2>&1 | tee "$output"
     stacks=(system mixed)
     if [[ -f pkg/kone/stack_modes.go ]]; then stacks=(system gvisor mixed); fi
     for stack in "${stacks[@]}"; do

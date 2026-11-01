@@ -133,12 +133,15 @@ async function mount(page, options = {}) {
     const url = new URL(request.url());
     const path = url.pathname.slice("/api/v1".length);
     const method = request.method();
+    const mmdbUpload = request.headers()["x-geoip-format"] === "mmdb";
+    const body = mmdbUpload ? null : request.postDataJSON();
     data.requests.push({
       path,
       method,
       query: Object.fromEntries(url.searchParams),
       headers: request.headers(),
-      body: request.postDataJSON(),
+      body,
+      rawBody: mmdbUpload ? request.postDataBuffer() : undefined,
     });
     if (data.delay)
       await new Promise((resolve) => setTimeout(resolve, data.delay));
@@ -149,7 +152,6 @@ async function mount(page, options = {}) {
         contentType: "application/json",
         body: JSON.stringify(body),
       });
-    const body = request.postDataJSON();
     if (path === "/auth") return respond({ setup_required: Boolean(data.requireSetup), setup_authorized: Boolean(data.setupSession), password_required: !data.requireSetup, authenticated: data.loggedIn !== false, ...(data.setupSession ? { csrf_token: "setup-csrf" } : {}) });
     if (path === "/auth/password") {
       if (method === "POST" && !data.setupSession) return respond({ error: { message: "local setup proof required" } }, 403);
@@ -428,7 +430,7 @@ async function mount(page, options = {}) {
         ],
       });
     if (path === "/diagnostics" && method === "GET")
-      return respond({ operations: [] });
+      return respond({ operations: data.diagnosticOperations || [] });
     if (path === "/logs") {
       if (data.logsUnavailable) return respond({ error: { message: "logs temporarily unavailable" } }, 503);
       let records = data.logRecords || [{ id: "1", time: start, level: "ERROR", source: "helper", message: "TUN startup failed", attrs: { stage: "start", endpoint: "http://REDACTED@proxy.invalid" } }];
@@ -455,9 +457,9 @@ async function mount(page, options = {}) {
     if (path === "/geoip" && method === "PUT")
       return respond({
         saved: {
-          ...body,
+          ...(body || { version: "imported-mmdb", data_format: "mmdb", ipv6: true, provider: request.headers()["x-geoip-provider"] }),
           sha256: request.headers()["x-content-sha256"],
-          ranges: body.ranges.length,
+          ranges: body?.ranges?.length || 1,
         },
         restart_required: false,
       });
@@ -480,6 +482,11 @@ async function mount(page, options = {}) {
       );
     if (path === "/geoip")
       return respond({
+        providers: [
+          { id: "dbip-lite", name: "DB-IP Country Lite", source: "https://db-ip.com/db/download/ip-to-country-lite", license: "CC-BY-4.0", license_url: "https://creativecommons.org/licenses/by/4.0/", update_frequency: "monthly" },
+          { id: "ipinfo-lite", name: "IPinfo Lite", source: "https://ipinfo.io/lite", license: "CC-BY-SA-4.0", license_url: "https://creativecommons.org/licenses/by-sa/4.0/", update_frequency: "daily", account_required: true },
+          { id: "maxmind-geolite2", name: "MaxMind GeoLite2 Country", source: "https://dev.maxmind.com/geoip/geolite2-free-geolocation-data/", license: "GeoLite EULA", license_url: "https://www.maxmind.com/en/geolite/eula", update_frequency: "Tuesday and Friday", account_required: true },
+        ],
         saved: {
           version: "builtin",
           source: "legacy bundled dataset",
@@ -1245,6 +1252,41 @@ test("diagnosis sends one explicit TCP target and never replays business payload
   });
 });
 
+test("@compat UDP diagnosis requires an explicit DNS server and separates address family from query type", async ({ page }) => {
+  const data = await mount(page);
+  await navigate(page, "diagnostics");
+  await page.getByRole("button", { name: "新建诊断", exact: true }).click();
+  await page.locator("#diagnose-target").fill("business.example:443");
+  await page.locator("#diagnose-tls").check();
+  await page.locator("#diagnose-protocol").selectOption("udp");
+  await expect(page.locator("#diagnose-target")).toHaveValue("");
+  await expect(page.locator("#diagnose-port")).toHaveValue("53");
+  await expect(page.locator("#diagnose-tls")).toBeDisabled();
+  await expect(page.locator("#diagnose-tls")).not.toBeChecked();
+  await expect(page.locator("#diagnose-target-hint")).toContainText("不代表 QUIC");
+  await page.locator("#diagnose-target").fill("::1");
+  await page.locator("#diagnose-port").fill("5353");
+  await page.locator("#diagnose-dns-name").fill("example.com");
+  await page.locator("#diagnose-dns-type").selectOption("AAAA");
+  await page.locator("#diagnose-address-family").selectOption("ipv6");
+  expect(data.writes.some(write => write.path === "/diagnostics")).toBe(false);
+  await page.getByRole("button", { name: "开始独立诊断", exact: true }).click();
+  await expect.poll(() => data.writes.filter(write => write.path === "/diagnostics").length).toBe(1);
+  expect(data.writes.find(write => write.path === "/diagnostics").body).toEqual({ target: "[::1]:5353", tls: false, protocol: "udp", udp_mode: "dns", dns_name: "example.com", dns_type: "AAAA", address_family: "ipv6", outbounds: ["direct", "Proxy A"] });
+  expect(data.writes.some(write => ["/config", "/lifecycle/start"].includes(write.path))).toBe(false);
+});
+
+test("UDP diagnostic results distinguish DNS rcode and truncation from business success", async ({ page }) => {
+  const data = await mount(page, { diagnosticOperations: [{ id: "udp-result", kind: "diagnostics", status: "succeeded", started_at: start, result: { target: "[::1]:5353", protocol: "udp", results: [{ outbound: "direct", protocol: "udp", status: "reachable", stage: "udp_response", dns_rcode: "REFUSED", dns_truncated: true, message: "Matching DNS response; application behavior is not tested", time: start }] } }] });
+  await navigate(page, "diagnostics");
+  await page.getByRole("button", { name: "结果", exact: true }).click();
+  await expect(page.locator("#detail-dialog")).toContainText("REFUSED");
+  await expect(page.locator("#detail-dialog")).toContainText("截断响应，未重试 TCP");
+  await expect(page.locator("#detail-dialog")).toContainText("不代表应用业务成功");
+  await expect(page.getByRole("button", { name: "建立精确规则草稿", exact: true })).toHaveCount(0);
+  expect(data.writes).toHaveLength(0);
+});
+
 test("automatic refresh never silently rebases a dirty draft onto a concurrent saved version", async ({
   page,
 }) => {
@@ -1341,6 +1383,30 @@ test("GeoIP requires an independent checksum and sends a raw bounded upload with
   expect(
     data.writes.some((write) => write.path.startsWith("/lifecycle/")),
   ).toBe(false);
+});
+
+test("GeoIP MMDB sources require an explicit schema and preserve binary upload bytes", async ({ page }) => {
+  const data = await mount(page);
+  await page.locator(".nav-link[data-page=settings]").click();
+  await page.getByRole("button", { name: "更新 GeoIP 数据", exact: true }).click();
+  await page.locator("#geoip-provider").selectOption("maxmind-geolite2");
+  await expect(page.locator("#editor-dialog")).toContainText("30 天内删除旧数据");
+  await page.locator("#geoip-provider").selectOption("ipinfo-lite");
+  await expect(page.locator("#editor-dialog")).toContainText("每天");
+  await expect(page.locator("#editor-dialog")).toContainText("需自行注册账号下载");
+  await expect(page.locator("#geoip-file")).toHaveAttribute("accept", ".mmdb,application/octet-stream");
+  expect(data.writes.filter(write => write.path === "/geoip")).toHaveLength(0);
+  const content = Buffer.from([0, 255, 128, 127, 10, 13, 0, 45]);
+  const digest = createHash("sha256").update(content).digest("hex");
+  await page.locator("#geoip-file").setInputFiles({ name: "ipinfo_lite.mmdb", mimeType: "application/octet-stream", buffer: content });
+  await page.locator("#geoip-expected").fill(digest);
+  await page.getByRole("button", { name: "校验并准备更新" }).click();
+  await page.getByRole("button", { name: "确认保存数据", exact: true }).click();
+  await expect(page.locator("#page-notice")).toContainText("GeoIP 已保存");
+  const upload = data.requests.find(request => request.path === "/geoip" && request.method === "PUT");
+  expect(upload.headers).toMatchObject({ "x-geoip-format": "mmdb", "x-geoip-provider": "ipinfo-lite", "x-content-sha256": digest, "x-geoip-base-sha256": "a".repeat(64) });
+  expect(upload.rawBody).toEqual(content);
+  expect(data.writes.some(write => write.path.startsWith("/lifecycle/"))).toBe(false);
 });
 
 for (const width of [360, 390, 430, 768, 1024])

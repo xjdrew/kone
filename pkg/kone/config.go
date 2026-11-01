@@ -109,6 +109,7 @@ type KoneConfig struct {
 	General   GeneralConfig    `toml:"general"`
 	Core      CoreConfig       `toml:"core"`
 	DNS       DNSConfig        `toml:"dns"`
+	GeoIP     GeoIPConfig      `toml:"geoip"`
 	Outbounds []OutboundConfig `toml:"outbounds"`
 	Rule      []RuleConfig     `toml:"rules"`
 }
@@ -117,6 +118,7 @@ func defaultConfig() *KoneConfig {
 	return &KoneConfig{
 		General: GeneralConfig{LogLevel: "info", LogFormat: "text"},
 		Core:    CoreConfig{Network: "10.192.0.1/16", Stack: "system"},
+		GeoIP:   GeoIPConfig{Provider: "builtin"},
 		DNS: DNSConfig{ListenPort: DnsDefaultPort, TTL: DnsDefaultTtl, PacketSize: DnsDefaultPacketSize,
 			ReadTimeout: DnsDefaultReadTimeout, WriteTimeout: DnsDefaultWriteTimeout, HistoryLimit: 512, HistoryRetention: 3600, CacheLimit: 1024},
 	}
@@ -226,6 +228,9 @@ func parseConfig(source any, environment bool) (*KoneConfig, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	if !environment && cfg.GeoIP.File != "" {
+		return nil, errors.New("managed mode uses the GeoIP dataset panel; local geoip.file paths are supported only in CLI file mode")
+	}
 	return cfg, nil
 }
 
@@ -327,6 +332,9 @@ func validatePort(value string) error {
 func (cfg *KoneConfig) Validate() error {
 	if cfg == nil {
 		return errors.New("config is nil")
+	}
+	if err := cfg.GeoIP.Validate(); err != nil {
+		return err
 	}
 	prefix, err := netip.ParsePrefix(cfg.Core.Network)
 	if err != nil || !prefix.Addr().Is4() || prefix.Bits() < 8 || prefix.Bits() > 30 {

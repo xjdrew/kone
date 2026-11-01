@@ -18,6 +18,8 @@ func TestRun(t *testing.T) {
 	}
 	filename := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(filename, []byte("[dns]\nservers=['1.1.1.1']\n"), 0600))
+	missingGeoIP := filepath.Join(t.TempDir(), "geoip.toml")
+	require.NoError(t, os.WriteFile(missingGeoIP, []byte("[geoip]\nprovider='ipinfo-lite'\nfile='missing.mmdb'\nsha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n"), 0600))
 	for _, tc := range []struct {
 		name     string
 		args     []string
@@ -28,6 +30,7 @@ func TestRun(t *testing.T) {
 		{"help", []string{"-help"}, 0, "", "TOML"},
 		{"unknown", []string{"-unknown"}, 2, "", "flag provided but not defined"},
 		{"check", []string{"-check", "-config", filename}, 0, "Configuration valid", ""},
+		{"check missing GeoIP", []string{"-check", "-config", missingGeoIP}, 2, "", "GeoIP configuration error"},
 		{"debug", []string{"-debug", "-check", filename}, 0, "Configuration valid", ""},
 		{"ambiguous", []string{"-config", filename, filename}, 2, "", "either -config"},
 		{"extra arguments", []string{"one", "two"}, 2, "", "at most one"},

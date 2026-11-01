@@ -5,7 +5,7 @@ Go 版本统一为 1.27.3。原 INI 文件不再加载，默认配置文件名�
 
 ## INI 到 TOML
 
-配置由 `[general]`、`[core]`、可选的 `[dns]`、`[[outbounds]]` 与 `[[rules]]` 组成。
+配置由 `[general]`、`[core]`、可选的 `[dns]` / `[geoip]`、`[[outbounds]]` 与 `[[rules]]` 组成。
 旧 `[proxies]` 字典改为代理出站数组，只使用自定义 `name` 和 `url` 声明代理，不再配置出站 `type`；代理协议由 URL 的 scheme 决定。规则使用 `outbound` 引用代理名，或直接引用内置的 `direct`、`reject`。
 `direct` 和 `reject` 始终可用，不需要配置条目；只使用它们时，整个 `[[outbounds]]` 数组都可以省略。已有 `type = "direct" / "reject"` 条目应删除，并将规则中的别名替换为 `direct` / `reject`。
 旧 `core.dns-*` 参数移动到 `[dns]` 并去掉 `dns-` 前缀；`dns-server` 改为 `dns.servers`。
@@ -78,6 +78,10 @@ servers = ["192.168.1.53"]
 
 查询历史独立记录客户端 UDP/TCP 请求和内部控制解析，包含名称/类型、状态/错误、实际上游和传输、缓存、真实/虚拟地址、延迟与版本；DNS 查询不代表建立了业务连接。默认最多 512 条、保留一小时，`history-limit = 0` 关闭记录；上限 10000 条和 86400 秒。可在管理页清空历史。响应缓存默认最多 1024 条，报文编码大小累计最多 8 MiB，遵守正响应及 SOA 否定响应 TTL，最长一小时；`cache-limit = 0` 关闭。带 EDNS 扩展等特殊语义的请求绕过该缓存。清空响应缓存不会回收活动连接使用的 Fake-IP 映射。
 
+## 可选的 GeoIP 配置
+
+省略 `[geoip]` 使用内置离线 DB-IP IPv4 数据。CLI 文件模式可设置 `provider` 为 `kone-json`、`dbip-lite`、`ipinfo-lite` 或 `maxmind-geolite2`，并提供本地 `file` 与整个文件的小写 `sha256`。MMDB 可支持 IPv4 / IPv6 国家规则；文件路径相对于 TOML，启动及 `-check` 都会验证数据。变更需要重启，校验失败不回退或创建网卡。管理模式使用“GeoIP 数据”面板上传，不接收主机文件路径。来源选择、获取方式和完整示例见 [GeoIP 数据源](geoip.md)。
+
 ## 校验规则
 
 - 未知配置键、错误类型、重复 TOML 键都会报错；解析错误包含位置且不会回显配置中的密码。
@@ -106,7 +110,7 @@ servers = ["192.168.1.53"]
 热更新会重建代理端点的域名绕过，重新计算已有 DNS 映射的域名、CNAME、IP 策略，并保留虚拟 IP。
 新的 TCP 连接与 UDP 会话采用新策略；已建立的连接和 UDP 会话保留创建时的快照，包括 UDP 回退设置。
 代理出站定义与规则作为同一版本快照原子更新；新的连接使用新定义，已建立连接保留原出站。域名/最终规则可在代理名、`direct` 和 `reject` 之间热更新；若更新改变 CIDR 捕获，则要求重启。内置出站始终存在，不会作为配置条目写入快照的配置或管理页 TOML。
-端口、TUN、DNS、日志及 CIDR 路由变化要求停止后重新启动接管，失败更新保留原配置和版本。
+端口、TUN、DNS、GeoIP 文件配置、日志及 CIDR 路由变化要求停止后重新启动接管，失败更新保留原配置和版本。
 
 ## TUN backend and stack
 

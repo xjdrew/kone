@@ -658,6 +658,13 @@ async function loadConfig(force = false) {
   }
 }
 function updateShell() {
+  const attribution = document.querySelector("#geoip-attribution");
+  if (attribution) {
+    const active = (running() && model.geoip?.running?.current) || model.geoip?.saved;
+    const source = list(model.geoip?.providers).find(item => item.id === active?.provider);
+    attribution.textContent = source?.attribution || (active?.builtin || !active ? "IP Geolocation by DB-IP" : "GeoIP 数据与许可");
+    attribution.href = source?.attribution_url || (active?.builtin || !active ? "https://db-ip.com" : "#settings");
+  }
   const status = document.querySelector("#runtime-status");
   const state = runtime();
   status.className = `status ${model.online && running() ? "running" : ["starting", "stopping", "preflight", "pausing"].includes(state) ? "working" : !model.online || ["error", "recovery_failed", "invalid_config"].includes(state) ? "error" : ""}`;
@@ -2781,6 +2788,10 @@ function renderDiagnosticsEditor() {
           const result = await endpoints.diagnose({
             target,
             tls: fields.get("tls") === "on",
+            ...(fields.get("protocol") === "udp" ? {
+              protocol: "udp", udp_mode: "dns", dns_name: fields.get("dns_name"),
+              dns_type: fields.get("dns_type"), address_family: fields.get("address_family"),
+            } : {}),
             outbounds: ["direct", fields.get("outbound")].filter(
               (value, index, values) =>
                 value && values.indexOf(value) === index,
@@ -2814,7 +2825,7 @@ function renderDiagnosticsEditor() {
         }),
         h(
           "small",
-          {},
+          { id: "diagnose-target-hint" },
           "仅对已观察目标或你明确输入的目标发起有限探测，不扫描网段。",
         ),
       ),
@@ -2859,14 +2870,39 @@ function renderDiagnosticsEditor() {
         h("label", { for: "diagnose-protocol" }, "协议"),
         h(
           "select",
-          { id: "diagnose-protocol", name: "protocol", disabled: !canManage() },
+          { id: "diagnose-protocol", name: "protocol", disabled: !canManage(), onchange: event => {
+            const udp = event.target.value === "udp", form = event.target.form;
+            form.querySelectorAll("[data-udp-option]").forEach(node => { node.hidden = !udp; });
+            form.querySelector("#diagnose-tls").disabled = udp || !canManage();
+            if (udp) form.querySelector("#diagnose-tls").checked = false;
+            if (udp) form.querySelector("#diagnose-target").value = "";
+            form.querySelector("#diagnose-target").placeholder = udp ? "192.168.1.1" : "example.com";
+            form.querySelector("#diagnose-port").value = udp ? 53 : 443;
+            form.querySelector('label[for="diagnose-target"]').textContent = udp ? "DNS 服务器域名或 IP" : "目标域名或 IP";
+            form.querySelector("#diagnose-target-hint").textContent = udp
+              ? "填写明确提供 DNS 服务的服务器。收到匹配响应才说明该 DNS/UDP 路径可达，不代表 QUIC 或其他 UDP 业务成功；不会回退 TCP 或直连。"
+              : "仅对已观察目标或你明确输入的目标发起有限探测，不扫描网段。";
+          } },
           h("option", { value: "tcp" }, "TCP"),
           h(
             "option",
-            { value: "udp", disabled: true },
-            "UDP · 尚无独立探测能力",
+            { value: "udp" },
+            "UDP · 独立 DNS 响应验证",
           ),
         ),
+      ),
+      h("div", { class: "field wide", hidden: true, "data-udp-option": "" },
+        h("label", { for: "diagnose-dns-name" }, "探测 DNS 查询名称"),
+        h("input", { id: "diagnose-dns-name", name: "dns_name", value: "example.com", maxlength: 253, disabled: !canManage() }),
+      ),
+      h("div", { class: "field", hidden: true, "data-udp-option": "" },
+        h("label", { for: "diagnose-dns-type" }, "DNS 查询类型"),
+        h("select", { id: "diagnose-dns-type", name: "dns_type", disabled: !canManage() }, h("option", { value: "A" }, "A"), h("option", { value: "AAAA" }, "AAAA")),
+      ),
+      h("div", { class: "field", hidden: true, "data-udp-option": "" },
+        h("label", { for: "diagnose-address-family" }, "DNS 服务器地址族"),
+        h("select", { id: "diagnose-address-family", name: "address_family", disabled: !canManage() }, h("option", { value: "auto" }, "自动"), h("option", { value: "ipv4" }, "IPv4"), h("option", { value: "ipv6" }, "IPv6")),
+        h("small", {}, "服务器的传输地址族与查询 A/AAAA 是不同设置。"),
       ),
       h(
         "div",
@@ -2894,7 +2930,7 @@ function renderDiagnosticsEditor() {
     readonlyNote(),
     renderLogs(),
     note(
-      "TCP 连接成功只说明该传输阶段可达，不代表应用业务成功。直连与代理都失败时，需要分别查看解析、认证和连接阶段。",
+      "TCP 连接或 UDP/DNS 响应只说明所列协议、端点和阶段可达，不代表应用业务成功。UDP 必须明确指定 DNS 服务器，不会向任意业务端口发送试探载荷。",
     ),
     card(
       "对比直连与代理",
@@ -3011,7 +3047,7 @@ function showTask(task) {
             results.map((result) =>
               row(
                 result.outbound || "未知出站",
-                `${{ target_tls: "目标 TLS", proxy_transport: "代理外层传输", proxy_auth: "代理认证", proxy_handshake: "代理握手", connect: "目标连接", dns: "DNS 解析" }[result.stage] || result.stage || "未知阶段"} · ${result.message || ""}${result.peer_kind === "proxy_endpoint" ? " · 地址证据仅为代理端点，真实业务地址未知" : ""}${result.dns_path ? ` · DNS ${result.dns_path}` : ""}`,
+                `${{ target_tls: "目标 TLS", proxy_transport: "代理外层传输", proxy_auth: "代理认证", proxy_handshake: "代理握手", proxy_association: "UDP 代理关联", capability: "出站协议能力", udp_write: "UDP 发送", udp_response: "UDP/DNS 响应验证", connect: "目标连接", dns: "DNS 解析" }[result.stage] || result.stage || "未知阶段"} · ${result.message || ""}${result.peer_kind === "proxy_endpoint" ? " · 地址证据仅为代理端点，真实业务地址未知" : ""}${result.dns_path ? ` · DNS ${result.dns_path}` : ""}${result.protocol === "udp" && result.dns_rcode ? ` · ${result.dns_rcode}${result.dns_truncated ? " · 截断响应，未重试 TCP" : ""}` : ""}`,
                 h(
                   "div",
                   {},
@@ -3040,7 +3076,7 @@ function showTask(task) {
       ),
     ),
     [
-      target &&
+      target && (task.result?.protocol || results[0]?.protocol || "tcp") !== "udp" &&
         button(
           "建立精确规则草稿",
           () => {
@@ -3325,10 +3361,16 @@ function renderSettingsEditor() {
 }
 function renderGeoIP() {
   const saved = model.geoip?.saved || {};
+  const providerID = model.geoProvider || "kone-json";
+  const providers = list(model.geoip?.providers);
+  const provider = providers.find(item => item.id === providerID);
+  const activeProvider = providers.find(item => item.id === saved.provider);
+  const isMMDB = providerID !== "kone-json";
+  const maxSize = (isMMDB ? 64 : 32) * 1024 * 1024;
   const input = h("input", {
     id: "geoip-file",
     type: "file",
-    accept: ".json,application/json",
+    accept: isMMDB ? ".mmdb,application/octet-stream" : ".json,application/json",
     disabled: !canManage() || running(),
     onchange: (event) => {
       model.geoFile = event.target.files[0];
@@ -3338,6 +3380,7 @@ function renderGeoIP() {
   });
   const metadata = detailPairs([
     ["已保存版本", saved.version],
+    ["格式 / 地址范围", `${saved.data_format || "kone-json"} · ${saved.ipv4 === false ? "" : "IPv4"}${saved.ipv6 ? " / IPv6" : ""}`],
     ["来源", saved.source],
     ["许可", saved.license],
     ["许可地址", saved.license_url],
@@ -3345,7 +3388,7 @@ function renderGeoIP() {
       "发布 / 加载时间",
       `${time(saved.published_at)} / ${time(saved.loaded_at)}`,
     ],
-    ["IPv4 范围数量", saved.ranges],
+    ["地址范围数量", saved.ranges],
     ["SHA-256", saved.sha256],
     [
       "来源声明",
@@ -3355,9 +3398,10 @@ function renderGeoIP() {
   ]);
   return card(
     "GeoIP 数据",
-    "从可信来源手动选择 JSON 数据文件；只解释地址归属，不代表目标可达。",
+    "保留离线内置库，也可导入 DB-IP、IPinfo Lite 或 MaxMind 的国家 MMDB；只解释地址归属，不代表目标可达。",
     model.geoError && note(model.geoError, "error"),
     metadata,
+    activeProvider && h("p", { class: "muted" }, h("a", { href: activeProvider.attribution_url, target: "_blank", rel: "noopener noreferrer" }, activeProvider.attribution)),
     h(
       "p",
       { class: "muted" },
@@ -3371,7 +3415,7 @@ function renderGeoIP() {
         },
         "IP Geolocation by DB-IP",
       ),
-      "。IPv6 国家归属尚不支持。",
+      "。MMDB 的 IPv4 / IPv6 支持取决于导入文件的实际覆盖。",
     ),
     running() &&
       note(
@@ -3383,10 +3427,25 @@ function renderGeoIP() {
     h(
       "div",
       { class: "form-section form-grid" },
+      field("导入数据源 / 格式", providerID, value => {
+        model.geoProvider = value;
+        model.geoFile = null;
+        model.geoExpected = "";
+        renderEditor();
+      }, { id: "geoip-provider", wide: true, disabled: !canManage() || running(), options: [
+        { value: "kone-json", label: "自定义 KONE JSON（IPv4）" },
+        ...providers.map(item => ({ value: item.id, label: `${item.name} · MMDB` })),
+      ] }),
+      provider && h("div", { class: "field wide" },
+        h("p", { class: "muted" }, `更新：${({daily: "每天", monthly: "每月", "Tuesday and Friday": "每周二、五"})[provider.update_frequency] || provider.update_frequency}；${provider.account_required ? "需自行注册账号下载" : "无需账号"}。`),
+        h("a", { href: provider.source, target: "_blank", rel: "noopener noreferrer" }, "官方数据与下载"),
+        " · ", h("a", { href: provider.license_url, target: "_blank", rel: "noopener noreferrer" }, provider.license),
+        h("p", { class: "muted" }, provider.id === "maxmind-geolite2" ? "使用前请阅读并遵守 MaxMind 条款，包括新版本发布后 30 天内删除旧数据；KONE 不代办账号或接受许可。" : "请先阅读并遵守数据许可；从可信官方来源下载并解压后再导入。"),
+      ),
       h(
         "div",
         { class: "field wide" },
-        h("label", { for: "geoip-file" }, "GeoIP JSON 文件（上限 32 MiB）"),
+        h("label", { for: "geoip-file" }, isMMDB ? "GeoIP MMDB 文件（解压后上限 64 MiB）" : "GeoIP JSON 文件（上限 32 MiB）"),
         input,
         model.geoFile &&
           h(
@@ -3414,8 +3473,8 @@ function renderGeoIP() {
       button(
         "校验并准备更新",
         async () => {
-          if (!model.geoFile || model.geoFile.size > 32 * 1024 * 1024) {
-            notice("请选择不超过 32 MiB 的 GeoIP JSON 文件。", "error");
+          if (!model.geoFile || model.geoFile.size > maxSize) {
+            notice(`请选择不超过 ${isMMDB ? 64 : 32} MiB 的 GeoIP ${isMMDB ? "MMDB" : "JSON"} 文件。`, "error");
             return;
           }
           const expected = (model.geoExpected || "").trim().toLowerCase();
@@ -3440,6 +3499,7 @@ function renderGeoIP() {
             "校验通过。只保存该数据，不自动启用接管；新会话使用新数据，旧连接历史保持原解释。",
             detailPairs([
               ["文件", model.geoFile.name],
+              ["数据格式", isMMDB ? `${provider?.name || providerID} MMDB` : "KONE JSON"],
               ["SHA-256", digest],
               ["原版本", saved.version],
             ]),
@@ -3456,6 +3516,8 @@ function renderGeoIP() {
                         "If-Match": String(baseVersion),
                         "X-Content-SHA256": digest,
                         "X-GeoIP-Base-SHA256": baseSHA,
+                        "X-GeoIP-Format": isMMDB ? "mmdb" : "kone-json",
+                        "X-GeoIP-Provider": isMMDB ? providerID : "",
                       },
                     });
                     model.geoFile = null;
@@ -4229,6 +4291,16 @@ async function refreshAll() {
   if (!await refreshState()) return;
   await loadConfig(false);
   if (!currentAuth(epoch)) return;
+  if (!model.geoip) {
+    try {
+      const status = await request("/geoip");
+      if (!currentAuth(epoch)) return;
+      model.geoip = status;
+    } catch {
+      if (!currentAuth(epoch)) return;
+      // A damaged dataset must not prevent access to configuration/recovery.
+    }
+  }
   await refreshTraffic();
   if (!currentAuth(epoch)) return;
   await loadPageData();

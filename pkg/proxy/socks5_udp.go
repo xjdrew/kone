@@ -139,8 +139,21 @@ func (p *Proxy) DialUDPContextVia(ctx context.Context, addr string, dial func(co
 		return nil, errors.New("proxy does not support UDP")
 	}
 	if p.Url.Scheme == "ss" {
-		return p.dialShadowsocksUDP(ctx, addr, dial)
+		conn, err := p.dialShadowsocksUDP(ctx, addr, dial)
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) {
+			return conn, atStage(StageDNS, err)
+		}
+		return conn, atStage(StageTransport, err)
 	}
+	stage := StageConnect
+	defer func() {
+		var dnsErr *net.DNSError
+		if errors.As(result, &dnsErr) && stage == StageConnect {
+			stage = StageDNS
+		}
+		result = atStage(stage, result)
+	}()
 	target, err := parseSOCKSTarget(addr)
 	if err != nil {
 		return nil, err
@@ -184,6 +197,7 @@ func (p *Proxy) DialUDPContextVia(ctx context.Context, addr string, dial func(co
 	if err := control.SetDeadline(deadline); err != nil {
 		return nil, err
 	}
+	stage = StageHandshake
 	greeting := []byte{5, 1, 0}
 	if p.Url.User != nil {
 		greeting = []byte{5, 2, 0, 2}
@@ -201,6 +215,7 @@ func (p *Proxy) DialUDPContextVia(ctx context.Context, addr string, dial func(co
 	switch selected[1] {
 	case 0:
 	case 2:
+		stage = StageAuth
 		if p.Url.User == nil {
 			return nil, errors.New("SOCKS proxy requires credentials")
 		}
@@ -222,10 +237,12 @@ func (p *Proxy) DialUDPContextVia(ctx context.Context, addr string, dial func(co
 			return nil, errors.New("SOCKS authentication rejected")
 		}
 	default:
+		stage = StageAuth
 		return nil, errors.New("SOCKS authentication method unsupported or rejected")
 	}
 	// At association time the UDP socket/port is not yet known, so RFC 1928
 	// requires an all-zero address and port in the UDP ASSOCIATE request.
+	stage = "proxy_association"
 	if err := writeSOCKSMessage(control, []byte{5, 3, 0, 1, 0, 0, 0, 0, 0, 0}); err != nil {
 		return nil, err
 	}

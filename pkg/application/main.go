@@ -259,6 +259,10 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 		return 2
 	}
 	if *check {
+		if err := cfg.ValidateGeoIPFile(); err != nil {
+			fmt.Fprintf(stderr, "GeoIP configuration error: %s\n", err)
+			return 2
+		}
 		fmt.Fprintln(stdout, "Configuration valid")
 		return 0
 	}
