@@ -85,7 +85,7 @@ type Sockets interface {
 	ListenPacket(context.Context, string, string) (net.PacketConn, error)
 }
 
-// The engine and http.Server share listener ownership during shutdown. Keep
+// The engine and DNS server share listener ownership during shutdown. Keep
 // their Close calls idempotent even while Serve is still in Accept, and retain
 // the first real close error instead of hiding it as an expected shutdown.
 type ownedListener struct {

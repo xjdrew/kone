@@ -178,9 +178,7 @@ func windowsIPv6Config(t *testing.T, stack, suffix string) *kone.KoneConfig {
 		t.Setenv(key, "")
 	}
 	dnsPort := availableWindowsDNSFixturePort(t, true)
-	configuration, err := kone.ParseConfig([]byte(fmt.Sprintf(`[general]
-manager-addr=""
-[core]
+	configuration, err := kone.ParseConfig([]byte(fmt.Sprintf(`[core]
 tun="kone-v6-%d-%s"
 stack="%s"
 network="10.204.0.1/24"

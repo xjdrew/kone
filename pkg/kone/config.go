@@ -29,9 +29,8 @@ const (
 )
 
 type GeneralConfig struct {
-	ManagerAddr string `toml:"manager-addr"`
-	LogLevel    string `toml:"log-level"`
-	LogFormat   string `toml:"log-format"`
+	LogLevel  string `toml:"log-level"`
+	LogFormat string `toml:"log-format"`
 }
 
 type CoreConfig struct {
@@ -117,7 +116,7 @@ type KoneConfig struct {
 
 func defaultConfig() *KoneConfig {
 	return &KoneConfig{
-		General: GeneralConfig{ManagerAddr: "127.0.0.1:9200", LogLevel: "info", LogFormat: "text"},
+		General: GeneralConfig{LogLevel: "info", LogFormat: "text"},
 		Core:    CoreConfig{Network: "10.192.0.1/16", Stack: "system"},
 		DNS: DNSConfig{ListenPort: DnsDefaultPort, TTL: DnsDefaultTtl, PacketSize: DnsDefaultPacketSize,
 			ReadTimeout: DnsDefaultReadTimeout, WriteTimeout: DnsDefaultWriteTimeout, HistoryLimit: 512, HistoryRetention: 3600, CacheLimit: 1024},
@@ -153,6 +152,11 @@ func parseConfig(source any, environment bool) (*KoneConfig, error) {
 		// Parser excerpts can contain credentials. Report key/position only.
 		var strict *toml.StrictMissingError
 		if errors.As(err, &strict) {
+			for _, item := range strict.Errors {
+				if slices.Equal(item.Key(), []string{"general", "manager-addr"}) {
+					return nil, errors.New("general.manager-addr was removed; delete this option and use -manage for the password-protected Web console (file mode has no management listener)")
+				}
+			}
 			if len(strict.Errors) > 0 {
 				item := strict.Errors[0]
 				line, col := item.Position()
@@ -362,12 +366,6 @@ func (cfg *KoneConfig) Validate() error {
 	}
 	if cfg.Core.OutboundInterface != "" && cfg.Core.OutboundInterface == cfg.Core.Tun {
 		return errors.New("core.outbound-interface must differ from core.tun")
-	}
-	if cfg.General.ManagerAddr != "" {
-		host, port, err := net.SplitHostPort(cfg.General.ManagerAddr)
-		if err != nil || validatePort(port) != nil || (host != "localhost" && host != "" && net.ParseIP(host) == nil) {
-			return errors.New("general.manager-addr must be an IP address or localhost with a valid port")
-		}
 	}
 	if _, err := logLevel(cfg.General.LogLevel); err != nil {
 		return err

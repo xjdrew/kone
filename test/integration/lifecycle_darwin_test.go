@@ -104,7 +104,6 @@ func darwinSystemConfig(t *testing.T, stack string) *kone.KoneConfig {
 	}
 	require.NotEmpty(t, network, "no unoccupied reserved UTUN test prefix was found")
 	cfg := kone.DefaultConfig()
-	cfg.General.ManagerAddr = ""
 	cfg.Core.Network = network
 	cfg.Core.Stack = stack
 	cfg.Core.AutoRoute = false
@@ -211,9 +210,27 @@ func darwinFakeAddress(t *testing.T, cfg *kone.KoneConfig, name string) net.IP {
 	return answer.A
 }
 
-type occupiedDarwinDNS struct{ net.ListenConfig }
+type occupiedDarwinDNS struct {
+	net.ListenConfig
+	tcp bool
+}
+
+func (s *occupiedDarwinDNS) Listen(ctx context.Context, network, address string) (net.Listener, error) {
+	if !s.tcp {
+		return s.ListenConfig.Listen(ctx, network, address)
+	}
+	occupied, err := s.ListenConfig.Listen(ctx, network, address)
+	if err != nil {
+		return nil, fmt.Errorf("fault reservation: %w", err)
+	}
+	defer occupied.Close()
+	return s.ListenConfig.Listen(ctx, network, address)
+}
 
 func (s *occupiedDarwinDNS) ListenPacket(ctx context.Context, network, address string) (net.PacketConn, error) {
+	if s.tcp {
+		return s.ListenConfig.ListenPacket(ctx, network, address)
+	}
 	occupied, err := s.ListenConfig.ListenPacket(ctx, network, address)
 	if err != nil {
 		return nil, fmt.Errorf("fault reservation: %w", err)
@@ -303,20 +320,10 @@ func TestSystemDarwinUTUN(t *testing.T) {
 				require.NoError(t, one.Close())
 				darwinAssertOwnedGone(t, one)
 			})
-			for _, kind := range []string{"dns", "manager"} {
+			for _, kind := range []string{"dns", "dns-tcp"} {
 				t.Run("occupied-"+kind, func(t *testing.T) {
 					cfg := darwinSystemConfig(t, stack)
-					var options []kone.Option
-					var occupied net.Listener
-					if kind == "dns" {
-						options = []kone.Option{kone.WithSockets(&occupiedDarwinDNS{})}
-					} else {
-						var err error
-						occupied, err = net.Listen("tcp4", "127.0.0.1:0")
-						require.NoError(t, err)
-						defer occupied.Close()
-						cfg.General.ManagerAddr = occupied.Addr().String()
-					}
+					options := []kone.Option{kone.WithSockets(&occupiedDarwinDNS{tcp: kind == "dns-tcp"})}
 					one := darwinCreate(t, cfg, options...)
 					t.Cleanup(func() { one.Close() })
 					done := make(chan error, 1)
@@ -327,7 +334,7 @@ func TestSystemDarwinUTUN(t *testing.T) {
 					if kind == "dns" {
 						require.Contains(t, err.Error(), "DNS listener:")
 					} else {
-						require.Contains(t, err.Error(), "manager listener:")
+						require.Contains(t, err.Error(), "DNS TCP listener:")
 					}
 					require.NoError(t, one.Close())
 					darwinAssertOwnedGone(t, one)

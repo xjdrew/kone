@@ -26,7 +26,7 @@ func TestAppliedRuleCanBeUndoneWithoutLosingConcurrentEdits(t *testing.T) {
 	require.ErrorIs(t, err, ErrConflict)
 	_, err = c.Undo(c.doc.Version)
 	require.NoError(t, err)
-	require.Empty(t, c.doc.Config.Rule)
+	require.Equal(t, kone.BuiltinDirect, c.doc.Config.Rule[0].Outbound)
 	require.NoError(t, c.Apply(t.Context()))
 	require.NoError(t, c.Pause(t.Context()))
 	require.FileExists(t, c.confirmedPath()+".previous")

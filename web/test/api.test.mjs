@@ -142,6 +142,28 @@ test("write version conflicts remain explicit and never automatically retry", as
   assert.equal(count, 1);
 });
 
+test("first-time bootstrap keeps only setup authorization and never reads management data", async () => {
+  globalThis.location = { hash: "#token=initial-setup-only", pathname: "/", search: "" };
+  globalThis.history = { replaceState: () => {} };
+  const calls = [];
+  globalThis.fetch = async (path, options) => {
+    calls.push({ path, ...options });
+    assert.equal(path, "/api/v1/session");
+    return new Response(JSON.stringify({ role: "setup", setup_required: true, csrf_token: "setup-csrf" }), { status: 200 });
+  };
+  const result = await bootstrap();
+  assert.equal(result.setup_required, true);
+  assert.equal(result.authenticated, false);
+  assert.equal(result.setup_authorized, true);
+  assert.equal(calls.length, 1);
+  globalThis.fetch = async (_path, options) => {
+    assert.equal(options.headers.Authorization, undefined);
+    assert.equal(options.headers["X-CSRF-Token"], "setup-csrf");
+    return new Response(JSON.stringify({ role: "admin" }), { status: 200 });
+  };
+  await request("/auth/password", "POST", { password: "fixture-password", confirm_password: "fixture-password" });
+});
+
 test("diagnostic bootstrap strips credentials before exchange and only navigates", async () => {
   globalThis.location = { hash: "#token=diagnostic-one-use&page=diagnostics", pathname: "/", search: "" };
   const calls = [];

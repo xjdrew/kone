@@ -2,8 +2,6 @@
 # 未启用的配置项展示默认值；通常只需配置出站和规则。
 # 配置检查：kone -check -config config.toml，不创建网卡或修改路由。
 [general]
-# 管理页监听地址；空字符串关闭。没有认证，建议保持本机回环地址。
-# manager-addr = "127.0.0.1:9200"
 # 日志级别：debug、info、warn、error；命令行 -debug 优先。
 # log-level = "info"
 # 日志格式：text 或 json，均输出到 stderr。

@@ -67,6 +67,8 @@ func TestManagedLoggingIsConfiguredBeforeCaptureAndUsesSavedSettings(t *testing.
 	r := currentRequest(c)
 	r.Config["general"].(map[string]any)["log-level"] = "debug"
 	r.Inbound.Enabled = true
+	confirmed := true
+	r.DirectOnlyConfirmed = &confirmed
 	_, err := c.Save(r)
 	require.NoError(t, err)
 	require.NoError(t, c.Start(t.Context()))

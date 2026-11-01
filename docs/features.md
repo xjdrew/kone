@@ -37,8 +37,8 @@
 | UDP | 内置 `direct` 直连、`reject` 拒绝；现有代理仅支持 TCP，UDP 默认拒绝，仅允许显式 `udp-fallback = "direct"` 或 `"reject"`；能力检查先于真实目标解析/拨号，已有会话保留原快照 | 没有 SOCKS5 UDP ASSOCIATE；不能说「HTTP 不支持 UDP，所以除 53 外 UDP 不受影响」；见 [outbounds.go](../pkg/kone/outbounds.go)、[flow.go](../pkg/kone/flow.go) |
 | DNS | A 查询参与虚拟地址决策，其他类型转发；上下游目前均用 UDP；上游并发查询 | 缺 DNS TCP/截断回退、全查询历史和分流；见 [dns.go](../pkg/kone/dns.go) |
 | IPv6 / 包处理 | 可配置 IPv6 上游 DNS 地址，但不接管 IPv6 流量；system/mixed 栈接管透明会话与报文处理，Fake-IP 地址池及 CIDR 使用 `net/netip` | 包/分片行为按选定栈验证，不继承旧 filter 的 ICMP/分片结论；IPv6 DNS 上游不等于 IPv6 代理，ping 虚拟地址不证明目标服务可达；见 [架构](architecture.md)、[stack.go](../pkg/kone/stack.go)、[dns_ip_pool.go](../pkg/kone/dns_ip_pool.go) |
-| 管理与统计 | HTML 汇总/列表/详情、DNS 映射、脱敏配置、POST reload | TCP 转发结束后才记账，UDP 未接入同样统计；不是实时带宽、桑基图或全机观察；见 [manager.go](../pkg/kone/manager.go)、[flow.go](../pkg/kone/flow.go) |
-| 配置 | 严格 TOML；`[[outbounds]]` 以 `name`/`url` 声明代理及可选 UDP 回退，内置 `direct`/`reject` 无须配置；可选 `[dns]` 默认发现系统上游；规则/出站原子热更新 | 已移除旧 relay/NAT 端口字段；旧连接保留原出站；核心/DNS、管理地址或 CIDR 捕获变化需重启；桌面无文件配置仍是需求；见 [配置说明](configuration.md)、[示例](../configs/kone.example.toml) |
+| 管理与统计 | 本表编写时的 HTML 管理与结束时记账已经移除 | 现行实现使用密码保护的管理台与统一 TCP/UDP 观察器；参见 [验收索引](acceptance.md) |
+| 配置 | 严格 TOML；`[[outbounds]]` 以 `name`/`url` 声明代理及可选 UDP 回退，内置 `direct`/`reject` 无须配置；可选 `[dns]` 默认发现系统上游；规则/出站原子热更新 | 已移除旧 relay/NAT 端口字段；旧连接保留原出站；核心/DNS 或 CIDR 捕获变化需重启；桌面无文件配置仍是需求；见 [配置说明](configuration.md)、[示例](../configs/kone.example.toml) |
 | 恢复 | 启动失败回滚、正常退出恢复自有变更、关闭会话 | 强杀/断电恢复、持久恢复记录、换网恢复待实现；见 [运行可靠性](runtime.md) |
 | 平台与交付 | Windows 使用内嵌 Wintun，不需单独安装 TAP；Linux TUN、macOS utun；普通构建 system，`mixed` 需 `with_gvisor`；CI 覆盖三平台 race、system/mixed、Windows 真实 Wintun、Linux 网关及七个二进制目标（含 ARMv7） | 缺桌面、普通用户安装体验与自动 Release；macOS 特权行为和真实部署性能仍需验收；见 [Windows 说明](windows/README.md)、[运行可靠性](runtime.md)、[CI](../.github/workflows/go.yml) |
 | 性能、数据与许可 | GeoIP 仍为内嵌旧数据，已有 GeoIP benchmark 未按测试框架迭代计量；KONE 使用 GPL-3.0-or-later，sing-tun 为固定的外部 fork 模块，保留各组件许可及 Wintun 二进制许可 | 需建立新数据面的有效性能基线和 GeoIP 更新机制；发行继续携带对应源码与许可说明；见 [GeoIP 测试](../pkg/geoip/geoip_test.go)、[依赖与修补](sing-tun.md)、[LICENSE](../LICENSE) |

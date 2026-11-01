@@ -25,6 +25,7 @@ func TestRuntimeLogsAuthorizationLatestPageAndIncrementalQueries(t *testing.T) {
 		store.Append(logstore.Record{Level: "INFO", Source: "management", Message: fmt.Sprint(i)})
 	}
 	require.Equal(t, 401, request(t, c, "", "GET", "/api/v1/logs", nil).Code)
+	owner(t, c)
 	pair, err := c.pair("read")
 	require.NoError(t, err)
 	token, session, err := c.claim("", pair.Code, true)
@@ -65,7 +66,11 @@ func TestRuntimeLogQueryBoundsAndEarlyCaptureFailureAreExplicit(t *testing.T) {
 		response := request(t, c, token, "GET", "/api/v1/logs?"+query, nil)
 		require.Equal(t, 400, response.Code, query)
 	}
-	err := c.Start(context.Background())
+	configuration := currentRequest(c)
+	configuration.Inbound.Enabled = false
+	_, err := c.Save(configuration)
+	require.NoError(t, err)
+	err = c.Start(context.Background())
 	require.ErrorContains(t, err, "enable the TUN inbound")
 	require.Contains(t, c.State().LastError, "enable the TUN inbound")
 	require.Equal(t, "ready", c.State().ControlState)

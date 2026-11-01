@@ -20,9 +20,9 @@ Installation does not enable capture, create services, configure autostart or ch
 
 ## Desktop management
 
-Double-click `kone.exe` on Windows or open `Kone.app` on macOS. These desktop entrypoints show a tray/menu icon without a console or automatic browser window; choose **Open management**. On Linux, run `kone` without arguments. Capture starts **paused**. Enable and save the TUN inbound, configure outbounds/rules, then run preflight and explicitly start capture. See the [three-step desktop guide](desktop.md). A failed proxy or preflight keeps management available.
+Double-click `kone.exe` on Windows or open `Kone.app` on macOS. These desktop entrypoints show a tray/menu icon without a console or automatic browser window; choose **Open management**. On Linux, run `kone` without arguments. Set a management password on first use. Capture starts **paused**, with a prepared TUN inbound, direct policy and system DNS discovery. Configure the needed outbounds/rules, review readiness checks and explicitly start capture; direct-only operation requires confirmation. See the [desktop guide](desktop.md). A failed proxy or preflight keeps management available.
 
-Settings persist in an independent profile in your user configuration directory. Managed mode does not read the working directory's `config.toml` or import terminal proxy settings. With the console entrypoint (`kone-cli.exe` on Windows, `kone-cli` on macOS, `kone` on Linux), `-manage` explicitly selects managed mode, `-data-dir` selects its profile and `-listen` selects the loopback listener. Console `-no-browser` prints a one-time local authorization URL; keep it private. After authorization, the browser uses an HttpOnly session cookie and removes the bootstrap token from its address. Desktop entrypoints discard bootstrap output and use the tray's explicit browser action instead.
+Settings persist in an independent profile in your user configuration directory. Managed mode does not read the working directory's `config.toml` or import terminal proxy settings. With the console entrypoint (`kone-cli.exe` on Windows, `kone-cli` on macOS, `kone` on Linux), `-manage` explicitly selects managed mode, `-data-dir` selects its profile and `-listen` selects the loopback listener. Console `-no-browser` prints the local entry URL. On first use it includes a one-time password-setup proof: keep it private. Once a password is set, local links require password authentication; the browser uses an HttpOnly cookie. Desktop entrypoints discard bootstrap output and use the tray's explicit browser action instead.
 
 Windows keeps management at ordinary user privileges and requests a separate UAC network helper when capture needs elevation. Wintun is included; no separate TAP installation is required. Use an explicit `kone.exe` path when working beside an older extensionless binary. See [Windows setup and application trust](windows/README.md).
 
@@ -61,13 +61,9 @@ On Windows use `kone-cli.exe -config config.toml`; on macOS use `kone-cli -confi
 
 `-check` validates without creating a TUN device or changing routes. `-version` prints the version and exits. `-debug` overrides the configured log level. Logs use structured text or JSON on stderr; CLI results go to stdout.
 
-File mode has a legacy manager that defaults to `http://127.0.0.1:9200/`; set `general.manager-addr = ""` to disable it. This listener has no authentication and is separate from the authenticated managed console. Keep it on loopback or behind operator-provided protection. Its rule reload endpoint is:
+File mode runs capture without an HTTP management listener. Remove the retired `general.manager-addr` option from file-mode configurations; old HTML pages and `/reload/` are no longer available. Restart file mode after editing its configuration, or use the password-protected managed console (`kone-cli -manage`) for configuration and supported hot updates. The console maintains its own profile rather than editing a running file-mode process.
 
-```sh
-curl -X POST http://127.0.0.1:9200/reload/
-```
-
-File-mode reload atomically publishes domain/GeoIP/default rules and outbound definitions while preserving virtual addresses and established flows. Core/DNS settings, logging, manager address and changes to captured CIDR routes require a restart; an unsupported update leaves the active configuration unchanged.
+Existing managed profiles automatically retire this obsolete option while preserving their rules, credentials and confirmation settings. Before a subsequent explicit save, the original profile is retained in a private `*.legacy-manager` backup beside its settings file. This backup contains credentials; keep it private with the profile.
 
 ## Gateway and protocol scope
 

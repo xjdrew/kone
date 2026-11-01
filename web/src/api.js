@@ -124,7 +124,8 @@ export async function bootstrap() {
     );
     bearer = token;
     try {
-      await request("/session", "POST", { token });
+      const session = await request("/session", "POST", { token });
+      if (session.setup_required) return { ...session, setup_authorized: true, authenticated: false };
     } finally {
       // One-use bootstrap credentials must never shadow a newly paired cookie,
       // including when their initial exchange expired or was rejected.
@@ -136,6 +137,13 @@ export async function bootstrap() {
 
 export const endpoints = {
   state: () => request("/state"),
+  readiness: () => request("/readiness"),
+  auth: () => request("/auth"),
+  passwordLogin: (password) => request("/session", "POST", { password }),
+  setPassword: (body) => request("/auth/password", "POST", body),
+  logout: () => request("/session/logout", "POST", {}),
+  outboundHealth: () => request("/outbounds/health"),
+  outboundTest: (body) => request("/outbounds/test", "POST", body),
   config: () => request("/config"),
   validate: (body) => request("/config/validate", "POST", body),
   save: (body) => request("/config", "PUT", body),

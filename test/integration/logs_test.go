@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,14 +32,29 @@ func TestRuntimeStructuredLogsReachAuthenticatedManagementWithoutCapture(t *test
 	defer c.Close()
 	server := httptest.NewServer(c.Handler())
 	defer server.Close()
-	client := &http.Client{Timeout: time.Second, Transport: &http.Transport{Proxy: nil}}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
 	body, err := json.Marshal(map[string]string{"token": c.BootstrapToken()})
 	require.NoError(t, err)
 	auth, err := client.Post(server.URL+"/api/v1/session", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
 	require.Equal(t, 200, auth.StatusCode)
 	cookie := auth.Cookies()[0]
+	var setup struct {
+		CSRF string `json:"csrf_token"`
+	}
+	require.NoError(t, json.NewDecoder(auth.Body).Decode(&setup))
 	auth.Body.Close()
+	passwordBody := `{"password":"integration-logs-password","confirm_password":"integration-logs-password"}`
+	passwordRequest, err := http.NewRequest("POST", server.URL+"/api/v1/auth/password", strings.NewReader(passwordBody))
+	require.NoError(t, err)
+	passwordRequest.AddCookie(cookie)
+	passwordRequest.Header.Set("Content-Type", "application/json")
+	passwordRequest.Header.Set("X-CSRF-Token", setup.CSRF)
+	configured, err := client.Do(passwordRequest)
+	require.NoError(t, err)
+	require.Equal(t, 200, configured.StatusCode)
+	cookie = configured.Cookies()[0]
+	configured.Body.Close()
 	for range 4 {
 		logger.Info("capture stays paused")
 	}

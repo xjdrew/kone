@@ -14,7 +14,7 @@ func TestManagementDNSDefaultKeepsCapturePausedAndPreservesSavedOptOut(t *testin
 	c := testController(t, options)
 	require.Equal(t, kone.SupportsSystemDNS(), c.doc.Config.DNS.System)
 	require.Equal(t, "paused", c.State().State)
-	require.False(t, c.doc.Inbound.Enabled)
+	require.True(t, c.doc.Inbound.Enabled)
 	require.Zero(t, starts.Load(), "initializing management never starts system DNS or capture")
 	request := currentRequest(c)
 	config := *c.doc.Config

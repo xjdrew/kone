@@ -6,7 +6,8 @@ import (
 	"net/url"
 )
 
-// Native shortcuts carry one-use credentials in the fragment only. Keep their
+// Initial setup shortcuts carry one-use credentials in the fragment only;
+// configured profiles use credential-free login links. Keep their
 // destination vocabulary separate from actions: opening diagnostics never runs
 // a probe and cannot redirect the browser to an arbitrary page or host.
 func localManagementPageURL(raw, page string) (string, error) {
@@ -20,6 +21,10 @@ func localManagementPageURL(raw, page string) (string, error) {
 	address, err := netip.ParseAddr(parsed.Hostname())
 	if err != nil || !address.IsLoopback() {
 		return "", errors.New("local management URL must use loopback")
+	}
+	if parsed.Fragment == "" {
+		parsed.Fragment = page
+		return parsed.String(), nil
 	}
 	fragment, err := url.ParseQuery(parsed.EscapedFragment())
 	token := fragment.Get("token")

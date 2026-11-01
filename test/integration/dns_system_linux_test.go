@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -113,38 +112,30 @@ func TestSystemDNSOwnedLinkGuidanceAndRestore(t *testing.T) {
 	}
 }
 
-type failedManagerListener struct{ net.Listener }
-
-func (l failedManagerListener) Accept() (net.Conn, error) {
-	return nil, errors.New("injected manager admission failure")
-}
-
-type failedManagerSockets struct {
-	net.ListenConfig
-	manager string
-}
-
-func (s failedManagerSockets) Listen(ctx context.Context, network, address string) (net.Listener, error) {
-	listener, err := s.ListenConfig.Listen(ctx, network, address)
-	if err == nil && address == s.manager {
-		return failedManagerListener{listener}, nil
-	}
-	return listener, err
-}
-
 func TestSystemDNSOwnedLinkRollsBackLateStartupFailure(t *testing.T) {
 	upstream, before := privateResolvedFixture(t)
 	cfg := systemConfig(t)
 	cfg.DNS.System = true
 	cfg.DNS.Servers = []string{upstream}
-	one, err := kone.FromConfig(cfg, kone.WithSockets(&failedManagerSockets{manager: cfg.General.ManagerAddr}))
+	failure := newFailedDNSAdmissionSockets()
+	one, err := kone.FromConfig(cfg, kone.WithSockets(failure))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	err = one.Run(ctx)
-	if err == nil || !strings.Contains(err.Error(), "manager") {
+	done := make(chan error, 1)
+	go func() { done <- one.Run(ctx) }()
+	select {
+	case <-one.Ready():
+	case err := <-done:
+		t.Fatalf("DNS guidance did not become ready: %v", err)
+	case <-ctx.Done():
+		t.Fatal("DNS guidance startup timed out")
+	}
+	failure.Trigger()
+	err = systemWait(t, done)
+	if err == nil || !strings.Contains(err.Error(), "injected late DNS TCP admission failure") {
 		t.Fatalf("expected injected late failure: %v", err)
 	}
 	if err := one.Close(); err != nil {

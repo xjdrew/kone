@@ -68,6 +68,8 @@ func enable(t *testing.T, c *Controller) {
 	t.Helper()
 	r := currentRequest(c)
 	r.Inbound.Enabled = true
+	confirmed := true
+	r.DirectOnlyConfirmed = &confirmed
 	_, err := c.Save(r)
 	require.NoError(t, err)
 }
@@ -78,7 +80,7 @@ func TestPersistentManagementNeverInheritsHostProxy(t *testing.T) {
 	c := testController(t, Options{Directory: dir})
 	require.Equal(t, "paused", c.State().State)
 	require.Empty(t, c.doc.Config.Outbounds)
-	require.False(t, c.doc.Inbound.Enabled)
+	require.True(t, c.doc.Inbound.Enabled)
 	r := currentRequest(c)
 	r.Inbound.Name = "Family gateway"
 	_, err := c.Save(r)
@@ -120,19 +122,19 @@ func TestCorruptProfileIsPreservedUntilExplicitRepair(t *testing.T) {
 
 func TestCaptureLifecycleVersionsAndUndo(t *testing.T) {
 	c := testController(t, Options{})
-	require.ErrorContains(t, c.Start(context.Background()), "enable")
+	require.ErrorContains(t, c.Start(context.Background()), "direct-only")
 	enable(t, c)
 	require.NoError(t, c.Start(context.Background()))
 	require.NoError(t, c.Start(context.Background()))
 	require.Equal(t, "running", c.State().DataState)
 	r := currentRequest(c)
-	r.Inbound.Name = "Renamed"
+	r.Config["rules"] = []any{map[string]any{"type": "FINAL", "outbound": "reject"}}
 	validation, err := c.Validate(r)
 	require.NoError(t, err)
 	require.False(t, validation["restart_required"].(bool))
 	_, err = c.Save(r)
 	require.NoError(t, err)
-	require.NotEqual(t, c.State().SavedVersion, c.State().RunningVersion)
+	require.Equal(t, c.State().SavedVersion, c.State().RunningVersion)
 	_, err = c.Undo(c.State().SavedVersion)
 	require.NoError(t, err)
 	require.Equal(t, "TUN", c.doc.Inbound.Name)
@@ -150,8 +152,10 @@ func TestCaptureLifecycleVersionsAndUndo(t *testing.T) {
 	r = currentRequest(c)
 	r.Inbound.Enabled = false
 	_, err = c.Save(r)
+	require.ErrorIs(t, err, ErrCaptureLocked)
+	require.NoError(t, c.Pause(context.Background()))
+	_, err = c.Save(r)
 	require.NoError(t, err)
-	require.NoError(t, c.Apply(context.Background()))
 	require.Equal(t, "paused", c.State().State)
 	require.NoError(t, c.Close())
 	require.ErrorContains(t, c.Start(context.Background()), "stopping")

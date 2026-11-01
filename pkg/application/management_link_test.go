@@ -30,6 +30,20 @@ func TestLocalManagementPageURLKeepsOneUseTokenInFragment(t *testing.T) {
 	}
 }
 
+func TestLocalManagementPageURLSupportsPasswordLoginWithoutCredentials(t *testing.T) {
+	for _, raw := range []string{"http://127.0.0.1:12345/", "http://[::1]:12345/", "https://127.0.0.1:12345/"} {
+		for _, page := range []string{"home", "diagnostics"} {
+			target, err := localManagementPageURL(raw, page)
+			require.NoError(t, err)
+			parsed, err := url.Parse(target)
+			require.NoError(t, err)
+			require.Equal(t, page, parsed.Fragment)
+			require.Empty(t, parsed.RawQuery)
+			require.NotContains(t, target, "token")
+		}
+	}
+}
+
 func TestLocalManagementPageURLRejectsUnsafeDestinationsWithoutEchoingCredentials(t *testing.T) {
 	for _, raw := range []string{"http://example.com/#token=one-use-secret", "http://127.0.0.1/?token=one-use-secret", "http://user:one-use-secret@127.0.0.1/#token=one-use-secret", "file:///tmp/#token=one-use-secret", "http://127.0.0.1/path/#token=one-use-secret", "http://127.0.0.1/#token=one-use-secret&token=other", "http://127.0.0.1/#token=%invalid", "http://127.0.0.1/#page=diagnostics"} {
 		_, err := localManagementPageURL(raw, "diagnostics")

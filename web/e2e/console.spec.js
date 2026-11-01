@@ -69,10 +69,9 @@ function fixture() {
   ];
   const config = {
     version: 1,
-    inbound: { id: "tun-main", name: "家庭网关", enabled: false },
+    inbound: { id: "tun-main", name: "家庭网关", enabled: true },
     config: {
       general: {
-        "manager-addr": "127.0.0.1:9200",
         "log-level": "info",
         "log-format": "text",
       },
@@ -151,12 +150,29 @@ async function mount(page, options = {}) {
         body: JSON.stringify(body),
       });
     const body = request.postDataJSON();
-    if (path === "/session")
+    if (path === "/auth") return respond({ setup_required: Boolean(data.requireSetup), setup_authorized: Boolean(data.setupSession), password_required: !data.requireSetup, authenticated: data.loggedIn !== false });
+    if (path === "/auth/password") {
+      if (!data.setupSession) return respond({ error: { message: "local setup proof required" } }, 403);
+      if (!body.password || body.password !== body.confirm_password) return respond({ error: { message: "password mismatch" } }, 400);
+      data.requireSetup = false;
+      data.requirePassword = true;
+      data.loggedIn = true;
+      data.setupSession = false;
+      data.managementPassword = body.password;
+      return respond({ role: data.role, csrf_token: "test-csrf", setup_required: false });
+    }
+    if (path === "/session/logout") { data.loggedIn = false; return respond({ logged_out: true }); }
+    if (path === "/session") {
+      if (data.requireSetup && body.token) { data.setupSession = true; return respond({ role: "setup", csrf_token: "setup-csrf", setup_required: true }); }
+      if (data.requirePassword && body.password !== data.managementPassword) return respond({ error: { message: "Password or authorization is invalid" } }, 401);
+      data.loggedIn = true;
       return respond({
         role: data.role,
         csrf_token: "test-csrf",
         session_id: "test-session",
       });
+    }
+    if (data.loggedIn === false) return respond({ error: { message: "Password required" } }, 401);
     if (options.unauthorized)
       return respond({ error: { message: "Authorization expired" } }, 401);
     if (method !== "GET") {
@@ -172,6 +188,7 @@ async function mount(page, options = {}) {
         csrf_token: "test-csrf",
         state: data.state,
         data_state: data.state,
+        capture_locked: ["running", "starting", "stopping"].includes(data.state),
         control_state: "ready",
         host: "Gateway · 测试主机",
         role: data.role,
@@ -188,7 +205,23 @@ async function mount(page, options = {}) {
         saved_version: data.config.version,
         running_version: 1,
       });
-    if (path === "/config" && method === "GET") return respond(data.config);
+    if (path === "/config" && method === "GET") return respond({ ...data.config, capture_locked: ["running", "starting", "stopping"].includes(data.state) });
+    if (path === "/readiness") return respond(data.readiness || {
+      ready: !data.disabledTUN && (!data.directOnly || Boolean(data.config.direct_only_confirmed)),
+      direct_only: Boolean(data.directOnly),
+      direct_only_confirmed: Boolean(data.config.direct_only_confirmed),
+      saved_version: data.config.version,
+      checks: [],
+      blockers: [...(data.disabledTUN ? [{ id: "inbound", code: "inbound_disabled", status: "failed", severity: "error", message: "请先在入站启用 TUN 入口并保存。", page: "inbounds", field: "enabled", action: "edit_inbound" }] : []), ...(data.directOnly && !data.config.direct_only_confirmed ? [{ id: "direct_only_confirmation", code: "direct_only_confirmation", status: "error", severity: "error", message: "请明确确认仅直连接管。", page: "outbounds", field: "direct_only_confirmed", action: "confirm_direct" }] : [])],
+      warnings: [],
+    });
+    if (path === "/outbounds/health") return respond({ statuses: data.health || [], time: end });
+    if (path === "/outbounds/test") {
+      const outbound = body.draft || data.config.config.outbounds.find((outbound) => outbound.id === body.outbound_id);
+      const result = { id: outbound?.id || "draft", name: outbound?.name || "draft", status: data.healthFailure ? "unhealthy" : "healthy", stage: data.healthFailure ? "proxy_connect" : "tls", message: data.healthFailure ? "Proxy connection refused" : "TLS verified for this target", target: body.target, tls: body.tls, checked_at: new Date().toISOString(), expires_at: new Date(Date.now()+60000).toISOString(), configuration_id: "fixture-health", config_version: data.config.version, scope: "explicit target only" };
+      data.health = [result];
+      return respond({ id: "outbound-test-1", status: "succeeded", result }, 202);
+    }
     if (path === "/config/validate")
       return respond({ valid: true, restart_required: false, issues: [] });
     if (path === "/config/import/validate")
@@ -215,8 +248,9 @@ async function mount(page, options = {}) {
         version: data.config.version + 1,
         config: body.config,
         inbound: body.inbound,
+        direct_only_confirmed: body.direct_only_confirmed ?? data.config.direct_only_confirmed,
       };
-      return respond(data.config);
+      return respond({ ...data.config, applied: data.state === "running" && !data.applyError, apply_error: data.applyError || "" });
     }
     if (path === "/config/apply") return respond({ status: "completed" });
     if (path === "/config/undo") return respond(data.config);
@@ -473,7 +507,11 @@ async function mount(page, options = {}) {
     );
   });
   const bootstrapPage = options.bootstrapPage;
-  await page.goto("/#token=local-test-only" + (bootstrapPage ? `&page=${encodeURIComponent(bootstrapPage)}` : ""));
+  await page.goto(options.noBootstrap ? "/#home" : "/#token=local-test-only" + (bootstrapPage ? `&page=${encodeURIComponent(bootstrapPage)}` : ""));
+  if (options.authScreen) {
+    await expect(page.getByRole("heading", { name: options.authScreen, exact: true })).toBeVisible();
+    return data;
+  }
   await expect(
     page.getByRole("heading", { name: bootstrapPage === "diagnostics" ? "诊断" : "首页", exact: true }),
   ).toBeVisible();
@@ -490,10 +528,112 @@ async function navigate(page, name) {
   await page.locator(`.nav-link[data-page=${name}]`).click();
 }
 
+async function saveOutbound(page) {
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.locator("#outbound-save-untested").click();
+}
+
+test("@compat first-time password setup requires matching inputs and remains capture-paused", async ({ page }) => {
+  const data = await mount(page, { requireSetup: true, loggedIn: false, authScreen: "设置管理密码" });
+  expect(data.requests.some((request) => ["/config", "/logs", "/traffic"].includes(request.path))).toBe(false);
+  await page.locator("#setup-password").fill("mock-owner-password");
+  await page.locator("#setup-password-confirm").fill("different-password");
+  await page.getByRole("button", { name: "设置管理密码", exact: true }).click();
+  await expect(page.locator("#auth-error")).toContainText("两次输入的密码不一致");
+  expect(data.requests.some((request) => request.path === "/auth/password")).toBe(false);
+  await page.locator("#setup-password-confirm").fill("mock-owner-password");
+  await page.getByRole("button", { name: "设置管理密码", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
+  await expect(page.locator("#login-password")).toBeVisible();
+  await expect(page.locator("#login-password")).toHaveValue("");
+  await page.locator("#login-password").fill("wrong-password");
+  await page.getByRole("button", { name: "登录管理", exact: true }).click();
+  await expect(page.locator("#auth-error")).toContainText("Password or authorization is invalid");
+  await page.locator("#login-password").fill("mock-owner-password");
+  await page.getByRole("button", { name: "登录管理", exact: true }).click();
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+});
+
+test("@compat public first visit cannot seize password setup without the local tray proof", async ({ page }) => {
+  const data = await mount(page, { requireSetup: true, loggedIn: false, noBootstrap: true, authScreen: "设置管理密码" });
+  await expect(page.getByText(/请从这台主机的 KONE 托盘重新打开管理页/)).toBeVisible();
+  await expect(page.locator("#setup-password")).toHaveCount(0);
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat direct-only capture requires explicit confirmation before any lifecycle request", async ({ page }) => {
+  const data = await mount(page, { directOnly: true });
+  await page.locator("#lifecycle-toggle").click();
+  await expect(page.locator("#direct-only-confirm")).toBeVisible();
+  expect(data.writes).toEqual([]);
+  await page.locator("#confirm-direct-only").click();
+  await expect(page.locator("#detail-dialog")).toContainText("请先明确勾选仅直连确认");
+  expect(data.writes).toEqual([]);
+  await page.locator("#direct-only-confirm").check();
+  await page.locator("#confirm-direct-only").click();
+  await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  expect(data.writes.find((write) => write.path === "/config")?.body.direct_only_confirmed).toBe(true);
+  expect(data.writes.filter((write) => write.path === "/lifecycle/start")).toHaveLength(1);
+});
+
+test("@compat configuration pages start as saved-state displays and cancel discards edits", async ({ page }, testInfo) => {
+  const data = await mount(page);
+  for (const name of ["inbounds", "outbounds", "rules", "dns", "settings"]) {
+    await navigate(page, name);
+    await expect(page.locator("#main [data-save]")).toHaveCount(0);
+    await expect(page.locator("#main .editor-item")).toHaveCount(0);
+  }
+  await navigate(page, "outbounds");
+  await expect(page.locator('[data-outbound-row="0"]')).toContainText("Proxy A");
+  await page.screenshot({ path: testInfo.outputPath("outbounds-list.png"), animations: "disabled" });
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath("outbound-editor.png"), animations: "disabled" });
+  await page.locator("#outbound-name-0").fill("discard this name");
+  await page.getByRole("button", { name: "取消编辑", exact: true }).click();
+  await page.getByRole("button", { name: "放弃修改并关闭", exact: true }).click();
+  await expect(page.locator("#editor-dialog")).not.toBeVisible();
+  await expect(page.locator('[data-outbound-row="0"]')).toContainText("Proxy A");
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat running capture locks TUN while rule edits save and hot-apply", async ({ page }) => {
+  const data = await mount(page);
+  data.state = "running";
+  await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  await navigate(page, "inbounds");
+  await expect(page.getByRole("button", { name: "编辑入站", exact: true })).toBeDisabled();
+  await navigate(page, "rules");
+  await page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await page.locator("#rule-pattern-0").fill("updated.example");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.locator("#editor-dialog")).not.toBeVisible();
+  await expect(page.locator('[data-rule-row="0"]')).toContainText("updated.example");
+  await expect(page.locator("#page-notice")).toContainText("已保存并热应用");
+  expect(data.writes.some((write) => write.path.startsWith("/lifecycle/") || write.path === "/config/apply")).toBe(false);
+});
+
+test("@compat outbound testing is explicit, reports protocol failure and updates its list status", async ({ page }) => {
+  const data = await mount(page, { healthFailure: true });
+  await navigate(page, "outbounds");
+  expect(data.writes).toEqual([]);
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "测试", exact: true }).click();
+  await page.locator("#outbound-test-target").fill("target.example:8443");
+  await page.getByRole("button", { name: "测试连接", exact: true }).click();
+  await expect(page.locator("#outbound-test-result")).toContainText("Proxy connection refused");
+  expect(data.writes.find((write) => write.path === "/outbounds/test")?.body).toMatchObject({ outbound_id: "outbound-id-1", target: "target.example:8443", tls: true });
+  await page.getByRole("button", { name: "关闭详情", exact: true }).click();
+  await expect(page.locator('[data-outbound-row="0"]')).toContainText("测试失败");
+  expect(data.writes.some((write) => write.path === "/config" || write.path.startsWith("/lifecycle/"))).toBe(false);
+});
+
 test("@compat desktop diagnostic deep link opens diagnostics without starting a probe", async ({ page }) => {
   const data = await mount(page, { bootstrapPage: "diagnostics" });
   await expect(page).toHaveURL(/#diagnostics$/);
-  await expect(page.locator("#diagnose-target")).toBeVisible();
+  await expect(page.locator("#diagnose-target")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "新建诊断", exact: true })).toBeVisible();
   await expect(page.locator(".nav-link[data-page=diagnostics]")).toHaveClass(/active/);
   expect(data.requests.some((request) => request.path === "/diagnostics" && request.method === "GET")).toBe(true);
   expect(data.requests.filter((request) => request.path === "/session")).toHaveLength(1);
@@ -590,9 +730,11 @@ test("rename updates rule references atomically and explicitly preserves masked 
 }) => {
   const data = await mount(page);
   await page.locator(".nav-link[data-page=outbounds]").click();
+  await expect(page.locator("#outbound-name-0")).toHaveCount(0);
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
   await page.locator("#outbound-name-0").fill("Office");
   await page.locator("#outbound-name-0").dispatchEvent("input");
-  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await saveOutbound(page);
   await expect(page.locator("#page-notice")).toContainText("已保存");
   const save = data.writes.find((r) => r.path === "/config");
   expect(save.body.config.outbounds[0].name).toBe("Office");
@@ -602,8 +744,9 @@ test("rename updates rule references atomically and explicitly preserves masked 
     action: "preserve",
     original_name: "Proxy A",
   });
-  expect(save.body.config.general["manager-addr"]).toBe("127.0.0.1:9200");
-  await expect(page.locator("#outbound-name-0")).toBeEnabled();
+  expect(save.body.config.general["log-level"]).toBe("info");
+  await expect(page.locator("#editor-dialog")).not.toBeVisible();
+  await expect(page.locator('[data-outbound-row="0"]')).toContainText("Office");
 });
 
 test("version conflict retains draft and offers a persistent actionable message", async ({
@@ -611,6 +754,7 @@ test("version conflict retains draft and offers a persistent actionable message"
 }) => {
   await mount(page, { conflict: true });
   await page.locator(".nav-link[data-page=inbounds]").click();
+  await page.getByRole("button", { name: "编辑入站", exact: true }).click();
   await page.locator("#inbound-name").fill("保留的草稿");
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await expect(page.locator("#page-notice")).toContainText(
@@ -624,12 +768,13 @@ for (const first of ["username", "password"]) {
   test(`credential editor preserves both fields when ${first} is entered first`, async ({ page }) => {
     const data = await mount(page);
     await page.locator(".nav-link[data-page=outbounds]").click();
+    await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
     await page.locator("#outbound-credentials-0").selectOption("replace");
     const values = { username: "credential-fixture-user", password: "credential-fixture-password" };
     const second = first === "username" ? "password" : "username";
     await page.locator(`#outbound-${first}-0`).fill(values[first]);
     await page.locator(`#outbound-${second}-0`).fill(values[second]);
-    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await saveOutbound(page);
     await expect(page.locator("#page-notice")).toContainText("已保存");
     const credentials = data.writes.find((write) => write.path === "/config")?.body.credential_actions["Proxy A"];
     expect(credentials?.action === "replace").toBe(true);
@@ -754,7 +899,7 @@ test("@compat weak network recovery refreshes real state without repeating a mut
 
 test("@compat unavailable capture telemetry keeps management and rules editable, then recovers", async ({ page }) => {
   const data = await mount(page);
-  await page.locator(".nav-link[data-page=rules]").click();
+  await navigate(page, "rules");
   const add = page.getByRole("button", { name: "＋ 添加精确域名", exact: true });
   await expect(add).toBeEnabled();
   data.state = "running";
@@ -762,11 +907,11 @@ test("@compat unavailable capture telemetry keeps management and rules editable,
   await expect(page.locator("#connection-banner")).toContainText("管理连接正常，流量数据暂不可用");
   await expect(page.locator("#runtime-status")).toContainText("正在接管");
   await expect(add).toBeEnabled();
-  await page.locator(".nav-link[data-page=home]").click();
+  await navigate(page, "home");
   await expect(page.getByText(/数据暂不可用：这里是/)).toBeVisible();
   await expect(page.getByText(/接管已停止/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "上次采样速率", exact: true })).toBeVisible();
-  await page.locator(".nav-link[data-page=rules]").click();
+  await navigate(page, "rules");
   data.offline = true;
   await expect(page.locator("#runtime-status")).toHaveText("状态未知");
   await expect(add).toBeDisabled();
@@ -781,9 +926,9 @@ test("@compat unavailable capture telemetry keeps management and rules editable,
 test("@compat disabled TUN explains the saved inbound requirement without starting capture", async ({ page }) => {
   const data = await mount(page, { disabledTUN: true });
   await page.locator("#lifecycle-toggle").click();
-  await expect(page.locator("#page-notice")).toContainText("入站”启用 TUN 入口并保存");
+  await expect(page.locator("#detail-dialog")).toContainText("入站启用 TUN 入口并保存");
   await expect(page.locator("#runtime-status")).toContainText("已暂停");
-  expect(data.writes.map((write) => write.path)).toEqual(["/lifecycle/preflight"]);
+  expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
 });
 
 test("@compat runtime logs filter sources, pause polling and render fields as safe text", async ({ page }) => {
@@ -830,6 +975,7 @@ test("diagnosis sends one explicit TCP target and never replays business payload
 }) => {
   const data = await mount(page);
   await page.locator(".nav-link[data-page=diagnostics]").click();
+  await page.getByRole("button", { name: "新建诊断", exact: true }).click();
   await page.locator("#diagnose-target").fill("example.com");
   await page.locator("#diagnose-port").fill("8443");
   await page.getByRole("button", { name: "开始独立诊断" }).click();
@@ -848,9 +994,10 @@ test("manual refresh never silently rebases a dirty draft onto a concurrent save
 }) => {
   const data = await mount(page);
   await page.locator(".nav-link[data-page=inbounds]").click();
+  await page.getByRole("button", { name: "编辑入站", exact: true }).click();
   await page.locator("#inbound-name").fill("My draft");
   data.config.version = 2;
-  await page.getByRole("button", { name: "刷新", exact: true }).click();
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
   await expect(page.locator("#inbound-name")).toHaveValue("My draft");
   await expect(
     page.getByText("已保存版本发生变化", { exact: false }),
@@ -892,7 +1039,8 @@ test("GeoIP requires an independent checksum and sends a raw bounded upload with
 }) => {
   const data = await mount(page);
   await page.locator(".nav-link[data-page=settings]").click();
-  const attribution = page.locator("main").getByRole("link", {
+  await page.getByRole("button", { name: "更新 GeoIP 数据", exact: true }).click();
+  const attribution = page.locator("#editor-dialog").getByRole("link", {
     name: "IP Geolocation by DB-IP",
   });
   await expect(attribution).toHaveAttribute("href", "https://db-ip.com");
@@ -970,6 +1118,7 @@ test("IPv6 is an explicit saved opt-in and unavailable platforms cannot enable i
 }) => {
   const data = await mount(page, { ipv6: true });
   await page.locator(".nav-link[data-page=inbounds]").click();
+  await page.getByRole("button", { name: "编辑入站", exact: true }).click();
   await page.locator("#inbound-ipv6-network").fill("fd7a:203::1/120");
   await page.locator("#inbound-outbound-interface").fill("eth0");
   await page.locator("#inbound-auto-route6").check();
@@ -994,6 +1143,7 @@ test("IPv6 is an explicit saved opt-in and unavailable platforms cannot enable i
   data.config.config.core["ipv6-network"] = "";
   data.config.config.core["auto-route6"] = false;
   await page.reload();
+  await page.getByRole("button", { name: "编辑入站", exact: true }).click();
   await expect(page.locator("#inbound-ipv6-network")).toBeDisabled();
   await expect(page.locator("#inbound-auto-route6")).toBeDisabled();
 });
@@ -1030,7 +1180,8 @@ test("temporary domain rules and outbound disable are explicit saved drafts with
 }) => {
   const data = await mount(page);
   await page.locator(".nav-link[data-page=rules]").click();
-  await page.locator(".editor-item").first().locator("summary").click();
+  await page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+  await page.locator("#editor-dialog .editor-item summary").first().click();
   await page.locator("#rule-lifetime-0").selectOption("temporary");
   await expect(page.locator("#rule-expires-0")).toBeVisible();
   await page.getByRole("button", { name: "保存", exact: true }).click();
@@ -1042,8 +1193,9 @@ test("temporary domain rules and outbound disable are explicit saved drafts with
     )
     .toMatch(/^\d{4}-\d{2}-\d{2}T/);
   await page.locator(".nav-link[data-page=outbounds]").click();
+  await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
   await page.locator("#outbound-enabled-0").uncheck();
-  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await saveOutbound(page);
   await expect
     .poll(
       () =>
@@ -1066,6 +1218,7 @@ test("DNS system guidance saves explicit intent while automatic scopes remain re
   const data = await mount(page, { systemDNS: true, autoScopes: true });
   await page.locator(".nav-link[data-page=dns]").click();
   await expect(page.getByText("系统解析范围", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "编辑 DNS 设置", exact: true }).click();
   await page.locator("#dns-system").check();
   await page.getByRole("button", { name: "＋ 添加解析规则" }).click();
   await page.locator("#dns-route-suffix-0").fill("private.example");
@@ -1099,11 +1252,12 @@ test("corrupt GeoIP still permits explicit revalidation of the saved previous da
 }) => {
   const data = await mount(page, { geoCorrupt: true });
   await page.locator(".nav-link[data-page=settings]").click();
+  await page.getByRole("button", { name: "更新 GeoIP 数据", exact: true }).click();
   await expect(
-    page.getByText("Saved active dataset is corrupt", { exact: true }),
+    page.locator("#editor-dialog").getByText("Saved active dataset is corrupt", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "尝试恢复已保存上一版" }).click();
-  await expect(page.getByRole("dialog")).toContainText(
+  await expect(page.locator("#detail-dialog")).toContainText(
     "不会猜测或自动替换成内置版",
   );
   expect(data.writes.some((write) => write.path === "/geoip/rollback")).toBe(
@@ -1148,7 +1302,7 @@ test("observed UDP shortcuts retain transport and port, precede broad rules and 
   await expect(page.locator("#rule-pattern-0")).toHaveValue("unsupported.example");
   await expect(page.locator("#rule-protocol-0")).toHaveValue("udp");
   await expect(page.locator("#rule-ports-0")).toHaveValue("443");
-  await expect(page.locator("#rule-pattern-1")).toHaveValue("example.com");
+  await expect(page.locator("#rule-pattern-1")).toHaveCount(0);
   expect(data.writes.some((write) => write.path === "/config")).toBe(false);
   await page.getByRole("button", { name: "保存", exact: true }).first().click();
   await expect.poll(() => data.writes.find((write) => write.path === "/config")?.body.config.rules[0]).toMatchObject({
@@ -1157,7 +1311,8 @@ test("observed UDP shortcuts retain transport and port, precede broad rules and 
   await page.locator(".nav-link[data-page=home]").click();
   await page.getByRole("button", { name: "详情", exact: true }).first().click();
   await page.getByRole("dialog").getByRole("button", { name: "为此目标建规则" }).click();
-  await expect(page.locator(".editor-item")).toHaveCount(3);
+  await expect(page.locator("#editor-dialog")).not.toBeVisible();
+  await expect(page.locator("[data-rule-row]")).toHaveCount(3);
   await expect(page.getByText(/没有重复添加/)).toBeVisible();
   expect(data.writes.filter((write) => write.path === "/config")).toHaveLength(1);
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/") || write.path === "/config/apply")).toBe(false);
@@ -1166,6 +1321,7 @@ test("observed UDP shortcuts retain transport and port, precede broad rules and 
 test("routing simulation sends the selected protocol and destination port without probing", async ({ page }) => {
   const data = await mount(page);
   await page.locator(".nav-link[data-page=rules]").click();
+  await page.getByRole("button", { name: "模拟规则匹配", exact: true }).click();
   await page.locator("#simulate-target").fill("example.com");
   await page.locator("#simulate-port").fill("8443");
   await page.getByRole("combobox", { name: "模拟协议" }).selectOption("udp");

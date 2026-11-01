@@ -45,7 +45,7 @@ func TestManagementConfigurationCaptureAndPauseEndToEnd(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	server := httptest.NewServer(c.Handler())
 	defer server.Close()
-	client := &http.Client{Timeout: time.Second, Transport: &http.Transport{Proxy: nil}}
+	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
 	var cookie *http.Cookie
 	csrf := ""
 	call := func(method, path string, input any) (int, map[string]any) {
@@ -74,11 +74,14 @@ func TestManagementConfigurationCaptureAndPauseEndToEnd(t *testing.T) {
 	status, auth := call("POST", "session", map[string]any{"token": c.BootstrapToken()})
 	require.Equal(t, 200, status)
 	csrf = auth["csrf_token"].(string)
+	status, auth = call("POST", "auth/password", map[string]any{"password": "integration-owner-password", "confirm_password": "integration-owner-password"})
+	require.Equal(t, 200, status)
+	csrf = auth["csrf_token"].(string)
 	status, doc := call("GET", "config", nil)
 	require.Equal(t, 200, status)
 	inbound := doc["inbound"].(map[string]any)
 	inbound["enabled"] = true
-	status, _ = call("PUT", "config", map[string]any{"base_version": doc["version"], "config": doc["config"], "inbound": inbound})
+	status, _ = call("PUT", "config", map[string]any{"base_version": doc["version"], "config": doc["config"], "inbound": inbound, "direct_only_confirmed": true})
 	require.Equal(t, 200, status)
 	for _, action := range []string{"start", "pause", "start", "stop"} {
 		status, operation := call("POST", "lifecycle/"+action, nil)

@@ -13,7 +13,7 @@ Its original [K1 dial mark](docs/branding.md) represents reliable guidance for n
 - Use HTTP/HTTPS, SOCKS5 and Shadowsocks outbounds, with direct and reject policies.
 - Run on Linux, macOS and Windows, including Raspberry Pi home and small-business gateways.
 - Inspect traffic, DNS history, routing decisions and recent runtime logs.
-- Control capture from the desktop tray or menu, and manage it from a paired phone or tablet.
+- Use a password-protected Web console, desktop tray/menu, or paired phone and tablet.
 - Preserve established connections during rule updates, roll back failed startup,
   and restore owned network settings on normal exit.
 
@@ -25,8 +25,8 @@ Download the package for your platform from [Releases](https://github.com/xjdrew
 See [installation and platform notes](docs/usage.md) for checksums, permissions and package trust.
 On Windows, double-click `kone.exe`; on macOS, open `Kone.app`.
 They start in the tray/menu bar **without a terminal or automatic browser window**.
-Choose **Open management**, enable and save the TUN inbound, configure outbounds/rules,
-then explicitly start capture. Capture starts **paused**.
+Choose **Open management**, set a password, configure the needed outbounds/rules,
+then review the checks and explicitly start capture. Capture starts **paused**.
 See the [desktop setup guide](docs/desktop.md) for the three steps and troubleshooting.
 Use `kone-cli.exe` / `kone-cli` for terminal commands; Linux keeps the `kone` CLI.
 

@@ -13,6 +13,7 @@ import {
 } from "./api.js";
 import { aggregatePaths, bytes, nativePaths, renderSankey } from "./graph.js";
 import { mergeLogs } from "./logs.js";
+import { createConfigurationPages, outboundAddress, currentHealth } from "./configuration-pages.js";
 
 const pages = [
   ["home", "首页", "◈", "OVERVIEW", "看清流量，掌握每一次连接。"],
@@ -51,10 +52,14 @@ const model = {
   inbound: null,
   credentialActions: {},
   outboundOrigins: [],
+  editor: null,
+  outboundHealth: [],
   dirty: false,
   busy: false,
   online: false,
   authenticated: true,
+  auth: null,
+  authMode: "password",
   traffic: normalizeTraffic(),
   trafficError: "",
   graphPaused: false,
@@ -213,7 +218,7 @@ const empty = (title, text, action) =>
 const card = (title, description, ...children) =>
   h(
     "section",
-    { class: "card" },
+    { class: "card", "data-card-title": title },
     h(
       "div",
       { class: "card-head" },
@@ -271,6 +276,8 @@ function notice(message, kind = "") {
   model.notice = { message, kind };
   const place = document.querySelector("#page-notice");
   if (place) place.replaceChildren(note(message, kind));
+  const editor = document.querySelector("#editor-notice");
+  if (editor) editor.replaceChildren(note(message, kind));
 }
 function isConflict(error) {
   return error.status === 409 || error.status === 412;
@@ -282,14 +289,23 @@ function failure(error) {
     render();
     return;
   }
-  const message = isConflict(error)
+  const captureIsLocked = error.details?.code === "capture_locked";
+  const message = captureIsLocked
+    ? "接管运行期间不能修改这些捕获设置。请先暂停接管，当前草稿已保留。"
+    : isConflict(error)
     ? error.details?.code === "geoip"
       ? "GeoIP 数据或设置版本已变化，请刷新后重新核对待导入文件。"
       : "配置已被其他页面或文件修改。请重新加载并比较后再保存，你的草稿仍保留。"
     : error.message;
   notice(message, "error");
+  const modal = document.querySelector("#detail-dialog[open]");
+  if (modal) {
+    let errors = modal.querySelector("[data-dialog-notice]");
+    if (!errors) { errors = h("div", { "data-dialog-notice": "", role: "alert" }); modal.querySelector("#detail-content").append(errors); }
+    errors.replaceChildren(note(message, "error"));
+  }
   toast(message, "error");
-  if (isConflict(error)) model.versionConflict = true;
+  if (isConflict(error) && !captureIsLocked) model.versionConflict = true;
 }
 async function action(work, success) {
   if (!canManage()) return;
@@ -411,7 +427,7 @@ function markDirty() {
   model.dirty = true;
   document
     .querySelectorAll("[data-save]")
-    .forEach((node) => (node.disabled = !canManage()));
+    .forEach((node) => (node.disabled = !canManage() || Boolean(model.editor && ["inbounds", "dns", "logs"].includes(model.editor.kind) && captureLocked())));
   const label = document.querySelector("#draft-status");
   if (label) label.textContent = "有未保存的修改";
 }
@@ -431,7 +447,8 @@ function configBody() {
     credential_actions: model.credentialActions,
   };
 }
-function configFooter() {
+function configFooter(editorFooter = false) {
+  if (model.editor && !editorFooter) return null;
   return h(
     "div",
     {},
@@ -486,16 +503,16 @@ function configFooter() {
         button("校验与预览", validateConfig),
         button(
           "保存",
-          () => saveConfig(false),
+          () => saveEditor(false),
           "",
-          !canManage() || !model.dirty,
+          !canManage() || !model.dirty || Boolean(model.editor && ["inbounds", "dns", "logs"].includes(model.editor.kind) && captureLocked()),
           { "data-save": "" },
         ),
         button(
           "保存并应用",
-          () => saveConfig(true),
+          () => saveEditor(true),
           "primary",
-          !canManage() || !model.dirty,
+          !canManage() || !model.dirty || Boolean(model.editor && ["inbounds", "dns", "logs"].includes(model.editor.kind) && captureLocked()),
           { "data-save": "" },
         ),
       ),
@@ -517,6 +534,7 @@ async function validateConfig() {
   });
 }
 async function saveConfig(apply) {
+  const editor = model.editor;
   return action(async () => {
     const validation = await endpoints.validate(configBody());
     if (validation.valid === false)
@@ -525,11 +543,17 @@ async function saveConfig(apply) {
     model.config = saved.config
       ? saved
       : { ...model.config, ...saved, config: clone(model.draft) };
+    const ruleIndex = editor?.kind === "rule" ? model.draft.rules.indexOf(editor.item) : -1;
     model.draft = clone(model.config.config || model.draft);
+    if (ruleIndex >= 0) editor.item = model.draft.rules?.[ruleIndex];
     model.dirty = false;
     model.credentialActions = {};
     model.versionConflict = false;
-    if (apply && !validation.restart_required) {
+    if (saved.apply_error) {
+      notice(`设置已保存，但热应用失败：${saved.apply_error}。原运行版本保留，请检查后重试。`, "error");
+    } else if (saved.applied) {
+      notice("设置已保存并热应用。新连接使用新策略，已有连接保持原策略。", "success");
+    } else if (apply && !validation.restart_required) {
       try {
         await watchOperation(
           await endpoints.apply({ version: model.config.version }),
@@ -552,7 +576,10 @@ async function saveConfig(apply) {
         validation.restart_required ? "warning" : "success",
       );
     await loadConfig(false);
+    if (editor && model.editor === editor) finishEditor(true);
+    await refreshOutboundHealth();
     render();
+    return saved;
   }, "设置已保存");
 }
 async function loadConfig(force = false) {
@@ -573,6 +600,10 @@ async function loadConfig(force = false) {
     );
     model.credentialActions = {};
     model.dirty = false;
+    if (force && model.editor) {
+      model.editor.snapshot = editorSnapshot();
+      if (model.editor.kind === "rule") model.editor.item = model.draft.rules?.[model.editor.index];
+    }
   }
 }
 function updateShell() {
@@ -581,7 +612,7 @@ function updateShell() {
   status.className = `status ${model.online && running() ? "running" : ["starting", "stopping", "preflight", "pausing"].includes(state) ? "working" : !model.online || ["error", "recovery_failed", "invalid_config"].includes(state) ? "error" : ""}`;
   status.replaceChildren(
     h("i"),
-    model.online ? stateLabels[state] || state : "状态未知",
+    !model.authenticated ? model.auth?.setup_required ? "设置管理密码" : "需要登录" : model.online ? stateLabels[state] || state : "状态未知",
   );
   document.querySelector("#host-label").textContent =
     model.state.host?.name ||
@@ -605,7 +636,7 @@ function updateShell() {
     !canManage() ||
     ["starting", "stopping", "pausing", "preflight"].includes(state);
   const banner = document.querySelector("#connection-banner");
-  let text = !model.online
+  let text = !model.authenticated ? model.auth?.setup_required ? "首次使用请先设置管理密码。" : "请登录后查看和管理 KONE。" : !model.online
     ? `管理连接中断，当前状态未知。最后更新：${time(model.lastSuccess)}。写操作暂不可用。`
     : model.state.config_error ||
       model.state.last_error ||
@@ -634,6 +665,7 @@ function updateShell() {
 }
 async function refreshState() {
   const wasOnline = model.online;
+  const wasLocked = captureLocked();
   try {
     model.state = await endpoints.state();
     setSession(model.state);
@@ -641,6 +673,7 @@ async function refreshState() {
     model.authenticated = true;
     model.lastSuccess = new Date().toISOString();
     updateShell();
+    if (model.editor && wasLocked !== captureLocked()) renderEditor();
     if (!wasOnline) renderPreserving();
   } catch (error) {
     model.online = false;
@@ -652,25 +685,62 @@ async function refreshState() {
 }
 async function lifecycle(actionName) {
   if (actionName === "start") {
-    return action(async () => {
-      const preflight = await endpoints.lifecycle("preflight");
-      if (
-        preflight.ready === false ||
-        preflight.ok === false ||
-        preflight.valid === false ||
-        preflight.blockers?.length
-      ) {
-        showResult("启用预检", preflight);
-        return;
-      }
-      const result = await watchOperation(await endpoints.lifecycle("start"));
-      showResult("启用接管", result);
-    });
+    const readiness = await action(() => endpoints.readiness());
+    if (!readiness) return;
+    if (readiness.ready === false || readiness.blockers?.length || readiness.warnings?.length) return showReadiness(readiness);
+    return startReadyCapture();
   }
   return action(async () => {
     const result = await watchOperation(await endpoints.lifecycle(actionName));
     showResult(actionName === "pause" ? "暂停接管" : "运行操作", result);
   });
+}
+function startReadyCapture() {
+  return action(async () => { const result = await watchOperation(await endpoints.lifecycle("start")); showResult("启用接管", result); });
+}
+function readinessMessage(item) {
+  return {
+    inbound_disabled: "请先在入站启用 TUN 入口并保存。",
+    capture_scope: "当前是选择性接管，仅覆盖 Fake-IP 和显式 CIDR；普通直连流量可能不进入 KONE。",
+    direct_only: "当前规则不使用上游代理，只执行直连或拒绝；仅添加代理不会自动改变规则。",
+    direct_only_confirmation: "请明确确认仅直连接管，或先在规则中选择代理出站。",
+    recovery: "请先检查并恢复上一次未完成的接管，再启用。",
+    outbound_disabled: "规则引用的代理已禁用；新连接会被拒绝，不会自动直连。",
+    outbound_health: item.status === "error" ? "最近的出站测试未通过。请修正重试，或明确选择继续；不会自动退回直连。" : "规则引用的出站尚无有效成功测试。建议先测试，也可以明确选择继续。",
+    preflight: "环境预检未通过，请先处理阻断项。",
+  }[item.code] || explainError(item.message);
+}
+function goToReadinessItem(item) {
+  closeDialog();
+  const page = item.action === "configure_rules" ? "rules" : item.page;
+  model.page = page;
+  navigate(page);
+  render();
+  if (page === "inbounds") openEditor("inbounds");
+  if (page === "dns") openEditor("dns");
+  if (page === "outbounds") {
+    const values = model.config?.config?.outbounds || [];
+    const id = item.field?.startsWith("outbounds.") ? item.field.slice(10) : "";
+    const index = Math.max(0, values.findIndex(value => value.id === id));
+    if (!values.length) addOutbound();
+    else if (item.action === "test_outbound") openOutboundTest(index);
+    else openEditor("outbound", index);
+  }
+  if (page === "rules") model.config?.config?.rules?.length ? openEditor("rule", 0) : addRule("DOMAIN");
+}
+function showReadiness(report) {
+  const direct = report.direct_only && !report.direct_only_confirmed;
+  const confirmed = h("input", { id: "direct-only-confirm", type: "checkbox" });
+  const items = [...list(report.blockers), ...list(report.warnings)];
+  dialog("启用接管前确认", report.ready ? "以下提示不会改变你的规则，请确认后继续。" : "先完成阻断项，再启用接管。", h("div", {},
+    items.length ? h("div", { class: "panel-list" }, items.map(item => row({ inbounds: "入站", outbounds: "出站与模式", rules: "路由规则", dns: "DNS", settings: "配置与恢复" }[item.page] || "启用检查", readinessMessage(item), h("div", { "data-readiness-blocker": item.id || item.code }, badge(item.severity === "error" ? "failed" : "warning"), item.page && item.action !== "confirm_direct" && button(item.action === "test_outbound" ? "测试此出站" : `前往${{ inbounds: "入站设置", outbounds: "出站设置", rules: "规则设置", dns: "DNS 设置", settings: "设置" }[item.action === "configure_rules" ? "rules" : item.page] || "设置"}`, () => goToReadinessItem(item), "ghost", !canManage()))))) : note("检查结果来自当前保存版本。"),
+    list(report.changes).length > 0 && h("details", { class: "disclosure" }, h("summary", {}, "将执行的系统变更"), h("ul", {}, report.changes.map(change => h("li", {}, change)))),
+    direct && h("label", { class: "direct-confirm", for: "direct-only-confirm" }, confirmed, "我确认仅直连接管，不使用上游代理；这不会自动添加代理规则。"),
+  ), [button("返回检查", closeDialog, "ghost", false), direct ? button("确认仅直连并重新检查", async () => {
+    if (!confirmed.checked) { const errors = h("p", { role: "alert" }, "请先明确勾选仅直连确认。" ); document.querySelector("#detail-content").append(errors); return; }
+    const saved = await action(() => endpoints.save({ ...configBody(), direct_only_confirmed: true }));
+    if (saved) { await loadConfig(true); closeDialog(); lifecycle("start"); }
+  }, "primary", !canManage(), { id: "confirm-direct-only" }) : report.ready && button("继续启用接管", () => { closeDialog(); startReadyCapture(); }, "primary", !canManage())].filter(Boolean));
 }
 async function watchOperation(operation) {
   const completed = (operation) => {
@@ -1570,7 +1640,7 @@ function showFlow(flow) {
           closeDialog();
           model.diagnosticTarget =
             frozen.domain || frozen.destination || frozen.target;
-          navigate("diagnostics");
+          model.page = "diagnostics"; navigate("diagnostics"); openDiagnosticForm();
         },
         "",
         !canManage(),
@@ -1588,7 +1658,7 @@ function showFlow(flow) {
   );
 }
 
-function renderInbounds() {
+function renderInboundsEditor() {
   if (!model.draft)
     return [empty("配置尚未加载", "连接恢复后可查看和编辑入站。")];
   const core = model.draft.core || {};
@@ -1745,10 +1815,11 @@ function outboundNames() {
     ...list(model.draft?.outbounds).map((outbound) => outbound.name),
   ];
 }
-function renderOutbounds() {
+function renderOutboundsEditor() {
   if (!model.draft) return [empty("配置尚未加载", "连接恢复后可查看出站。")];
   model.draft.outbounds ||= [];
   const editors = model.draft.outbounds.map((outbound, index) => {
+    if (model.editor?.kind === "outbound" && index !== model.editor.index) return null;
     const original = model.outboundOrigins[index];
     const references = list(model.draft.rules).filter(
       (rule) => rule.outbound === outbound.name,
@@ -1775,21 +1846,6 @@ function renderOutbounds() {
           {},
           h("h3", {}, outbound.name || "新代理"),
           h("small", {}, `${references} 条规则引用 · 代理健康需独立检测`),
-        ),
-        button(
-          "删除",
-          () => {
-            if (references) {
-              notice("该代理仍被规则引用。先修改引用，再删除出站。", "error");
-              return;
-            }
-            delete model.credentialActions[outbound.name];
-            model.draft.outbounds.splice(index, 1);
-            model.outboundOrigins.splice(index, 1);
-            markDirty();
-            render();
-          },
-          "danger compact",
         ),
       ),
       h(
@@ -1905,46 +1961,11 @@ function renderOutbounds() {
           /^(socks5|ss):/i.test(outbound.url) ? "success" : "warning",
         ),
         tag("健康状态待诊断", "muted"),
-        button(
-          "诊断此出站",
-          () => {
-            model.diagnosticOutbound = outbound.name;
-            navigate("diagnostics");
-          },
-          "ghost compact",
-          !canManage() || outbound.enabled === false,
-        ),
       ),
     );
   });
   return [
     readonlyNote(),
-    h(
-      "div",
-      { class: "builtin-grid" },
-      h(
-        "div",
-        { class: "builtin" },
-        h("span", { class: "builtin-icon" }, "↗"),
-        h(
-          "div",
-          {},
-          h("strong", {}, "直连 · direct"),
-          h("small", {}, "内置 · TCP / UDP · 连通性需诊断"),
-        ),
-      ),
-      h(
-        "div",
-        { class: "builtin" },
-        h("span", { class: "builtin-icon" }, "⊘"),
-        h(
-          "div",
-          {},
-          h("strong", {}, "拒绝 · reject"),
-          h("small", {}, "内置 · 不连接目标 · 不执行回退"),
-        ),
-      ),
-    ),
     card(
       "代理出站",
       "添加已有代理地址。KONE 不提供或自动寻找代理服务器。",
@@ -1954,16 +1975,6 @@ function renderOutbounds() {
         editors.length
           ? editors
           : empty("尚未配置代理", "纯直连配置可以保存并使用，无需添加代理。"),
-      ),
-      h(
-        "div",
-        { class: "form-section" },
-        button("＋ 添加代理", () => {
-          model.draft.outbounds.push({ name: "", url: "", "udp-fallback": "" });
-          model.outboundOrigins.push(undefined);
-          markDirty();
-          render();
-        }),
       ),
       configFooter(),
     ),
@@ -1995,14 +2006,14 @@ function addExactRule(target, protocol = "") {
     });
     return;
   }
-  model.draft.rules.unshift(rule);
-  markDirty();
+  model.page = "rules";
   navigate("rules", {
     message: `已在用户规则首位建立精确草稿${rule.protocol ? ` · ${rule.protocol.toUpperCase()}` : ""}${rule.ports?.length ? ` · 端口 ${rule.ports.join(",")}` : ""}，尚未保存或应用。请核对目标与出站。`,
     kind: "warning",
   });
+  openEditor("rule", 0, () => { model.draft.rules.unshift(rule); markDirty(); });
 }
-function renderRules() {
+function renderRulesEditor() {
   if (!model.draft) return [empty("配置尚未加载", "连接恢复后可编辑规则。")];
   model.draft.rules ||= [];
   const types = [
@@ -2015,7 +2026,7 @@ function renderRules() {
     "FINAL",
   ];
   const editors = model.draft.rules.map((rule, index) =>
-    h(
+    model.editor?.kind === "rule" && index !== model.draft.rules.indexOf(model.editor.item) ? null : h(
       "section",
       { class: "editor-item" },
       h(
@@ -2030,36 +2041,6 @@ function renderRules() {
             String(index + 1).padStart(2, "0"),
           ),
           ` ${rule.type} ${rule.pattern || ""}`,
-        ),
-        h(
-          "div",
-          { class: "rule-controls" },
-          button(
-            "↑",
-            () => moveRule(index, -1),
-            "ghost compact",
-            !canManage() || index === 0 || rule.type === "FINAL",
-            { "aria-label": `将规则 ${index + 1} 上移` },
-          ),
-          button(
-            "↓",
-            () => moveRule(index, 1),
-            "ghost compact",
-            !canManage() ||
-              index >= model.draft.rules.length - 1 ||
-              rule.type === "FINAL" ||
-              model.draft.rules[index + 1]?.type === "FINAL",
-            { "aria-label": `将规则 ${index + 1} 下移` },
-          ),
-          button(
-            "删除",
-            () => {
-              model.draft.rules.splice(index, 1);
-              markDirty();
-              render();
-            },
-            "danger compact",
-          ),
         ),
       ),
       h(
@@ -2225,31 +2206,6 @@ function renderRules() {
           ? editors
           : empty("尚无规则", "未命中规则时使用内置 direct。"),
       ),
-      h(
-        "div",
-        { class: "form-section button-row" },
-        button("＋ 添加精确域名", () => {
-          const final = model.draft.rules.findIndex(
-            (rule) => rule.type === "FINAL",
-          );
-          model.draft.rules.splice(
-            final < 0 ? model.draft.rules.length : final,
-            0,
-            { type: "DOMAIN", pattern: "", outbound: "direct" },
-          );
-          markDirty();
-          render();
-        }),
-        button("＋ 添加最终规则", () => {
-          if (model.draft.rules.some((rule) => rule.type === "FINAL")) {
-            notice("已经存在最终规则。", "warning");
-            return;
-          }
-          model.draft.rules.push({ type: "FINAL", outbound: "direct" });
-          markDirty();
-          render();
-        }),
-      ),
       configFooter(),
     ),
     card(
@@ -2313,17 +2269,7 @@ function renderRules() {
     ),
   ];
 }
-function moveRule(index, direction) {
-  const next = index + direction;
-  [model.draft.rules[index], model.draft.rules[next]] = [
-    model.draft.rules[next],
-    model.draft.rules[index],
-  ];
-  markDirty();
-  render();
-}
-
-function renderDNS() {
+function renderDNSEditor() {
   if (!model.draft)
     return [empty("配置尚未加载", "连接恢复后可查看解析设置。")];
   const dns = model.draft.dns || {};
@@ -2708,7 +2654,7 @@ function renderLogs() {
   );
 }
 
-function renderDiagnostics() {
+function renderDiagnosticsEditor() {
   const candidates = [
     ...new Map(
       model.traffic.flows
@@ -2747,6 +2693,7 @@ function renderDiagnostics() {
             "已创建独立诊断任务。不会重放原业务请求，也不会自动修改规则。",
             "success",
           );
+          closeDialog();
           await loadPageData();
           render();
         });
@@ -2875,7 +2822,7 @@ function renderDiagnostics() {
                     () => {
                       model.diagnosticTarget =
                         flow.domain || flow.destination || flow.target;
-                      render();
+                      openDiagnosticForm();
                     },
                     "ghost compact",
                     !canManage(),
@@ -3009,7 +2956,7 @@ function showTask(task) {
   );
 }
 
-function renderSettings() {
+function renderSettingsEditor() {
   const sessions = list(model.sessions.sessions || model.sessions);
   const network =
     model.recovery || model.state.recovery || model.state.network || {};
@@ -3089,7 +3036,7 @@ function renderSettings() {
           () =>
             dialog(
               "恢复默认设置",
-              "将保存默认入站、DNS、规则与出站，并将 TUN 入口设为未启用。原运行中的连接不会因此自动重启。",
+              "将保存默认入站、DNS、规则与出站，TUN 入口设为启用；保存不会自动启用或重启接管。",
               note(
                 "自定义规则与代理将从已保存设置中移除；需要时可撤销最近一次配置变更。",
                 "warning",
@@ -3106,7 +3053,7 @@ function renderSettings() {
                       });
                       await loadConfig(true);
                       notice(
-                        "默认设置已保存，TUN 入口未启用。现有接管请在上方显式暂停或应用。",
+                        "默认设置已保存，TUN 入口已启用。请检查出站与规则，明确确认模式后再启用接管。",
                         "warning",
                       );
                     });
@@ -3445,6 +3392,7 @@ function renderGeoIP() {
                     model.geoFile = null;
                     model.geoExpected = "";
                     notice("GeoIP 已保存，下次显式启用接管时加载。", "success");
+                    if (model.editor?.kind === "geoip") finishEditor(true);
                   });
                 },
                 "primary",
@@ -3482,6 +3430,7 @@ function renderGeoIP() {
                       "已保存上一份 GeoIP，下次显式启用接管时加载。",
                       "success",
                     );
+                    if (model.editor?.kind === "geoip") finishEditor(true);
                   });
                 },
                 "danger",
@@ -3639,6 +3588,7 @@ function renderLANSettings() {
               enabled: true,
               address: address.value,
             });
+            if (model.editor?.kind === "lan") finishEditor(true);
             showResult("局域网访问", model.lan);
             await refreshState();
             render();
@@ -3653,6 +3603,7 @@ function renderLANSettings() {
             action(async () => {
               await request("/access/lan", "POST", { enabled: false });
               model.lan = await endpoints.lan();
+              if (model.editor?.kind === "lan") finishEditor(true);
               await refreshState();
               render();
             }, "局域网入口已关闭"),
@@ -3747,85 +3698,271 @@ async function exportData() {
 }
 
 function renderAuth() {
-  return h(
-    "section",
-    { class: "card login-card" },
-    h("img", { src: "/icon.svg", alt: "", width: 52, height: 52 }),
-    h("h1", {}, "连接你的 KONE 主机"),
-    h(
-      "p",
-      {},
-      "管理数据只向已授权会话开放。请从主机所有者处获取短期授权代码。",
-    ),
-    h(
-      "form",
-      {
-        onsubmit: async (event) => {
-          event.preventDefault();
-          const code = new FormData(event.target).get("pairing_code");
-          const submit = event.target.querySelector("button");
-          submit.disabled = true;
-          try {
-            await endpoints.login(code);
-            model.authenticated = true;
-            await refreshAll();
-          } catch (error) {
-            const errorNode = document.querySelector("#auth-error");
-            errorNode.replaceChildren(note(error.message, "error"));
-          } finally {
-            submit.disabled = false;
-          }
-        },
-      },
-      h("div", { id: "auth-error" }),
-      h(
-        "div",
-        { class: "field" },
-        h("label", { for: "pairing-code" }, "授权代码"),
-        h("input", {
-          id: "pairing-code",
-          name: "pairing_code",
-          type: "password",
-          autocomplete: "one-time-code",
-          required: true,
-          placeholder: "输入短期授权代码",
-        }),
-      ),
-      h(
-        "div",
-        { class: "form-section" },
-        h("button", { class: "button primary", type: "submit" }, "授权并连接"),
-      ),
-    ),
-    h(
-      "div",
-      { class: "form-section" },
-      h(
-        "small",
-        {},
-        "如果你就在这台主机上，请通过 KONE 的本机入口重新打开管理页。手机需先信任本地主机证书；不需要安装 KONE 内核。",
-      ),
-    ),
+  const setup = Boolean(model.auth?.setup_required ?? model.state.setup_required);
+  const authorized = Boolean(model.auth?.setup_authorized ?? model.state.role === "setup");
+  const paired = model.authMode === "pairing" && !setup;
+  const title = setup ? "设置管理密码" : paired ? "使用配对代码连接" : "登录 KONE 管理";
+  const content = h("section", { class: "card login-card" },
+    h("img", { src: "/icon.svg", alt: "", width: 52, height: 52 }), h("h1", {}, title),
+    h("p", {}, setup ? "首次使用需设置管理密码；设置完成后，管理数据和写操作才会开放。" : paired ? "使用主机所有者创建的短期授权代码；权限由配对会话决定。" : "请输入管理密码。托盘打开的地址不会绕过密码认证。"),
+  );
+  if (setup && !authorized) {
+    content.append(note("请从这台主机的 KONE 托盘重新打开管理页，获得一次性本机设置授权。", "warning"));
+    return content;
+  }
+  const errorNode = h("div", { id: "auth-error", role: "alert" });
+  const form = h("form", { onsubmit: async (event) => {
+    event.preventDefault();
+    const values = new FormData(event.target);
+    const submit = event.target.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    errorNode.replaceChildren();
+    try {
+      let result;
+      if (setup) {
+        const password = String(values.get("password") || "");
+        const confirm = String(values.get("confirm_password") || "");
+        if (Array.from(password).length < 8 || new TextEncoder().encode(password).length > 128)
+          throw new Error("密码至少 8 个字符，UTF-8 长度不超过 128 字节。");
+        if (password !== confirm) throw new Error("两次输入的密码不一致。");
+        result = await endpoints.setPassword({ password, confirm_password: confirm });
+      } else if (paired) result = await endpoints.login(values.get("pairing_code"));
+      else result = await endpoints.passwordLogin(values.get("password"));
+      event.target.reset();
+      setSession(result || {});
+      model.state = result || {};
+      model.auth = { setup_required: false, password_required: false, authenticated: true };
+      model.authenticated = true;
+      await refreshAll();
+    } catch (error) { if (errorNode.isConnected) errorNode.replaceChildren(note(error.message, "error")); else failure(error); }
+    finally { submit.disabled = false; }
+  } });
+  if (paired) form.append(field("授权代码", "", () => {}, { id: "pairing-code", type: "password", autocomplete: "one-time-code", disabled: false }));
+  else {
+    form.append(field("管理密码", "", () => {}, { id: setup ? "setup-password" : "login-password", type: "password", autocomplete: setup ? "new-password" : "current-password", disabled: false }));
+    if (setup) form.append(field("再次输入管理密码", "", () => {}, { id: "setup-password-confirm", type: "password", autocomplete: "new-password", disabled: false }));
+  }
+  // FormData reads secret inputs directly; passwords never enter the page model.
+  const inputs = form.querySelectorAll("input");
+  inputs[0].name = paired ? "pairing_code" : "password";
+  inputs[0].required = true;
+  if (inputs[1]) { inputs[1].name = "confirm_password"; inputs[1].required = true; }
+  form.append(errorNode, h("div", { class: "form-section" }, h("button", { class: "button primary", type: "submit" }, setup ? "设置管理密码" : paired ? "授权并连接" : "登录管理")));
+  content.append(form);
+  if (!setup) content.append(h("div", { class: "form-section" }, button(paired ? "使用管理密码" : "使用配对代码", () => { model.authMode = paired ? "password" : "pairing"; render(); }, "ghost", false)));
+  content.append(h("small", { class: "block-hint form-section" }, "密码不写入地址或日志；手机可使用所有者授权的短期配对代码。"));
+  return content;
+}
+
+function captureLocked() {
+  return ["starting", "running", "degraded", "pausing", "stopping"].includes(runtime()) || Boolean(model.state.capture_locked ?? model.config?.capture_locked ?? false);
+}
+function editorSnapshot() {
+  return clone({ draft: model.draft, inbound: model.inbound, credentialActions: model.credentialActions, outboundOrigins: model.outboundOrigins, dirty: model.dirty, versionConflict: Boolean(model.versionConflict) });
+}
+function openEditor(kind, index = null, mutate = null) {
+  if (!canManage() || !model.draft) return;
+  if (["inbounds", "dns", "logs"].includes(kind) && captureLocked()) {
+    notice("请先暂停接管，再修改捕获、DNS 或日志采集设置。", "warning");
+    return;
+  }
+  if (model.editor) return;
+  model.editor = { kind, index, snapshot: editorSnapshot(), testTarget: "example.com:443", testTLS: true, test: null };
+  if (mutate) mutate();
+  if (kind === "rule") model.editor.item = model.draft.rules[index];
+  if (kind === "outbound") model.editor.baseFingerprint = outboundTestFingerprint();
+  renderEditor();
+  const modal = document.querySelector("#editor-dialog");
+  if (!modal.open) modal.showModal();
+}
+function finishEditor(saved = false) {
+  if (!model.editor) return;
+  if (!saved) Object.assign(model, model.editor.snapshot);
+  model.editor = null;
+  model.geoFile = null;
+  model.geoExpected = "";
+  document.querySelector("#editor-dialog")?.close();
+  render();
+}
+function requestCloseEditor() {
+  if (!model.editor || model.busy) return;
+  if (!model.dirty || JSON.stringify(editorSnapshot()) === JSON.stringify(model.editor.snapshot)) return finishEditor(false);
+  dialog("放弃未保存的修改？", "取消后恢复编辑前的草稿，不改变已保存设置或当前接管。", null, [
+    button("继续编辑", closeDialog, "ghost", false),
+    button("放弃修改并关闭", () => { closeDialog(); finishEditor(false); }, "danger", false),
+  ]);
+}
+function selectCards(nodes, titles) {
+  return nodes.filter(node => node?.getAttribute && titles.includes(node.getAttribute("data-card-title")));
+}
+function renderEditor() {
+  const editor = model.editor;
+  if (!editor) return;
+  let modal = document.querySelector("#editor-dialog");
+  if (!modal) {
+    modal = h("dialog", { id: "editor-dialog", class: "detail-dialog editor-dialog", "aria-labelledby": "editor-title", oncancel: (event) => { event.preventDefault(); requestCloseEditor(); } });
+    document.body.append(modal);
+  }
+  const titles = { inbounds: "编辑入站", outbound: "编辑代理出站", rule: "编辑路由规则", dns: "编辑 DNS 设置", logs: "编辑日志设置", lan: "管理局域网访问", geoip: "更新 GeoIP 数据" };
+  let content = [];
+  if (editor.kind === "inbounds") content = selectCards(renderInboundsEditor(), ["TUN 接管入口"]);
+  if (editor.kind === "outbound") content = selectCards(renderOutboundsEditor(), ["代理出站"]);
+  if (editor.kind === "rule") content = selectCards(renderRulesEditor(), ["路由规则"]);
+  if (editor.kind === "dns") content = selectCards(renderDNSEditor(), ["解析设置", "按域名选择解析器"]);
+  if (editor.kind === "logs") content = selectCards(renderSettingsEditor(), ["日志设置"]);
+  if (editor.kind === "lan") content = selectCards(renderSettingsEditor(), ["手机与平板访问"]);
+  if (editor.kind === "geoip") content = [renderGeoIP()];
+  if (["inbounds", "dns", "logs"].includes(editor.kind) && captureLocked()) {
+    for (const node of content) node.querySelectorAll("input,select,textarea,button").forEach(input => { input.disabled = true; });
+    content.unshift(note("接管已进入运行或切换状态；这些设置不能热改，请暂停后再编辑。", "warning"));
+  }
+  modal.replaceChildren(
+    h("div", { class: "dialog-head" }, h("div", {}, h("h2", { id: "editor-title" }, titles[editor.kind]), h("p", {}, "取消将丢弃本次未保存修改；保存结果与运行状态分别确认。")), button("×", requestCloseEditor, "ghost compact", model.busy, { "aria-label": "关闭编辑" })),
+    h("div", { id: "editor-notice", role: "status" }, model.notice && note(model.notice.message, model.notice.kind)),
+    h("div", { class: "editor-content" }, content, editor.kind === "outbound" && renderOutboundTest()),
+    h("div", { class: "editor-footer" }, button(["lan", "geoip"].includes(editor.kind) ? "关闭面板" : "取消编辑", requestCloseEditor, "ghost", model.busy, { "data-editor-cancel": "" }), !["lan", "geoip"].includes(editor.kind) && configFooter(true)),
   );
 }
+function outboundTestFingerprint() {
+  const outbound = model.draft?.outbounds?.[model.editor?.index] || {};
+  const credential = model.credentialActions[outbound.name] || { action: "preserve", original_name: model.outboundOrigins[model.editor?.index] };
+  return JSON.stringify({ url: outbound.url, enabled: outbound.enabled !== false, fallback: outbound["udp-fallback"] || "", credential: { action: credential.action, username: credential.username || "", password: credential.password || "", original_name: credential.original_name || "" } });
+}
+function renderOutboundTest() {
+  const editor = model.editor;
+  const result = editor.test;
+  return card("保存前测试", "目标由你明确指定；只验证代理连接与可选 TLS，不发送应用请求，不启用接管。",
+    h("div", { class: "form-grid" }, field("测试目标（主机:端口）", editor.testTarget, value => { editor.testTarget = value; editor.test = null; }, { id: "outbound-test-target" }), check("验证目标 TLS", editor.testTLS, value => { editor.testTLS = value; editor.test = null; }, "HTTPS 目标可开启；其他服务请按协议选择。", "outbound-test-tls")),
+    button("测试连接", runEditorOutboundTest, "primary", !canManage()),
+    h("div", { id: "outbound-test-result", role: "status" }, result && healthResult(result)),
+  );
+}
+function healthResult(result) {
+  return h("div", { class: "form-section" }, badge(result.status === "healthy" ? "succeeded" : result.status === "unhealthy" ? "failed" : result.status), detailPairs([["目标", result.target || "—"], ["阶段", result.stage || "未知"], ["结果", result.message || "传输测试完成，不代表应用业务成功"], ["时间", time(result.checked_at || result.time)], ["有效期", time(result.expires_at)]]));
+}
+async function runEditorOutboundTest() {
+  const editor = model.editor;
+  if (!editor || editor.kind !== "outbound") return;
+  const outbound = model.draft.outbounds[editor.index];
+  const fingerprint = outboundTestFingerprint();
+  await action(async () => {
+    try {
+      const operation = await watchOperation(await endpoints.outboundTest({ base_version: model.config.version, draft: clone(outbound), credential_action: model.credentialActions[outbound.name] || { action: "preserve", original_name: model.outboundOrigins[editor.index] }, target: editor.testTarget, tls: editor.testTLS }));
+      if (model.editor === editor) editor.test = { ...(operation.result || operation), fingerprint };
+    } catch (error) {
+      if (model.editor === editor) editor.test = { status: "unhealthy", message: error.message, target: editor.testTarget, fingerprint };
+    }
+    await refreshOutboundHealth();
+  });
+}
+async function saveEditor(apply) {
+  if (!canManage()) return;
+  const editor = model.editor;
+  if (editor?.kind === "outbound") {
+    const value = model.draft.outbounds[editor.index];
+    const cached = model.outboundHealth.find(item => (value.id && item.id === value.id) || item.name === value.name);
+    const current = outboundTestFingerprint();
+    const tested = editor.test?.fingerprint === current && currentHealth(editor.test);
+    const unchangedHealthy = current === editor.baseFingerprint && currentHealth(cached);
+    if (!tested && !unchangedHealthy) {
+      dialog("确认保存未验证的出站", "尚未获得当前配置的有效成功测试。你可以返回修正并重试，也可以仅保存配置；不会自动启用接管。", editor.test ? healthResult(editor.test) : note("此出站尚未测试或测试结果已过期。", "warning"), [
+        button("返回测试", closeDialog, "ghost", false),
+        button("仍然保存", () => { closeDialog(); saveConfig(apply); }, "primary", !canManage(), { id: "outbound-save-untested" }),
+      ]);
+      return;
+    }
+  }
+  return saveConfig(apply);
+}
+async function refreshOutboundHealth() {
+  try { const result = await endpoints.outboundHealth(); model.outboundHealth = list(result.statuses); }
+  catch { model.outboundHealth = []; }
+}
+function addOutbound() {
+  const index = list(model.draft?.outbounds).length;
+  openEditor("outbound", index, () => { model.draft.outbounds ||= []; model.draft.outbounds.push({ name: "", url: "", "udp-fallback": "" }); model.outboundOrigins.push(undefined); markDirty(); });
+}
+function addRule(type) {
+  const values = list(model.draft?.rules);
+  if (type === "FINAL" && values.some(rule => rule.type === "FINAL")) return notice("已经存在最终规则。", "warning");
+  const final = values.findIndex(rule => rule.type === "FINAL");
+  const index = type === "FINAL" || final < 0 ? values.length : final;
+  openEditor("rule", index, () => { model.draft.rules ||= []; model.draft.rules.splice(index, 0, { type, ...(type === "FINAL" ? {} : { pattern: "" }), outbound: "direct" }); markDirty(); });
+}
+function confirmResourceChange(title, mutate) {
+  if (!canManage()) return;
+  dialog(title, "保存后会尝试热应用到新连接，已有连接保留原策略。", null, [button("取消", closeDialog, "ghost", false), button("确认保存", () => { closeDialog(); saveResourceChange(mutate); }, "danger")]);
+}
+async function saveResourceChange(mutate) {
+  if (!canManage()) return;
+  const previous = editorSnapshot();
+  mutate(); markDirty();
+  if (!await saveConfig(true)) { Object.assign(model, previous); render(); }
+}
+function deleteOutbound(index) {
+  const outbound = model.draft.outbounds[index];
+  if (list(model.draft.rules).some(rule => rule.outbound === outbound.name)) return dialog("无法删除出站", "该出站仍被规则引用，请先编辑相关规则。", null);
+  confirmResourceChange(`删除出站 ${outbound.name}`, () => { delete model.credentialActions[outbound.name]; model.draft.outbounds.splice(index, 1); model.outboundOrigins.splice(index, 1); });
+}
+function deleteRule(index) { confirmResourceChange("删除这条规则？", () => model.draft.rules.splice(index, 1)); }
+function moveSavedRule(index, direction) { saveResourceChange(() => { const next = index + direction; [model.draft.rules[index], model.draft.rules[next]] = [model.draft.rules[next], model.draft.rules[index]]; }); }
+function outboundDetails(index) {
+  const outbound = model.config.config.outbounds[index];
+  const health = model.outboundHealth.find(value => (outbound.id && value.id === outbound.id) || value.name === outbound.name);
+  dialog(outbound.name, "已保存出站详情；现有凭据不会回显。", h("div", {}, detailPairs([["地址", outboundAddress(outbound.url)], ["启用状态", outbound.enabled === false ? "已禁用" : "已启用"], ["认证", model.config.credential_state?.[outbound.name]?.configured ? "已配置（隐藏）" : "未配置或不可得"], ["UDP 回退", outbound["udp-fallback"] || "默认拒绝不支持的协议"]]), health ? healthResult(health) : note("尚无有效目标测试。")));
+}
+function openOutboundTest(index) {
+  const outbound = model.config.config.outbounds[index];
+  const target = h("input", { id: "outbound-test-target", value: "example.com:443", "aria-label": "测试目标（主机:端口）" });
+  const tls = h("input", { type: "checkbox", checked: true, id: "outbound-test-tls" });
+  const result = h("div", { id: "outbound-test-result", role: "status" });
+  dialog(`测试出站 ${outbound.name}`, "只有点击测试才会连接所列目标；不发送应用请求，不修改网络。", h("div", {}, h("label", { for: "outbound-test-target" }, "测试目标（主机:端口）"), target, h("label", { for: "outbound-test-tls" }, tls, "验证目标 TLS"), result), [button("测试连接", () => action(async () => {
+    try { const operation = await watchOperation(await endpoints.outboundTest({ base_version: model.config.version, outbound_id: outbound.id, target: target.value, tls: tls.checked })); result.replaceChildren(healthResult(operation.result || operation)); await refreshOutboundHealth(); }
+    catch (error) { result.replaceChildren(note(error.message, "error")); }
+  }), "primary")]);
+}
+function openDiagnosticForm() { dialog("新建诊断", "目标和出站由你指定；不重放业务请求。", h("div", {}, ...selectCards(renderDiagnosticsEditor(), ["对比直连与代理"]))); }
+function renderDiagnostics() {
+  return [card("连通性诊断", "从任务和失败证据判断问题；新诊断由你明确发起。", button("新建诊断", openDiagnosticForm, "primary")), ...renderDiagnosticsEditor().filter(node => node?.getAttribute?.("data-card-title") !== "对比直连与代理")];
+}
+const configurationPages = createConfigurationPages({ model, h, card, note, button, badge, detailPairs, empty, readonlyNote, time, canManage, runtime,
+  stateLabel: () => stateLabels[runtime()] || runtime(), edit: openEditor, addOutbound, addRule, deleteOutbound, deleteRule, moveRule: moveSavedRule, outboundDetails, testOutbound: openOutboundTest,
+  refreshHealth: () => refreshOutboundHealth().then(renderPreserving), preflight: () => action(async () => showResult("接管预检", await endpoints.lifecycle("preflight"))),
+  simulateRules: () => dialog("模拟规则匹配", "使用已保存版本，不发起业务连接。", h("div", {}, ...selectCards(renderRulesEditor(), ["模拟一次规则匹配"]))),
+  dnsObservations: () => selectCards(renderDNSEditor(), ["系统解析范围", "查询记录"]),
+  settingsObservations: () => selectCards(renderSettingsEditor(), ["配置与生命周期", "导入与恢复配置", "网络恢复", "记录、隐私与导出", "关于 KONE"]),
+});
 const renderers = {
   home: renderHome,
   connections: renderConnections,
-  inbounds: renderInbounds,
-  outbounds: renderOutbounds,
-  rules: renderRules,
-  dns: renderDNS,
+  inbounds: configurationPages.inbounds,
+  outbounds: configurationPages.outbounds,
+  rules: configurationPages.rules,
+  dns: configurationPages.dns,
   diagnostics: renderDiagnostics,
-  settings: renderSettings,
+  settings: configurationPages.settings,
 };
 function render() {
   updateShell();
   if (!model.authenticated) {
+    if (model.editor) {
+      model.editor = null;
+      model.draft = clone(model.config?.config || {});
+      model.inbound = clone(model.config?.inbound || {});
+      model.credentialActions = {};
+      model.dirty = false;
+      document.querySelector("#editor-dialog")?.close();
+    }
+    document.querySelector("#detail-dialog")?.close();
     main.replaceChildren(renderAuth());
     return;
   }
   const actions = [
     button("刷新", () => refreshAll().catch(failure), "ghost compact", false),
+    button("退出登录", async () => {
+      try { await endpoints.logout(); setSession({}); model.authenticated = false; model.online = false; model.state = {}; model.auth = await endpoints.auth(); render(); }
+      catch (error) { failure(error); }
+    }, "ghost compact", !model.online),
   ];
   main.replaceChildren(
     pageHeader(actions),
@@ -3836,6 +3973,7 @@ function render() {
     ),
     ...renderers[model.page]().filter(Boolean),
   );
+  if (model.editor) renderEditor();
 }
 function renderPreserving() {
   const active = document.activeElement;
@@ -3867,6 +4005,7 @@ function navigate(page, nextNotice = null) {
   }
 }
 async function loadPageData() {
+  if (model.page === "outbounds") await refreshOutboundHealth();
   if (model.page === "dns") model.dns = await endpoints.dns();
   if (model.page === "diagnostics") {
     await loadLogs();
@@ -3967,10 +4106,10 @@ setInterval(async () => {
   try {
     await refreshState();
     await refreshTraffic();
-    if (["dns", "diagnostics"].includes(model.page)) await loadPageData();
+    if (["dns", "diagnostics", "outbounds"].includes(model.page)) await loadPageData();
     if (
-      (["home", "connections", "dns", "diagnostics"].includes(model.page) || !wasOnline) &&
-      !document.querySelector("#detail-dialog").open
+      (["home", "connections", "dns", "diagnostics", "outbounds"].includes(model.page) || !wasOnline) &&
+      !document.querySelector("#detail-dialog").open && !document.querySelector("#editor-dialog")?.open
     )
       renderPreserving();
   } catch (error) {
@@ -3996,13 +4135,22 @@ try {
       ? location.hash.slice(1)
       : "home";
   }
-  model.online = true;
-  model.authenticated = true;
-  model.lastSuccess = new Date().toISOString();
-  await refreshAll();
+  if (model.state.setup_required) {
+    setSession(model.state);
+    model.auth = { setup_required: true, setup_authorized: true };
+    model.authenticated = false;
+    model.online = false;
+    render();
+  } else {
+    model.online = true;
+    model.authenticated = true;
+    model.lastSuccess = new Date().toISOString();
+    await refreshAll();
+  }
 } catch (error) {
   if (error.status === 401) model.authenticated = false;
   else model.notice = { message: error.message, kind: "error" };
   if (error.status === 401) model.online = false;
+  try { model.auth = await endpoints.auth(); } catch {}
   render();
 }

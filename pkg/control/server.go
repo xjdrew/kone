@@ -90,31 +90,35 @@ func (c *Controller) Handler() http.Handler {
 			return
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/api/v1/")
-		if !c.allowRequest(r, path == "session") {
+		if !c.allowRequest(r, path == "session" || path == "auth/password") {
 			apiError(w, 429, "rate_limit", "Request limit reached; retry later")
 			return
 		}
+		if path == "auth" && r.Method == http.MethodGet {
+			c.authInformation(w, r)
+			return
+		}
 		if path == "session" && r.Method == http.MethodPost {
-			var request struct {
-				Token       string `json:"token"`
-				PairingCode string `json:"pairing_code"`
-			}
-			if readJSON(w, r, &request) != nil {
-				apiError(w, 400, "request", "Invalid authorization request")
-				return
-			}
-			token, session, err := c.claim(request.Token, request.PairingCode, !localRemote(r))
-			if err != nil {
-				apiError(w, 401, "unauthorized", err.Error())
-				return
-			}
-			http.SetCookie(w, &http.Cookie{Name: "kone_session", Value: token, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: int(time.Until(session.Expires).Seconds())})
-			writeJSON(w, 200, map[string]any{"role": session.Role, "session_id": session.ID, "csrf_token": session.csrf, "expires": session.Expires})
+			c.createSession(w, r)
 			return
 		}
 		session, ok := c.authorize(r)
 		if !ok {
 			apiError(w, 401, "unauthorized", "Authorize this browser or pair it from the local KONE window")
+			return
+		}
+		if path == "auth/password" && r.Method == http.MethodPost {
+			c.setupPassword(w, r, session)
+			return
+		}
+		if !c.passwordConfigured() || session.Role == "setup" {
+			apiError(w, 403, "setup_required", "Set the management password from the local tray before using the console")
+			return
+		}
+		if path == "session/logout" && r.Method == http.MethodPost {
+			c.revoke(session.ID)
+			http.SetCookie(w, &http.Cookie{Name: "kone_session", Value: "", Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+			writeJSON(w, 200, map[string]any{"logged_out": true})
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && session.Role != "admin" {
@@ -133,6 +137,10 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 			status = 409
 			code = "version_conflict"
 		}
+		if errors.Is(err, ErrCaptureLocked) {
+			status = 409
+			code = "capture_locked"
+		}
 		c.mu.Lock()
 		message := safeMessage(err, c.doc.Config)
 		c.mu.Unlock()
@@ -149,7 +157,13 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 	switch {
 	case path == "state" && r.Method == http.MethodGet:
 		state := c.State()
-		writeJSON(w, 200, map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role, "remote_session": session.Remote, "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf})
+		writeJSON(w, 200, map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role, "remote_session": session.Remote, "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf, "capture_locked": state.CaptureLocked})
+	case path == "readiness" && r.Method == http.MethodGet:
+		writeJSON(w, 200, c.Readiness(r.Context()))
+	case path == "outbounds/health" && r.Method == http.MethodGet:
+		c.outboundHealthRoute(w, r)
+	case path == "outbounds/test" && r.Method == http.MethodPost:
+		c.testOutboundRoute(w, r, key)
 	case path == "config" && r.Method == http.MethodGet:
 		writeJSON(w, 200, c.Document())
 	case path == "logs" && r.Method == http.MethodGet:
@@ -209,8 +223,9 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		c.mu.Lock()
 		inbound := c.doc.Inbound
 		c.mu.Unlock()
-		inbound.Enabled = false
-		value, err := c.Save(SaveRequest{BaseVersion: request.BaseVersion, Config: jsonConfig(managementDefaults()), Inbound: inbound})
+		inbound.Enabled = true
+		confirmed := false
+		value, err := c.Save(SaveRequest{BaseVersion: request.BaseVersion, Config: jsonConfig(managementDefaults()), Inbound: inbound, DirectOnlyConfirmed: &confirmed})
 		if err != nil {
 			respondError(err)
 			return
@@ -512,7 +527,11 @@ func (c *Controller) Serve(ctx context.Context, address string, ready func(strin
 		_ = server.Shutdown(stopCtx)
 	}()
 	if ready != nil {
-		ready("http://" + listener.Addr().String() + "/#token=" + c.BootstrapToken())
+		access, err := c.LocalAccessURL()
+		if err != nil {
+			return err
+		}
+		ready(access)
 	}
 	err = server.Serve(listener)
 	closeErr := c.Close()
