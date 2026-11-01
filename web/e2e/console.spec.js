@@ -2375,7 +2375,7 @@ test("@compat temporary domain rules and outbound disable are explicit saved dra
   page,
 }) => {
   const data = await mount(page);
-  await page.locator(".nav-link[data-page=rules]").click();
+  await navigate(page, "rules");
   await page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
   await page.locator('[data-editor-advanced="rule"] > summary').click();
   await page.getByText("高级：规则有效期", { exact: true }).click();
@@ -2389,7 +2389,7 @@ test("@compat temporary domain rules and outbound disable are explicit saved dra
           .rules[0]["expires-at"],
     )
     .toMatch(/^\d{4}-\d{2}-\d{2}T/);
-  await page.locator(".nav-link[data-page=outbounds]").click();
+  await navigate(page, "outbounds");
   await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
   await page.locator('[data-editor-advanced="outbound"] > summary').click();
   await page.locator("#outbound-enabled-0").uncheck();
