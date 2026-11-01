@@ -40,7 +40,7 @@ Releases upload nine custom assets: six application packages, `kone-source.tar.g
 
 Linux ARMv7 remains available through an explicit source build for older Raspberry Pi systems, outside the six default release targets. Privileged CI checks exercise Linux TUN, Windows Wintun and macOS utun with each supported protocol stack on their runner hardware; their actual result belongs to the exact checked SHA. Cross-compilation is not evidence of Raspberry Pi throughput, ARM64 driver behavior, or a clean-machine desktop/permission experience.
 
-Windows `kone.exe` and macOS `Kone.app` launch paused tray/menu management without a terminal or automatic browser window. Use `kone-cli.exe` / `kone-cli` for console output and file mode; Linux retains `kone`. See [desktop setup](desktop.md).
+Windows `kone.exe` and macOS `Kone.app` open paused management in your browser and keep a tray/menu icon without a terminal; `-no-browser` provides quiet tray startup. Use `kone-cli.exe` / `kone-cli` for console output and file mode; Linux retains `kone`. See [desktop setup](desktop.md).
 
 Packages are unsigned, and macOS packages are not notarized. Verify checksums before installation; platform trust controls remain in effect. Signing/notarization and their credentials need a separate distribution decision. A portable installer only copies KONE-owned application files; installation does not enable capture, create services, configure autostart, change routes/DNS/firewall, or install certificate trust. System packages place the console executable in the standard system path and may require installation privileges. The user profile is separate and is retained across upgrades and uninstallation.
 

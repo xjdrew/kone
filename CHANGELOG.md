@@ -2,6 +2,7 @@
 
 ## Features
 
+- Open management on desktop launch, explain tray access and offer quiet startup with `-no-browser`.
 - Filter runtime logs by time and browse history in a compact diagnostics table with pagination.
 - Create rules with type-specific inputs and country choices, and see the matched rule in routing simulations.
 - Diagnose UDP paths with validated DNS responses through direct, SOCKS5 and Shadowsocks outbounds.
@@ -41,7 +42,7 @@
 ## Bugfixes
 
 - Explain incompatible saved password files in the desktop startup dialog and show how to reset authentication while keeping other settings.
-- Keep Windows background DNS and network checks from flashing console windows during capture.
+- Keep Windows background DNS and network checks from flashing console windows on startup or during capture.
 - Preserve log filters, expanded fields and reading position during automatic updates.
 - Show real outbound connection failures in runtime logs at the default log level.
 - Prevent intercepted domains from bypassing their routing policy through real IPv6 DNS answers when IPv6 capture is disabled.

@@ -10,12 +10,24 @@ const startupAlertScript = `on run argv
     display alert (item 1 of argv) message (item 2 of argv) as critical buttons {"OK"} default button "OK"
 end run`
 
+const browserAlertScript = `on run argv
+    display alert (item 1 of argv) message (item 2 of argv) as informational buttons {"OK"} default button "OK"
+end run`
+
 func showDesktopFailure(_ int, message string) {
 	showDesktopNotice("KONE startup failed", message)
 }
 
 func showDesktopNotice(heading, body string) {
-	command := exec.Command("/usr/bin/osascript", "-e", startupAlertScript, "--", heading, body)
+	showDesktopAlert(startupAlertScript, heading, body)
+}
+
+func showBrowserNotice(heading, body string) {
+	showDesktopAlert(browserAlertScript, heading, body)
+}
+
+func showDesktopAlert(script, heading, body string) {
+	command := exec.Command("/usr/bin/osascript", "-e", script, "--", heading, body)
 	command.Stdout = io.Discard
 	command.Stderr = io.Discard
 	_ = command.Run()

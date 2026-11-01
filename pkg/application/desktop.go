@@ -12,8 +12,8 @@ import (
 	"github.com/xjdrew/kone/pkg/logstore"
 )
 
-// RunDesktop opens persistent management without printing its bootstrap URL or
-// opening the browser. The native tray supplies the explicit browser action.
+// RunDesktop opens persistent management and its browser interface without
+// printing the setup URL. -no-browser leaves management in the native tray.
 func RunDesktop(ctx context.Context, args []string, version string) int {
 	return runDesktop(ctx, args, version, showDesktopFailure)
 }
@@ -62,4 +62,12 @@ func desktopFailureMessage(code int, cause error) string {
 		return "管理密码格式已更新，旧认证文件无法使用。\n\n请退出 KONE，备份并移出配置目录中的 auth.json，再重新启动并设置管理密码。\n\n保留 settings.json，代理和规则等配置无需重置。"
 	}
 	return fmt.Sprintf("KONE could not start (exit %d). Open kone-cli in a terminal to inspect the configuration and startup diagnostics.", code)
+}
+
+func showBrowserFailure() {
+	showBrowserNotice("KONE 管理已在后台运行", browserFailureMessage())
+}
+
+func browserFailureMessage() string {
+	return "无法打开默认浏览器。管理服务已在后台运行，关闭此提示不会退出 KONE。\n\n请打开托盘或菜单栏中的 KONE 图标，重新进入管理页面。"
 }

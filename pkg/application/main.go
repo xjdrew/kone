@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 
@@ -32,6 +31,7 @@ type runOptions struct {
 	tray           func(context.Context, desktop.TrayActions) error
 	trayAvailable  func() bool
 	captureNotice  func(string)
+	browserNotice  func()
 	startupFailure func(error)
 }
 
@@ -65,6 +65,9 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 	if options.captureNotice == nil {
 		options.captureNotice = showCaptureFailure
 	}
+	if options.browserNotice == nil {
+		options.browserNotice = showBrowserFailure
+	}
 	configureLogging := func(general kone.GeneralConfig, debug bool) error {
 		output := stderr
 		if options.desktop {
@@ -87,7 +90,7 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 	manage := flags.Bool("manage", false, "Open persistent management without enabling capture")
 	directory := flags.String("data-dir", "", "Management profile directory (defaults to the user configuration directory)")
 	listen := flags.String("listen", "127.0.0.1:9200", "Management loopback IP and port")
-	noBrowser := flags.Bool("no-browser", false, "Print the management URL without opening a browser")
+	noBrowser := flags.Bool("no-browser", false, "Keep desktop management in the tray; CLI prints its URL without opening a browser")
 	noTray := flags.Bool("no-tray", false, "Disable the native management tray")
 	helperPipe := flags.String("network-helper", "", "Internal authenticated network helper pipe")
 	helperParent := flags.Uint64("parent-pid", 0, "Internal network helper parent identity")
@@ -211,10 +214,13 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 				fmt.Fprintf(stdout, "KONE management (capture paused): %s\n", url)
 			}
 			if openInitial {
-				slog.Info("Opening local management in the browser", "stage", "browser")
-				if err := options.browser(url); err != nil {
-					slog.Warn("Could not open the management browser", "stage", "browser", "error", err)
-					fmt.Fprintln(stderr, "Could not open a browser; open the printed local URL")
+				open := func() { openManagementBrowser(ctx, url, stderr, options) }
+				if options.desktop {
+					// Serving must proceed even if shell activation or native feedback
+					// waits for the user. The ready callback runs before HTTP Serve.
+					go open()
+				} else {
+					open()
 				}
 			}
 			if startTray && options.trayAvailable() {
@@ -308,23 +314,24 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 }
 
 func managementPresentation(gui, noBrowser, noTray bool) (openInitial, startTray bool) {
-	return !gui && !noBrowser, !noTray && (gui || !noBrowser)
+	return !noBrowser, !noTray && (gui || !noBrowser)
 }
 
-func openBrowser(url string) error {
-	var command *exec.Cmd
-	switch runtime.GOOS {
-	case "windows":
-		command = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	case "darwin":
-		command = exec.Command("open", url)
-	default:
-		command = exec.Command("xdg-open", url)
+func openManagementBrowser(ctx context.Context, url string, stderr io.Writer, options runOptions) {
+	if ctx.Err() != nil {
+		return
 	}
-	prepareBackground(command)
-	if err := command.Start(); err != nil {
-		return err
+	slog.Info("Opening local management in the browser", "stage", "browser")
+	if err := options.browser(url); err != nil {
+		// A shell error can echo its target. Never retain a one-use setup URL
+		// in logs or put it into a native notification.
+		slog.Warn("Could not open the management browser", "stage", "browser")
+		if options.desktop {
+			if ctx.Err() == nil {
+				options.browserNotice()
+			}
+		} else {
+			fmt.Fprintln(stderr, "Could not open a browser; open the printed local URL")
+		}
 	}
-	go command.Wait()
-	return nil
 }

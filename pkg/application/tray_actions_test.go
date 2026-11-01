@@ -98,7 +98,7 @@ func TestFailedTrayStartKeepsDesktopManagementAvailable(t *testing.T) {
 			return nil
 		}}
 	go func() {
-		result <- runWithOptions(ctx, []string{"-data-dir", t.TempDir(), "-listen", "127.0.0.1:0"}, io.Discard, io.Discard, elevateForWindows, options)
+		result <- runWithOptions(ctx, []string{"-data-dir", t.TempDir(), "-listen", "127.0.0.1:0", "-no-browser"}, io.Discard, io.Discard, elevateForWindows, options)
 	}()
 	select {
 	case value := <-state:

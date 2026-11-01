@@ -4023,6 +4023,7 @@ function renderAuth() {
   content.append(form);
   if (!setup) content.append(h("div", { class: "form-section" }, button(paired ? "使用管理密码" : "使用配对代码", () => { if (model.authBusy) return; model.authMode = paired ? "password" : "pairing"; render(); }, "ghost", false)));
   content.append(h("small", { class: "block-hint form-section" }, "密码不写入地址或日志；手机可使用所有者授权的短期配对代码。"));
+  if (!paired) content.append(h("p", { class: "desktop-startup-guide", "data-desktop-startup-guide": "" }, "桌面版 KONE 常驻系统托盘或菜单栏。关闭此页面不会退出程序；可从 KONE 图标菜单重新打开管理，结束运行请使用该菜单中的退出操作。"));
   return content;
 }
 

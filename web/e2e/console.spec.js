@@ -760,6 +760,14 @@ async function expectKeyboardOutsideManagementShell(page) {
   }
 }
 
+async function expectDesktopStartupGuide(page) {
+  const guide = page.locator("[data-desktop-startup-guide]");
+  await expect(guide).toBeVisible();
+  await expect(guide).toContainText("常驻系统托盘或菜单栏");
+  await expect(guide).toContainText("关闭此页面不会退出程序");
+  await expect(guide).toContainText("结束运行请使用该菜单中的退出操作");
+}
+
 async function expectNoDialogPlaceholders(page) {
   const placeholders = await page.locator("#detail-content").evaluate((content) => [...content.childNodes]
     .filter((node) => node.nodeType === Node.TEXT_NODE)
@@ -848,6 +856,7 @@ for (const firstVisit of ["password", "setup"]) {
 test("@compat password login occupies the whole viewport until successful authentication", async ({ page }, testInfo) => {
   const data = await mount(page, { noBootstrap: true, requirePassword: true, managementPassword: "mock-owner-password", loggedIn: false, authScreen: "登录 KONE 管理" });
   await expect(page.locator("body")).toHaveClass(/auth-screen/);
+  await expectDesktopStartupGuide(page);
   await expectKeyboardOutsideManagementShell(page);
   await page.screenshot({ path: testInfo.outputPath("password-login-only.png"), animations: "disabled" });
   await page.locator("#login-password").fill("incorrect-password");
@@ -868,6 +877,7 @@ test("@compat password login occupies the whole viewport until successful authen
   } finally { release(); }
   await expect(page.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
   await expectManagementShellVisible(page);
+  await expect(page.locator("[data-desktop-startup-guide]")).toHaveCount(0);
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
 });
 
@@ -922,6 +932,7 @@ test("@compat first-time password setup requires matching inputs and remains cap
   const data = await mount(page, { requireSetup: true, loggedIn: false, authScreen: "设置管理密码" });
   await page.reload();
   await expect(page.locator("#setup-password")).toBeVisible();
+  await expectDesktopStartupGuide(page);
   await expectManagementShellHidden(page);
   expect(data.requests.some((request) => ["/config", "/logs", "/traffic"].includes(request.path))).toBe(false);
   await page.locator("#setup-password").fill("mock-owner-password");
@@ -933,6 +944,7 @@ test("@compat first-time password setup requires matching inputs and remains cap
   await page.getByRole("button", { name: "设置管理密码", exact: true }).click();
   await expect(page.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
   await expectManagementShellVisible(page);
+  await expect(page.locator("[data-desktop-startup-guide]")).toHaveCount(0);
   expect(data.requests.find((request) => request.path === "/auth/password")?.headers["x-csrf-token"]).toBe("setup-csrf");
   await expect(page.locator("#runtime-status")).toContainText("已暂停");
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);

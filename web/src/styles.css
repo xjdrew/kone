@@ -1402,6 +1402,7 @@ body:is(.auth-pending, .auth-screen) :is(.nav-backdrop, .banner, dialog) {
     scroll-behavior: auto !important;
   }
 }
+.desktop-startup-guide { margin: 22px 0 0; padding-top: 15px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.7; }
 .block-hint {
   display: block;
 }
