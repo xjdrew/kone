@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -20,7 +21,6 @@ func (c *Controller) ResetConfiguration(ctx context.Context, base uint64) (map[s
 	c.mu.Lock()
 	current := cloneDocument(c.doc)
 	locked := c.captureLocked() || c.state == "running" || c.state == "degraded" || c.state == "stopping"
-	recovery := c.state == "recovery_required" || c.state == "recovery_failed"
 	closed := c.closed
 	repair := c.configError != ""
 	c.mu.Unlock()
@@ -33,17 +33,17 @@ func (c *Controller) ResetConfiguration(ctx context.Context, base uint64) (map[s
 	if locked {
 		return nil, ErrCaptureLocked
 	}
-	report, err := c.InspectRecovery(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if recovery || report.Required {
-		return nil, errors.New("inspect and complete network recovery before resetting configuration")
-	}
 	if disk, readErr := readDocument(c.settingsPath()); readErr == nil && !sameDocument(disk, current) {
 		return nil, ErrConflict
 	} else if readErr != nil && !repair {
 		return nil, errors.New("saved settings changed or became unreadable; reload before saving")
+	}
+	defaults := managementDefaults()
+	if err := defaults.Validate(); err != nil {
+		return nil, err
+	}
+	if err := c.inspectAndClearRecovery(ctx, true, current.Config); err != nil {
+		return nil, err
 	}
 	// Save publishes settings atomically and cannot fail after that publication
 	// while capture is paused. Never rewrite its files on error: a failed save
@@ -76,7 +76,6 @@ func (c *Controller) ResetConfiguration(ctx context.Context, base uint64) (map[s
 		return rollback(err)
 	}
 	geoIPChanged = true
-	defaults := managementDefaults()
 	if c.configureLogging != nil {
 		loggingChanged = true
 		if err := c.configureLogging(defaults.General); err != nil {
@@ -103,5 +102,6 @@ func (c *Controller) ResetConfiguration(ctx context.Context, base uint64) (map[s
 	if lan != nil {
 		lan.close()
 	}
+	c.logEvent(slog.LevelInfo, "All managed settings reset to defaults", slog.String("stage", "reset"), slog.Uint64("saved_version", base+1))
 	return value, nil
 }

@@ -3,7 +3,8 @@
 ## Features
 
 - Include system, gVisor and mixed stacks in every build, selected at runtime with system as the default.
-- Change the management password and reset all settings while capture is paused from Settings and Recovery.
+- Record management startup, capture lifecycle and network helper progress in runtime logs.
+- Change the management password and reset all settings while capture is paused from Settings.
 - Require a management password on first use and password authentication on later logins.
 - Guide first-time capture setup with ready-to-use defaults and explicit direct-only confirmation.
 - Show configuration as status lists with focused editors, outbound connection tests and live rule/outbound updates.
@@ -34,7 +35,8 @@
 
 - Keep Windows packaging from changing tracked frontend files solely because of line endings.
 - Keep gateway capture stable when using the gVisor stack.
-- Unblock recovery after capture stops before network setup, and show the actual reason when capture cannot start.
+- Hide management navigation and controls until login succeeds, including during initial loading and after logout.
+- Automatically clear safe capture leftovers on startup and show stopped capture status accurately.
 - Keep signed-out sessions closed and resume first-time password setup after refreshing the page.
 - Show capture failures from the tray and open diagnostics without closing management.
 - Keep management usable when capture telemetry is temporarily unavailable instead of reporting a lost connection.
@@ -54,7 +56,10 @@
 
 - Derive versions from cumulative feature and bugfix changes, with master prereleases and tag-triggered stable releases.
 - Publish Windows ZIP, macOS PKG and Linux DEB for amd64/arm64; keep ARMv7 gateway builds as an explicit option.
-- Update console status automatically and group account actions and recovery controls in Settings, with About at the end.
+- Start capture without a technical preflight confirmation screen; show execution details in runtime logs.
+- Add matching action icons and clearer grouping to the Windows tray menu.
+- Organize Settings into grouped menus and dedicated subpages, with About first and reset/logout at the bottom.
+- Update console status automatically and keep account and maintenance controls in Settings.
 - Remove legacy HTTP management and `general.manager-addr`; use the password-protected Web console.
 - Run Windows stack checks in parallel while preserving platform and release validation.
 - Simplify setup, development, checks, builds and packaging into a few just commands.

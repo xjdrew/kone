@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/rpc"
 	"strconv"
 	"sync"
@@ -164,6 +165,7 @@ func (e *RemoteEngine) Run(parent context.Context) error {
 		e.finish(err)
 		return err
 	}
+	e.logEvent(slog.LevelInfo, "Waiting for network helper authorization and connection", slog.String("stage", "authorization"))
 	commands, events, err := e.connect(ctx)
 	if err != nil {
 		e.finish(err)
@@ -207,6 +209,7 @@ func (e *RemoteEngine) Run(parent context.Context) error {
 	e.client, e.commands, e.events = client, commands, events
 	e.logStatus.Connected = true
 	e.mu.Unlock()
+	e.logEvent(slog.LevelInfo, "Network helper connected", slog.String("stage", "connection"))
 	go server.ServeConn(disconnectStream{ReadWriteCloser: events, disconnected: disconnect})
 	var reply Empty
 	request := StartRequest{TOML: config, Version: version}

@@ -122,7 +122,7 @@ func TestRecoveryPreservesForeignPlatformJournalWithoutDeviceIdentity(t *testing
 	require.False(t, report.CanClear)
 	require.Equal(t, "identity_unknown", report.Items[0].Status)
 	require.Error(t, c.Recover(t.Context()))
-	require.Equal(t, "recovery_required", c.state)
+	require.Equal(t, "paused", c.state)
 	require.FileExists(t, c.journalPath())
 }
 

@@ -114,6 +114,9 @@ func TestHelperRuntimeLogsTravelPrivateIPCAndRemainAfterShutdown(t *testing.T) {
 	encoded, err = json.Marshal(shared)
 	require.NoError(t, err)
 	require.Contains(t, string(encoded), "helper engine cleanup completed")
+	for _, message := range []string{"Waiting for network helper authorization and connection", "Network helper connected", "Network helper capture is ready", "Network helper stopping capture"} {
+		require.Contains(t, string(encoded), message, "the shared runtime log must retain successful helper stages")
+	}
 }
 
 func TestHelperStartupFailureLogsFlushBeforeIPCCloses(t *testing.T) {

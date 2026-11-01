@@ -79,18 +79,6 @@ func (c *Controller) readiness(ctx context.Context, doc Document, state, configE
 	if configError != "" {
 		add(ReadinessCheck{"configuration", "configuration", "error", "error", configError, "settings", "config", "repair_configuration"})
 	}
-	if state == "recovery_required" || state == "recovery_failed" {
-		recovery, err := c.InspectRecovery(ctx)
-		report.Recovery = &recovery
-		message := recovery.NextAction
-		if message == "" {
-			message = "Inspect and acknowledge the previous capture before enabling"
-		}
-		if err != nil {
-			message += ": " + safeMessage(err, doc.Config)
-		}
-		add(ReadinessCheck{"recovery", "recovery", "error", "error", message, "settings", "recovery", "inspect_recovery"})
-	}
 	if report.DirectOnly {
 		check := ReadinessCheck{"direct_only", "direct_only", "warning", "warning", "Current rules use no proxy outbound. Capture will only use direct/reject policies; adding a proxy alone does not change these rules.", "outbounds", "rules", "configure_rules"}
 		if !doc.DirectOnlyConfirmed {

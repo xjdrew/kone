@@ -145,6 +145,11 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 			fmt.Fprintln(stderr, "Native desktop tray is unavailable; use kone-cli for console management")
 			return 3
 		}
+		if err := configureLogging(kone.DefaultConfig().General, *debug); err != nil {
+			fmt.Fprintln(stderr, "Could not initialize management logging")
+			return 3
+		}
+		slog.Info("Starting KONE management", "stage", "startup", "version", options.version, "desktop", options.desktop, "capture", "paused")
 		controlOptions := control.Options{Directory: *directory, Version: options.version, LogStore: options.logs}
 		controlOptions.ConfigureLogging = func(general kone.GeneralConfig) error { return configureLogging(general, *debug) }
 		if desktop.PrivilegeSeparationAvailable() {
@@ -181,6 +186,7 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 		}
 		manager, err := control.New(controlOptions)
 		if err != nil {
+			slog.Error("Management initialization failed", "stage", "startup", "error", err)
 			fmt.Fprintf(stderr, "Management initialization failed: %s\n", err)
 			return 3
 		}
@@ -190,18 +196,23 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 		trayFailure := make(chan error, 1)
 		openInitial, startTray := managementPresentation(options.desktop, *noBrowser, *noTray)
 		err = manager.Serve(ctx, *listen, func(url string) {
+			slog.Info("Local management is ready", "stage", "listen", "capture", manager.State().DataState, "saved_version", manager.State().SavedVersion)
 			if !options.desktop {
 				fmt.Fprintf(stdout, "KONE management (capture paused): %s\n", url)
 			}
 			if openInitial {
+				slog.Info("Opening local management in the browser", "stage", "browser")
 				if err := options.browser(url); err != nil {
+					slog.Warn("Could not open the management browser", "stage", "browser", "error", err)
 					fmt.Fprintln(stderr, "Could not open a browser; open the printed local URL")
 				}
 			}
 			if startTray && options.trayAvailable() {
+				slog.Info("Starting native management tray", "stage", "tray")
 				go func() {
 					err := options.tray(trayCtx, desktop.TrayActions{
 						Open: func() {
+							slog.Info("Opening local management from the tray", "stage", "browser")
 							if local, err := manager.LocalAccessURL(); err == nil {
 								_ = options.browser(local)
 							}
@@ -209,6 +220,7 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 						Pause: captureTrayAction(trayCtx, "pause", manager.Pause, manager.LocalAccessURL, options),
 						Start: captureTrayAction(trayCtx, "start", manager.Start, manager.LocalAccessURL, options),
 						Diagnostics: func() {
+							slog.Info("Opening capture diagnostics from the tray", "stage", "diagnostics")
 							if local, err := manager.LocalAccessURL(); err == nil {
 								if target, err := localManagementPageURL(local, "diagnostics"); err == nil {
 									_ = options.browser(target)
@@ -238,9 +250,11 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 		default:
 		}
 		if err != nil {
+			slog.Error("Management service stopped with an error", "stage", "shutdown", "error", err)
 			fmt.Fprintf(stderr, "Management stopped: %s\n", err)
 			return 3
 		}
+		slog.Info("Management service stopped", "stage", "shutdown")
 		return 0
 	}
 	cfg, err := kone.ParseConfig(*filename)

@@ -15,10 +15,10 @@
     <link rel="stylesheet" href="/src/styles.css" />
     <script type="module" src="/src/app.js"></script>
   </head>
-  <body>
-    <a class="skip-link" href="#main">跳到主要内容</a>
+  <body class="auth-pending">
+    <a class="skip-link" href="#main" data-management-shell hidden inert>跳到主要内容</a>
     <div id="shell">
-      <aside class="sidebar" id="sidebar" aria-label="主导航">
+      <aside class="sidebar" id="sidebar" aria-label="主导航" data-management-shell hidden inert>
         <a class="brand" href="#home" aria-label="KONE 首页"
           ><img src="/icon.svg" alt="" width="38" height="38" /><span
             >KONE<small>NETWORK CONSOLE</small></span
@@ -38,7 +38,7 @@
         hidden
       ></button>
       <div class="workspace">
-        <header class="topbar">
+        <header class="topbar" data-management-shell hidden inert>
           <div class="topbar-left">
             <button
               id="menu-toggle"
@@ -70,7 +70,7 @@
             <p>管理界面与流量接管独立运行。</p>
           </div>
         </main>
-        <footer class="workspace-footer">
+        <footer class="workspace-footer" data-management-shell hidden inert>
           <span>TCP / UDP · 业务载荷统计 · 本地处理</span
           ><a href="https://db-ip.com" target="_blank" rel="noopener noreferrer"
             >IP Geolocation by DB-IP</a
@@ -81,6 +81,9 @@
     <div
       id="toast-region"
       class="toast-region"
+      data-management-shell
+      hidden
+      inert
       aria-live="polite"
       aria-atomic="true"
     ></div>

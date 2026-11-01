@@ -19,8 +19,8 @@ import (
 
 func TestInterruptedStartupRecoveryAllowsCaptureEndToEnd(t *testing.T) {
 	// Replay a startup interrupted before durable device recording. The real
-	// management API must explain and clear the journal without touching host
-	// networking, and allow the user's next explicit capture request.
+	// management API must show paused capture and automatically maintain the
+	// old record on the user's next start, without a separate recovery action.
 	directory := t.TempDir()
 	journal := filepath.Join(directory, "capture.json")
 	data, err := json.Marshal(map[string]any{"version": 1, "run_id": "interrupted-startup-1234", "pid": os.Getpid(), "started_at": time.Now(), "platform": runtime.GOOS, "device_recorded": false, "network": "10.192.0.1/16", "auto_route": false})
@@ -67,27 +67,36 @@ func TestInterruptedStartupRecoveryAllowsCaptureEndToEnd(t *testing.T) {
 	require.Equal(t, 200, status)
 	status, readiness := call("GET", "readiness", nil)
 	require.Equal(t, 200, status)
-	require.False(t, readiness["ready"].(bool))
-	recovery := readiness["recovery"].(map[string]any)
-	require.True(t, recovery["can_clear"].(bool))
-	require.Equal(t, "not_configured", recovery["items"].([]any)[0].(map[string]any)["status"])
+	require.True(t, readiness["ready"].(bool))
+	require.NotContains(t, readiness, "recovery")
 	require.FileExists(t, journal)
-	status, report := call("GET", "recovery", nil)
+	status, state := call("GET", "state", nil)
 	require.Equal(t, 200, status)
-	require.Equal(t, recovery["next_action"], report["next_action"])
-	for _, action := range []string{"recover", "start", "pause"} {
+	require.Equal(t, "paused", state["data_state"])
+	require.Empty(t, state["last_error"])
+	for _, action := range []string{"start", "pause"} {
 		status, operation := call("POST", "lifecycle/"+action, map[string]any{})
 		require.Equal(t, 202, status)
 		require.Eventually(t, func() bool {
 			status, value := call("GET", "operations/"+operation["id"].(string), nil)
 			return status == 200 && value["status"] == "succeeded"
 		}, 2*time.Second, time.Millisecond)
-		if action == "recover" {
-			require.NoFileExists(t, journal)
-			status, readiness = call("GET", "readiness", nil)
-			require.Equal(t, 200, status)
-			require.True(t, readiness["ready"].(bool))
+		if action == "start" {
+			current, readErr := os.ReadFile(journal)
+			require.NoError(t, readErr)
+			require.NotContains(t, string(current), "interrupted-startup-1234")
 		}
 	}
 	require.NoFileExists(t, journal)
+	status, logs := call("GET", "logs", nil)
+	require.Equal(t, 200, status)
+	found := false
+	for _, item := range logs["records"].([]any) {
+		record := item.(map[string]any)
+		if record["message"] == "Previous capture recovery record cleared automatically" {
+			found = true
+			require.Equal(t, true, record["attrs"].(map[string]any)["automatic"])
+		}
+	}
+	require.True(t, found, "successful automatic maintenance remains available in runtime logs")
 }

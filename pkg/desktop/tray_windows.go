@@ -19,8 +19,9 @@ var trayWindows = struct {
 }{states: map[uintptr]*trayState{}}
 
 type trayState struct {
-	actions TrayActions
-	notify  trayNotify
+	actions    TrayActions
+	notify     trayNotify
+	menuActive bool // Accessed only by this window's UI thread, including nested messages.
 }
 type trayNotify func(uintptr, *trayIconData) (uintptr, error)
 
@@ -90,25 +91,33 @@ func trayWindowProc(hwnd uintptr, message uint32, wparam, lparam uintptr) uintpt
 		case 0x0202:
 			invokeTrayAction(actions, 1)
 		case 0x0205, 0x007B:
-			menu, _, _ := trayUser32.NewProc("CreatePopupMenu").Call()
-			if menu == 0 {
+			if state == nil || state.menuActive {
 				return 0
-			}
-			defer trayUser32.NewProc("DestroyMenu").Call(menu)
-			for _, item := range []struct {
-				id    uintptr
-				label string
-			}{{1, "Open KONE"}, {4, "Start capture"}, {2, "Pause capture"}, {5, "Diagnostics"}, {3, "Exit KONE"}} {
-				trayUser32.NewProc("AppendMenuW").Call(menu, 0, item.id, uintptr(unsafe.Pointer(trayUTF16(item.label))))
 			}
 			var point trayPoint
 			trayUser32.NewProc("GetCursorPos").Call(uintptr(unsafe.Pointer(&point)))
+			// Move the hidden owner to the menu's monitor so Windows chooses
+			// matching native menu metrics and icon dimensions at mixed DPI.
+			trayUser32.NewProc("SetWindowPos").Call(hwnd, 0, uintptr(point.X), uintptr(point.Y), 0, 0, 0x15)
+			menu, err := createTrayMenu(actions, trayMenuIconSize(hwnd))
+			if err != nil {
+				return 0
+			}
+			defer menu.close()
+			state.menuActive = true
+			defer func() { state.menuActive = false }()
 			trayUser32.NewProc("SetForegroundWindow").Call(hwnd)
-			choice, _, _ := trayUser32.NewProc("TrackPopupMenuEx").Call(menu, 0x0102, uintptr(point.X), uintptr(point.Y), hwnd, 0)
-			invokeTrayAction(actions, choice)
+			choice, _, _ := trayUser32.NewProc("TrackPopupMenuEx").Call(menu.handle, 0x0102, uintptr(point.X), uintptr(point.Y), hwnd, 0)
+			// Required for a notification-area menu to dismiss normally when
+			// the user clicks elsewhere, including subsequent openings.
+			trayUser32.NewProc("PostMessageW").Call(hwnd, 0, 0, 0)
+			invokeWindowsTrayMenuAction(actions, choice)
 		}
 		return 0
 	case 0x0010:
+		if state != nil && state.menuActive {
+			trayUser32.NewProc("EndMenu").Call()
+		}
 		trayUser32.NewProc("DestroyWindow").Call(hwnd)
 		return 0
 	case 0x0002:
@@ -136,6 +145,13 @@ func runTray(ctx context.Context, actions TrayActions, notify trayNotify) error 
 	}
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
+	// Scope DPI awareness to this owned UI thread, never the whole process.
+	if proc := trayUser32.NewProc("SetThreadDpiAwarenessContext"); proc.Find() == nil {
+		previous, _, _ := proc.Call(^uintptr(3)) // PER_MONITOR_AWARE_V2
+		if previous != 0 {
+			defer proc.Call(previous)
+		}
+	}
 	module, _, _ := windows.NewLazySystemDLL("kernel32.dll").NewProc("GetModuleHandleW").Call(0)
 	className := trayUTF16("KoneManagementTray")
 	trayClassOnce.Do(func() {

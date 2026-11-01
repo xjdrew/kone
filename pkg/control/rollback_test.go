@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -29,10 +30,12 @@ func TestControlStartupPersistenceFailuresStopTheEngine(t *testing.T) {
 			require.Error(t, c.Start(context.Background()))
 			require.Equal(t, "paused", c.State().State)
 			require.NotEmpty(t, c.State().LastError)
-			select {
-			case <-e.stop:
-			default:
-				t.Fatal("failed startup left the engine open")
+			if stage != "journal" {
+				select {
+				case <-e.stop:
+				default:
+					t.Fatal("failed startup left the engine open")
+				}
 			}
 			if stage == "confirmation" {
 				require.NoFileExists(t, c.journalPath())
@@ -84,10 +87,19 @@ func TestCleanupFailureBlocksRestartAndReportsUnrestoredState(t *testing.T) {
 	require.NoError(t, err)
 	enable(t, c)
 	require.Error(t, c.Start(context.Background()))
-	require.Equal(t, "recovery_failed", c.State().State)
+	require.Equal(t, "paused", c.State().State)
 	require.FileExists(t, c.journalPath())
-	require.False(t, c.Preflight(context.Background()).Ready)
-	require.ErrorContains(t, c.Start(context.Background()), "recovery")
-	require.ErrorContains(t, c.Close(), "route could not be restored")
-	require.ErrorContains(t, c.Close(), "route could not be restored")
+	require.True(t, c.Preflight(context.Background()).Ready)
+	// Simulate the recorded device surviving a failed cleanup. Inspecting this
+	// real interface is read-only; its identity must never authorize deletion.
+	record, err := c.readRecoveryJournal(false)
+	require.NoError(t, err)
+	devices, err := net.Interfaces()
+	require.NoError(t, err)
+	require.NotEmpty(t, devices)
+	require.NoError(t, c.recordRecoveryDevice(record.RunID, devices[0].Name, devices[0].Index))
+	require.ErrorIs(t, c.Start(context.Background()), errAutomaticRecovery)
+	require.Equal(t, "paused", c.State().State)
+	require.ErrorContains(t, c.Close(), "Could not restore")
+	require.ErrorContains(t, c.Close(), "Could not restore")
 }

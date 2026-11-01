@@ -11,6 +11,7 @@ export function explainError(message) {
   return {
     "enable the TUN inbound before starting capture": "请先在“入站”启用 TUN 入口并保存，再启用接管。",
     "Current management password is incorrect": "当前管理密码不正确，请重新输入。",
+    "Could not restore the previous capture automatically; check the host network and runtime logs, then retry": "无法启用接管，请查看运行日志后重试。",
     "Management session or password changed; sign in again": "管理会话或密码已变更，请重新登录。",
     "Use matching passwords of at least 8 characters and at most 128 UTF-8 bytes": "两次密码需一致，至少 8 个字符，UTF-8 长度不超过 128 字节。",
     "Clear the interrupted startup record, then run preflight before enabling capture": "上次启动在配置网络前中断。请前往“设置与恢复”点击“检查并恢复”，清除中断记录后重新预检。",
