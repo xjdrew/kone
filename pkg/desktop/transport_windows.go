@@ -236,5 +236,5 @@ func runNetworkHelper(parent context.Context, base string, parentPID uint32, fac
 			return err
 		}
 	}
-	return ServeHelper(parent, commands, events, factory)
+	return serveProductionHelper(parent, commands, events, factory)
 }

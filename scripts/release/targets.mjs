@@ -20,6 +20,12 @@ export function binaryName(target) {
   return `kone-${target}${target.startsWith("windows-") ? ".exe" : ""}`;
 }
 
+export function entryDefinitions(target) {
+  const name = binaryName(target);
+  if (target.startsWith("linux-")) return [{ role: "cli", name }];
+  return [{ role: "gui", name }, { role: "cli", name: `kone-cli-${target}${target.startsWith("windows-") ? ".exe" : ""}` }];
+}
+
 export function packagePlan(args = [], platform = process.platform, architecture = process.arch) {
   const native = nativeTarget(platform, architecture);
   const os = native.split("-")[0];

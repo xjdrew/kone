@@ -14,6 +14,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	"github.com/xjdrew/kone/pkg/geoip"
 	"github.com/xjdrew/kone/pkg/kone"
+	"github.com/xjdrew/kone/pkg/logstore"
 )
 
 type Connector func(context.Context) (io.ReadWriteCloser, io.ReadWriteCloser, error)
@@ -36,6 +37,9 @@ type RemoteEngine struct {
 	geoIP                            *geoip.Database
 	requests                         chan struct{}
 	probeSequence                    atomic.Uint64
+	logs, logSink                    *logstore.Store
+	logCursor                        uint64
+	logStatus                        logstore.RemoteStatus
 }
 
 func NewRemote(cfg *kone.KoneConfig, connect Connector) (*RemoteEngine, error) {
@@ -52,7 +56,7 @@ func NewRemote(cfg *kone.KoneConfig, connect Connector) (*RemoteEngine, error) {
 	if connect == nil {
 		return nil, errors.New("privileged helper transport is unavailable")
 	}
-	return &RemoteEngine{config: data, version: 1, connect: connect, ready: make(chan struct{}), done: make(chan struct{}), closeDone: make(chan struct{}), requests: make(chan struct{}, 8)}, nil
+	return &RemoteEngine{config: data, version: 1, connect: connect, ready: make(chan struct{}), done: make(chan struct{}), closeDone: make(chan struct{}), requests: make(chan struct{}, 8), logs: logstore.New()}, nil
 }
 func (e *RemoteEngine) Ready() <-chan struct{} { return e.ready }
 func (e *RemoteEngine) SetTrafficObserver(observer *kone.TrafficObserver) error {
@@ -90,7 +94,24 @@ func (e *RemoteEngine) CaptureDeviceIdentity() (string, int, bool) {
 	return e.identity.Name, e.identity.Index, e.identity.Known
 }
 func (e *RemoteEngine) finish(err error) {
-	e.finishOnce.Do(func() { e.mu.Lock(); e.runError = err; e.mu.Unlock(); close(e.done) })
+	e.finishOnce.Do(func() {
+		e.mu.Lock()
+		e.runError = err
+		e.logStatus.Connected = false
+		if err != nil {
+			e.logStatus.Error = logstore.RedactText(err.Error())
+		}
+		sink, local := e.logSink, e.logs
+		e.mu.Unlock()
+		if err != nil {
+			record := logstore.Record{Level: "ERROR", Source: "helper", Message: "Network helper stopped", Attrs: map[string]any{"error": err.Error()}}
+			local.Append(record)
+			if sink != nil && sink != local {
+				sink.Append(record)
+			}
+		}
+		close(e.done)
+	})
 }
 
 type callbacks struct{ engine *RemoteEngine }
@@ -118,6 +139,11 @@ func (c *callbacks) Finished(event FinishedEvent, _ *Empty) error {
 	var err error
 	if event.Error != "" {
 		err = errors.New(event.Error)
+	}
+	if event.LogsDegraded {
+		c.engine.mu.Lock()
+		c.engine.logStatus.Error = "Some helper logs were not acknowledged before shutdown"
+		c.engine.mu.Unlock()
 	}
 	c.engine.finish(err)
 	return nil
@@ -179,6 +205,7 @@ func (e *RemoteEngine) Run(parent context.Context) error {
 		return context.Canceled
 	}
 	e.client, e.commands, e.events = client, commands, events
+	e.logStatus.Connected = true
 	e.mu.Unlock()
 	go server.ServeConn(disconnectStream{ReadWriteCloser: events, disconnected: disconnect})
 	var reply Empty
@@ -257,6 +284,9 @@ func (e *RemoteEngine) Close() error {
 		e.mu.Lock()
 		e.closed = true
 		e.closeError = err
+		if final.LogsDegraded {
+			e.logStatus.Error = "Some helper logs were not acknowledged before shutdown"
+		}
 		if client != nil && err == nil {
 			e.archive = &final
 			e.identity = final.Identity

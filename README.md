@@ -1,15 +1,18 @@
 # KONE
 
+<img src="web/public/icon.svg" alt="KONE K1 dial icon" width="80">
+
 [![Master CI](https://github.com/xjdrew/kone/actions/workflows/release.yml/badge.svg?branch=master&event=push)](https://github.com/xjdrew/kone/actions/workflows/release.yml)
 
 KONE is a TUN proxy with desktop management and Linux gateway support.
+Its original [K1 dial mark](docs/branding.md) represents reliable guidance for network traffic.
 
 ## Features
 
 - Route application and LAN traffic through proxies without configuring every application.
 - Use HTTP/HTTPS, SOCKS5 and Shadowsocks outbounds, with direct and reject policies.
 - Run on Linux, macOS and Windows, including Raspberry Pi home and small-business gateways.
-- Inspect traffic, DNS history and routing decisions, and diagnose connection failures.
+- Inspect traffic, DNS history, routing decisions and recent runtime logs.
 - Control capture from the desktop tray or menu, and manage it from a paired phone or tablet.
 - Preserve established connections during rule updates, roll back failed startup,
   and restore owned network settings on normal exit.
@@ -20,8 +23,12 @@ KONE is a TUN proxy with desktop management and Linux gateway support.
 
 Download the package for your platform from [Releases](https://github.com/xjdrew/kone/releases).
 See [installation and platform notes](docs/usage.md) for checksums, permissions and package trust.
-Start `kone` or `kone.exe` without arguments to open management with capture **paused**.
-Configure your proxies and rules, save the settings, then explicitly enable capture.
+On Windows, double-click `kone.exe`; on macOS, open `Kone.app`.
+They start in the tray/menu bar **without a terminal or automatic browser window**.
+Choose **Open management**, enable and save the TUN inbound, configure outbounds/rules,
+then explicitly start capture. Capture starts **paused**.
+See the [desktop setup guide](docs/desktop.md) for the three steps and troubleshooting.
+Use `kone-cli.exe` / `kone-cli` for terminal commands; Linux keeps the `kone` CLI.
 
 **From source**
 
@@ -32,10 +39,11 @@ just init
 just build
 ```
 
-Run `dist/kone` on Linux/macOS or `dist/kone.exe` on Windows.
-For an interactive development session, `just dev` builds and opens paused management.
+Run `dist/kone` on Linux, double-click `dist/kone.exe` on Windows, or open `dist/Kone.app` on macOS.
+For an interactive development session, `just dev` builds and starts paused management.
 `just package` creates an installation package for the current machine.
 Build and packaging tasks reuse unchanged dependencies and frontend assets.
+Each daily task supports `-h` / `--help`, for example `just build --help`.
 
 For file-based operation, start with the [annotated configuration](configs/kone.example.toml)
 and [usage guide](docs/usage.md). Gateway deployment is covered in the

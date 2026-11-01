@@ -6,12 +6,42 @@ import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { gunzipSync, inflateRawSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
-import { binaryName, nativeTarget, packagePlan, selectedTargets } from "../../scripts/release/targets.mjs";
+import { binaryName, entryDefinitions, nativeTarget, packagePlan, selectedTargets } from "../../scripts/release/targets.mjs";
 import { targets, hashFile } from "../../scripts/release/model.mjs";
 import { createPortableArchive } from "../../scripts/release/portable.mjs";
+import { verifyWindowsRole } from "../../scripts/release/desktop.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const sha = "1234567890abcdef1234567890abcdef12345678";
+
+function inertExecutable(target, role) {
+  if (!target.startsWith("windows-")) return Buffer.from("inert fixture; never run this program\n");
+  const pe = Buffer.alloc(1024);
+  pe.write("MZ"); pe.writeUInt32LE(64, 60); pe.writeUInt32LE(0x4550, 64);
+  pe.writeUInt16LE(0x20b, 88); pe.writeUInt16LE(role === "gui" ? 2 : 3, 156);
+  if (role === "gui") {
+    pe.writeUInt16LE(1, 70); pe.writeUInt16LE(240, 84);
+    pe.writeUInt32LE(0x1000, 216); pe.writeUInt32LE(128, 220);
+    pe.writeUInt32LE(512, 336); pe.writeUInt32LE(0x1000, 340); pe.writeUInt32LE(512, 344); pe.writeUInt32LE(512, 348);
+    pe.writeUInt16LE(1, 526); pe.writeUInt32LE(14, 528); pe.writeUInt32LE(0x80000020, 532);
+    pe.writeUInt16LE(1, 558); pe.writeUInt32LE(101, 560); pe.writeUInt32LE(0x80000040, 564);
+  }
+  return pe;
+}
+
+async function executableFixture(input, target) {
+  const entries = [];
+  for (const entry of entryDefinitions(target)) {
+    await writeFile(join(input, entry.name), inertExecutable(target, entry.role));
+    entries.push({ ...entry, sha256: await hashFile(join(input, entry.name)) });
+  }
+  let icon;
+  if (target.startsWith("darwin-")) {
+    await writeFile(join(input, "kone.icns"), Buffer.from("icns\0\0\0\b"));
+    icon = { name: "kone.icns", sha256: await hashFile(join(input, "kone.icns")) };
+  }
+  return { target, name: binaryName(target), sha256: entries[0].sha256, stack: "system", entries, ...(icon ? { icon } : {}) };
+}
 
 async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), "kone archive test "));
@@ -79,6 +109,17 @@ test("native target and package plans distinguish OS, architecture and the uncha
   assert.throws(() => nativeTarget("freebsd", "x64"));
 });
 
+test("desktop Windows executables require GUI subsystem and icon 101 while terminal tools require console subsystem", () => {
+  verifyWindowsRole(inertExecutable("windows-amd64", "gui"), "gui");
+  verifyWindowsRole(inertExecutable("windows-amd64", "cli"), "cli");
+  assert.throws(() => verifyWindowsRole(inertExecutable("windows-amd64", "gui"), "cli"), /subsystem/);
+  assert.throws(() => verifyWindowsRole(inertExecutable("windows-amd64", "cli"), "gui"), /subsystem/);
+  const missingIcon = inertExecutable("windows-amd64", "gui");
+  missingIcon.writeUInt32LE(102, 560);
+  assert.throws(() => verifyWindowsRole(missingIcon, "gui"), /icon resource 101/);
+  assert.throws(() => verifyWindowsRole(Buffer.from("not a PE"), "gui"), /Invalid Windows/);
+});
+
 test("portable archives preserve raw payloads, roots and Unix executable modes on every host, and replace local output", async (t) => {
   const directory = await fixture(t);
   const stage = join(directory, "stage with spaces [literal] 中文");
@@ -123,9 +164,8 @@ test("foreign-target packaging checks source identity and hashes, never executes
   const output = join(directory, "output with spaces");
   await mkdir(join(input, "licenses"), { recursive: true });
   const name = binaryName(target);
-  await writeFile(join(input, name), "inert binary fixture; attempting to execute this must fail\n");
   for (const file of ["LICENSE", "LICENSE-MIT", "licenses/component.txt"]) await writeFile(join(input, file), "fixture license\n");
-  const metadata = { schema: 1, sha, version: "1.2.3", binaries: [{ target, name, sha256: await hashFile(join(input, name)), stack: "system" }] };
+  const metadata = { schema: 1, sha, version: "1.2.3", binaries: [await executableFixture(input, target)] };
   await writeFile(join(input, "build-info.json"), JSON.stringify(metadata));
   const env = { ...process.env, RELEASE_INPUT: input, RELEASE_OUTPUT: output, RELEASE_SHA: sha, RELEASE_VERSION: "1.2.3" };
   execFileSync(process.execPath, [join(root, "scripts/release/package.mjs"), "--target", target], { cwd: root, env, stdio: "pipe" });
@@ -151,9 +191,7 @@ test("local native and all-portable packaging never execute or install even host
   await mkdir(join(input, "licenses"), { recursive: true });
   const binaries = [];
   for (const target of targets) {
-    const name = binaryName(target);
-    await writeFile(join(input, name), "inert text fixture; this is not an executable program\n");
-    binaries.push({ target, name, sha256: await hashFile(join(input, name)), stack: "system" });
+    binaries.push(await executableFixture(input, target));
   }
   for (const file of ["LICENSE", "LICENSE-MIT", "licenses/component.txt"]) await writeFile(join(input, file), "fixture license\n");
   await writeFile(join(input, "build-info.json"), JSON.stringify({ schema: 1, sha, version: "1.2.3", binaries }));
@@ -176,11 +214,24 @@ test("local native and all-portable packaging never execute or install even host
       assert.equal(asset.native_version_checked, false);
       assert.equal(asset.experimental, true);
       assert.equal(asset.sha256, await hashFile(join(output, asset.name)));
+      assert.deepEqual(asset.entries.map(entry => ({ role: entry.role, name: entry.name })), entryDefinitions(asset.target));
       if (asset.name.endsWith(".tar.gz") || asset.name.endsWith(".zip")) {
         const entries = (asset.name.endsWith(".zip") ? zipEntries : tarEntries)(await readFile(join(output, asset.name)));
         const readme = entries.get(`kone-1.2.3-${asset.target}/README.txt`).data.toString();
         assert.match(readme, /without executing or installing its executable/);
         assert.doesNotMatch(readme, /passed -version/);
+        const base = `kone-1.2.3-${asset.target}`;
+        if (asset.target.startsWith("darwin-")) {
+          assert.equal(entries.get(`${base}/Kone.app/Contents/MacOS/kone`).mode & 0o777, 0o755);
+          assert.equal(entries.get(`${base}/bin/kone-cli`).mode & 0o777, 0o755);
+          const plist = entries.get(`${base}/Kone.app/Contents/Info.plist`).data.toString();
+          assert.match(plist, /<key>LSUIElement<\/key><true\/>/);
+          assert.ok(plist.includes(sha));
+          assert.ok(entries.has(`${base}/Kone.app/Contents/Resources/Kone.icns`));
+        } else if (asset.target.startsWith("windows-")) {
+          assert.ok(entries.has(`${base}/kone.exe`));
+          assert.ok(entries.has(`${base}/kone-cli.exe`));
+        } else assert.ok(!entries.has(`${base}/kone-cli`));
       }
     }
   }
@@ -194,7 +245,9 @@ test("build manifests support a native subset, preserve the all-target default, 
   git("add", "fixture");
   git("-c", "user.name=Package Test", "-c", "user.email=package@example.invalid", "commit", "-m", "fixture");
   await mkdir(join(directory, "dist"));
-  for (const target of targets) await writeFile(join(directory, "dist", binaryName(target)), `inert ${target}\n`);
+  for (const target of targets) await executableFixture(join(directory, "dist"), target);
+  await mkdir(join(directory, "web/native"), { recursive: true });
+  await writeFile(join(directory, "web/native/kone.icns"), Buffer.from("icns\0\0\0\b"));
   const run = (args, stack) => execFileSync(process.execPath, [join(root, "scripts/release/build-info.mjs"), ...args], {
     cwd: directory, env: { ...process.env, KONE_VERSION: "1.2.3", KONE_BUILD_STACK: stack }, stdio: "pipe",
   });

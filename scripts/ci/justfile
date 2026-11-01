@@ -10,269 +10,556 @@ default:
     @just --justfile "$KONE_TASK_ROOT/justfile" --list ci
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-fmt:
+fmt *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments fmt "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     gofmt -w cmd pkg test web/embed.go
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-check-config config='configs/kone.example.toml':
-    go run ./cmd/kone -check -config "$1"
+check-config *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments check-config "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
+    entry=./cmd/kone
+    if [[ -d cmd/kone-cli ]]; then entry=./cmd/kone-cli; fi
+    go run "$entry" -check -config "$1"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-geoip-convert +args:
+geoip-convert *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments geoip-convert "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     node scripts/data/convert-dbip.mjs "$@"
 
 [group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-web-deps:
+web-deps *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments web-deps "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     cd web && npm ci
 
 [group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-web-dev:
+web-dev *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments web-dev "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     cd web && npm run dev
 
 [group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-web-preview:
+web-preview *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments web-preview "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     cd web && npm run preview
 
 [group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test-web:
+test-web *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test-web "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     cd web && npm test
 
 [group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test-release: test-tasks
+test-release *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test-release "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
+    just --justfile "$KONE_TASK_ROOT/justfile" ci test-tasks
     node --test test/release/*.test.mjs
 
 [group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test-tasks:
+test-tasks *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test-tasks "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     node --test "$KONE_TASK_ROOT"/test/tasks/*.test.mjs
 
 [group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test-data:
+test-data *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test-data "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     node --test scripts/data/*.test.mjs
 
 [group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-web-build:
+web-build *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments web-build "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     cd web && npm run build
 
 [group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-web-check:
+web-check *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments web-check "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     git diff --exit-code -- web/dist
 
 [group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-web-browsers:
+web-browsers *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments web-browsers "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     cd web && npx playwright install --with-deps chromium webkit firefox
 
 [group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test-web-e2e:
+test-web-e2e *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test-web-e2e "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/web-e2e.sh"
 
-[group('native acceptance')]
+# Run browser journeys against mock APIs only, without building or running KONE.
+[group('Web and contracts')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-ci-web-fixture:
+test-web-e2e-mock *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test-web-e2e-mock "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    cd web
+    npx playwright test console.spec.js --project=chromium-1440x900 --grep-invert '@real'
+
+# Explicit maintenance only; ordinary builds use committed generated resources.
+[group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
+[working-directory(source_root)]
+icons *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments icons "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
+    node "$KONE_TASK_ROOT/scripts/tasks/icons.mjs" "$1"
+
+[group('native acceptance')]
+[script('bash', '-euo', 'pipefail')]
+[working-directory(source_root)]
+ci-web-fixture *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments ci-web-fixture "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/web-fixture.sh"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-go-deps:
+go-deps *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments go-deps "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     go mod download
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-go-verify:
+go-verify *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments go-verify "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     go mod verify
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-vet:
+vet *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments vet "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     go vet ./...
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test:
+test *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     go test -race -count=1 ./...
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test-coverage directory='.' output='coverage.out':
+test-coverage *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test-coverage "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/go-coverage.sh" "$1" "$2"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test-mixed:
+test-mixed *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test-mixed "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     go test -tags with_gvisor -race -count=1 ./...
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test-pe:
+test-pe *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test-pe "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     go test -race -count=1 github.com/sagernet/sing-tun/internal/wintun github.com/sagernet/sing-tun/internal/wintun/memmod
 
 [group('Windows maintenance')]
-[windows]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test-windows-package:
+test-windows-package *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test-windows-package "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     node --test "$KONE_TASK_ROOT/test/integration/windows-package.test.mjs"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test-macos-desktop:
+test-macos-desktop *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments test-macos-desktop "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     go test -v -count=1 ./pkg/desktop -run '^TestDarwin(NativeTray(Selectors|PipeEOF)|AuthenticatedPrivateHelperLifecycleWithoutNetworkChanges)$'
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-coverage-check base='coverage-base.out' head='coverage.out':
+coverage-check *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments coverage-check "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     go run ./cmd/covercheck -base "$1" -head "$2"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-quality-check:
+quality-check *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments quality-check "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/go-quality.sh"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-fuzz duration='15s':
+fuzz *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments fuzz "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     go test ./pkg/kone -run '^$' -fuzz '^FuzzParseConfig$' -fuzztime "$1"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-vuln:
+vuln *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments vuln "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-benchmark-metadata:
+benchmark-metadata *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments benchmark-metadata "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     node "$KONE_TASK_ROOT/scripts/ci/benchmark-metadata.mjs"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-benchmark:
+benchmark *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments benchmark "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/benchmark.sh"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-profile file='baseline/cpu.out' binary='baseline/kone.test':
+profile *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments profile "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     go tool pprof "$2" "$1"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-build-all:
+build-all *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments build-all "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/build-all.sh"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-source-bundle:
+source-bundle *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments source-bundle "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/source-bundle.sh"
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-package:
+package *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments package "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     node scripts/release/package.mjs
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-build-container:
+build-container *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments build-container "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     CGO_ENABLED=0 GOOS="${TARGETOS:-linux}" GOARCH="${TARGETARCH:-amd64}" go build -tags with_gvisor -trimpath -ldflags='-s -w' -o /out/kone ./cmd/kone
 
 [group('native acceptance')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-ci-macos-build:
+ci-macos-build *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments ci-macos-build "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/native-macos.sh" build
 
 [group('native acceptance')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-ci-macos-tun:
+ci-macos-tun *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments ci-macos-tun "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/native-macos.sh" tun
 
 [group('native acceptance')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-ci-macos-session:
+ci-macos-session *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments ci-macos-session "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/native-macos.sh" session
 
 [group('native acceptance')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-ci-linux-build:
+ci-linux-build *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments ci-linux-build "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/native-linux.sh" build
 
 [group('native acceptance')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-ci-linux-tun:
+ci-linux-tun *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments ci-linux-tun "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/native-linux.sh" tun
 
 [group('native acceptance')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-ci-linux-dns-tools:
+ci-linux-dns-tools *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments ci-linux-dns-tools "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/native-linux.sh" dns-tools
 
 [group('native acceptance')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-ci-linux-dns:
+ci-linux-dns *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments ci-linux-dns "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/native-linux.sh" dns
 
 [group('native acceptance')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-ci-ss:
+ci-ss *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments ci-ss "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash scripts/test-shadowsocks-interop.sh
 
 [group('native acceptance')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-ci-windows-tun:
+ci-windows-tun *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments ci-windows-tun "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     pwsh -NoLogo -NoProfile -File "$KONE_TASK_ROOT/scripts/ci/native-windows.ps1" tun
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-docker-build:
+docker-build *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments docker-build "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     docker build -f deploy/docker/Dockerfile -t kone:ci .
 
 [group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-docker-check:
+docker-check *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments docker-check "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     docker run --rm kone:ci -check -config /etc/kone/config.toml
 
 [group('Windows maintenance')]
-[windows]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-windows-firewall-check:
+windows-firewall-check *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments windows-firewall-check "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     powershell.exe -NoLogo -NoProfile -File scripts/windows/check-firewall-rules.ps1
 
 [group('Windows maintenance')]
-[windows]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-windows-firewall-update +args:
+windows-firewall-update *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments windows-firewall-update "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     powershell.exe -NoLogo -NoProfile -File scripts/windows/update-firewall-rules.ps1 "$@"
 
 [group('release')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-release-plan:
+release-plan *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments release-plan "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     node scripts/release/plan.mjs
 
 [group('release')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-release-marker:
+release-marker *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments release-marker "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     node scripts/release/marker.mjs
 
 [group('release')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-release-publish:
+release-publish *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments release-publish "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     node scripts/release/publish.mjs
 
 [group('release')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-release-withdraw:
+release-withdraw *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments release-withdraw "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     node scripts/release/withdraw.mjs
 
 [group('release')]
+[script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-release-skipped:
-    @printf '%s\n' 'Required gates failed or evidence is unavailable for this SHA; no tag or release was created.'
+release-skipped *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments release-skipped "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
+    printf '%s\n' 'Required gates failed or evidence is unavailable for this SHA; no tag or release was created.'

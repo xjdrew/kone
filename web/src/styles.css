@@ -1475,3 +1475,13 @@ strong {
 .check-field input {
   flex: none;
 }
+.runtime-logs {
+  max-height: 480px;
+  overflow: auto;
+  margin-top: 16px;
+}
+.runtime-logs pre {
+  max-width: min(65vw, 720px);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

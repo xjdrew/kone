@@ -144,6 +144,15 @@ test("@real genuine management cookie, save, reload and restart stay capture-pau
     managers.push(manager);
     let ui = await openManagement(browser, manager, contexts);
     await ui.assertPaused();
+    await ui.page.locator(".nav-link[data-page=diagnostics]").click();
+    await expect(ui.page.getByRole("heading", { name: "运行日志", exact: true })).toBeVisible();
+    const logs = await ui.page.evaluate(async () => {
+      const response = await fetch("/api/v1/logs?limit=100&min_level=info", { credentials: "same-origin" });
+      const value = await response.json();
+      return { ok: response.ok, records: Array.isArray(value.records), cursor: typeof value.next_cursor, helperConnected: value.helper?.connected };
+    });
+    expect(logs).toEqual({ ok: true, records: true, cursor: "string", helperConnected: false });
+    await ui.assertPaused();
     await ui.page.locator(".nav-link[data-page=outbounds]").click();
     await ui.page.getByRole("button", { name: "＋ 添加代理", exact: true }).click();
     await ui.page.locator("#outbound-name-0").fill("BrowserReal");

@@ -221,6 +221,7 @@ async function mount(page, options = {}) {
     if (path === "/config/apply") return respond({ status: "completed" });
     if (path === "/config/undo") return respond(data.config);
     if (path === "/traffic" || path === "/flows") {
+      if (data.telemetryUnavailable) return respond({ error: { message: "data source unavailable during startup" } }, 503);
       let records = data.empty ? [] : data.records;
       if (url.searchParams.get("protocol"))
         records = records.filter(
@@ -375,6 +376,15 @@ async function mount(page, options = {}) {
       });
     if (path === "/diagnostics" && method === "GET")
       return respond({ operations: [] });
+    if (path === "/logs") {
+      if (data.logsUnavailable) return respond({ error: { message: "logs temporarily unavailable" } }, 503);
+      let records = data.logRecords || [{ id: "1", time: start, level: "ERROR", source: "helper", message: "TUN startup failed", attrs: { stage: "start", endpoint: "http://REDACTED@proxy.invalid" } }];
+      const levels = { DEBUG: 0, INFO: 1, WARN: 2, ERROR: 3 };
+      records = records.filter((record) => (!url.searchParams.has("after") || BigInt(record.id) > BigInt(url.searchParams.get("after"))) &&
+        levels[record.level] >= (levels[(url.searchParams.get("min_level") || "info").toUpperCase()] || 0) &&
+        (!url.searchParams.get("source") || record.source === url.searchParams.get("source")));
+      return respond({ records, next_cursor: (data.logRecords || [{ id: "1" }]).at(-1)?.id || "0", dropped: 0, gap: false, has_more: false, capacity: 1000, helper: { connected: false } });
+    }
     if (path === "/diagnostics")
       return respond({ id: "diag-1", status: "running" }, 202);
     if (path === "/sessions")
@@ -436,6 +446,8 @@ async function mount(page, options = {}) {
         protocol: "tcp",
         source: "saved-config",
       });
+    if (path === "/lifecycle/preflight")
+      if (data.disabledTUN) return respond({ error: { message: "enable the TUN inbound before starting capture" } }, 400);
     if (path === "/lifecycle/preflight")
       return respond({
         valid: true,
@@ -737,6 +749,60 @@ test("@compat weak network recovery refreshes real state without repeating a mut
   await expect(page.locator("#runtime-status")).toContainText("已暂停");
   await expect(page.locator("#connection-banner")).toBeHidden();
   await expect(page.locator("#lifecycle-toggle")).toBeEnabled();
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat unavailable capture telemetry keeps management and rules editable, then recovers", async ({ page }) => {
+  const data = await mount(page);
+  await page.locator(".nav-link[data-page=rules]").click();
+  const add = page.getByRole("button", { name: "＋ 添加精确域名", exact: true });
+  await expect(add).toBeEnabled();
+  data.state = "running";
+  data.telemetryUnavailable = true;
+  await expect(page.locator("#connection-banner")).toContainText("管理连接正常，流量数据暂不可用");
+  await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  await expect(add).toBeEnabled();
+  await page.locator(".nav-link[data-page=home]").click();
+  await expect(page.getByText(/数据暂不可用：这里是/)).toBeVisible();
+  await expect(page.getByText(/接管已停止/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "上次采样速率", exact: true })).toBeVisible();
+  await page.locator(".nav-link[data-page=rules]").click();
+  data.offline = true;
+  await expect(page.locator("#runtime-status")).toHaveText("状态未知");
+  await expect(add).toBeDisabled();
+  data.offline = false;
+  await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  await expect(add).toBeEnabled();
+  data.telemetryUnavailable = false;
+  await expect(page.locator("#connection-banner")).toBeHidden();
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat disabled TUN explains the saved inbound requirement without starting capture", async ({ page }) => {
+  const data = await mount(page, { disabledTUN: true });
+  await page.locator("#lifecycle-toggle").click();
+  await expect(page.locator("#page-notice")).toContainText("入站”启用 TUN 入口并保存");
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  expect(data.writes.map((write) => write.path)).toEqual(["/lifecycle/preflight"]);
+});
+
+test("@compat runtime logs filter sources, pause polling and render fields as safe text", async ({ page }) => {
+  const data = await mount(page, { bootstrapPage: "diagnostics" });
+  await expect(page.getByRole("heading", { name: "运行日志", exact: true })).toBeVisible();
+  await expect(page.locator("#runtime-logs")).toContainText("TUN startup failed");
+  await page.locator("#log-source").selectOption("helper");
+  await expect.poll(() => data.requests.filter((r) => r.path === "/logs").at(-1)?.query.source).toBe("helper");
+  await page.getByRole("button", { name: "暂停日志刷新" }).click();
+  data.logRecords = [{ id: "2", time: end, level: "ERROR", source: "helper", message: "<img src=x onerror=alert(1)>", attrs: { reason: "safe text" } }];
+  await page.getByRole("button", { name: "刷新日志", exact: true }).click();
+  await expect(page.locator("#runtime-logs")).toContainText("<img src=x onerror=alert(1)>");
+  await expect(page.locator("#runtime-logs img")).toHaveCount(0);
+  await page.locator("#runtime-logs details").first().locator("summary").click();
+  await expect(page.locator("#runtime-logs pre").first()).toContainText("safe text");
+  data.logsUnavailable = true;
+  await page.getByRole("button", { name: "刷新日志", exact: true }).click();
+  await expect(page.getByText("日志暂不可用：logs temporarily unavailable")).toBeVisible();
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
   expect(data.writes).toEqual([]);
 });
 

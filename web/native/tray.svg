@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <title>Kone chronometer</title>
+  <g fill="none" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 1.8h2m-1 0v1.8"/>
+    <circle cx="12" cy="13.2" r="8.4"/>
+    <path d="M9.6 8.7v9m0-4.5 5.1-4.5m-5.1 4.5 5.1 4.5"/>
+  </g>
+</svg>

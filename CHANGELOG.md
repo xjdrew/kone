@@ -2,6 +2,9 @@
 
 ## Features
 
+- Add application and tray icons, terminal-free Windows/macOS desktop launch, and a separate console CLI.
+- View filtered, redacted recent runtime logs in Diagnostics.
+- Show defaults, options and examples with `-h` or `--help` on every daily just command.
 - Open a local management interface without preparing a configuration file.
 - Manage capture, outbounds, rules and DNS through a responsive desktop and mobile interface.
 - Inspect live TCP/UDP traffic, failed connections and Sankey paths.
@@ -23,6 +26,8 @@
 
 ## Bugfixes
 
+- Show capture failures from the tray and open diagnostics without closing management.
+- Keep management usable when capture telemetry is temporarily unavailable instead of reporting a lost connection.
 - Build Windows installation packages without installing PowerShell 7.
 - Keep management available while capture is paused or fails to start.
 - Preserve active Fake-IP mappings and prevent private DNS fallback to public resolvers.

@@ -532,9 +532,20 @@ func logLevel(value string) (slog.Level, error) {
 
 // ConfigureLogging installs the application's structured slog handler.
 func ConfigureLogging(w io.Writer, cfg GeneralConfig, debug bool) error {
-	level, err := logLevel(cfg.LogLevel)
+	handler, err := NewLoggingHandler(w, cfg, debug)
 	if err != nil {
 		return err
+	}
+	slog.SetDefault(slog.New(handler).With("service", "kone"))
+	return nil
+}
+
+// NewLoggingHandler creates a handler without changing another instance's logger.
+// Callers can attach their own bounded history before installing it.
+func NewLoggingHandler(w io.Writer, cfg GeneralConfig, debug bool) (slog.Handler, error) {
+	level, err := logLevel(cfg.LogLevel)
+	if err != nil {
+		return nil, err
 	}
 	if debug {
 		level = slog.LevelDebug
@@ -547,10 +558,9 @@ func ConfigureLogging(w io.Writer, cfg GeneralConfig, debug bool) error {
 	case "json":
 		handler = slog.NewJSONHandler(w, opts)
 	default:
-		return errors.New("general.log-format must be text or json")
+		return nil, errors.New("general.log-format must be text or json")
 	}
-	slog.SetDefault(slog.New(handler).With("service", "kone"))
-	return nil
+	return handler, nil
 }
 
 // RedactedTOML returns the effective configuration without proxy credentials.

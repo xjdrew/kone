@@ -12,7 +12,7 @@ Download a platform package from [Releases](https://github.com/xjdrew/kone/relea
 | macOS amd64, arm64 | Portable archive and unsigned `.pkg` |
 | Windows amd64, arm64 | Portable ZIP with a per-user `install.ps1` |
 
-Packages are unsigned, and macOS packages are not notarized. The macOS package installs a CLI and its resources; it is not a signed `.app`. Platform security and application-control policies still apply. An architecture being cross-compiled does not prove its driver, desktop or installation behavior on real hardware. See [release verification and native coverage](releases.md).
+Packages are unsigned, and macOS packages are not notarized. The macOS package includes `Kone.app` and the `kone-cli` console entrypoint. Platform security and application-control policies still apply. An architecture being cross-compiled does not prove its driver, desktop or installation behavior on real hardware. See [release verification and native coverage](releases.md).
 
 Locally generated packages are experimental and unverified: packaging only creates files and does not run or temporarily install the executable. Published release evidence separately records the checks actually performed in CI.
 
@@ -20,9 +20,9 @@ Installation does not enable capture, create services, configure autostart or ch
 
 ## Desktop management
 
-Start `kone` or `kone.exe` without arguments. Management opens with capture **paused**. Configure the TUN inbound, named proxy outbounds, rules and DNS, save the settings, run preflight, then explicitly enable capture. A failed proxy or preflight keeps management available. No shell proxy settings are imported into the managed profile.
+Double-click `kone.exe` on Windows or open `Kone.app` on macOS. These desktop entrypoints show a tray/menu icon without a console or automatic browser window; choose **Open management**. On Linux, run `kone` without arguments. Capture starts **paused**. Enable and save the TUN inbound, configure outbounds/rules, then run preflight and explicitly start capture. See the [three-step desktop guide](desktop.md). A failed proxy or preflight keeps management available.
 
-Settings persist in your user configuration directory. `-manage` explicitly selects managed mode; `-data-dir` selects its profile directory. `-listen` controls the loopback listener. `-no-browser` prints a one-time local authorization URL instead of opening it; keep that URL private. After authorization, the browser uses an HttpOnly session cookie and removes the bootstrap token from its address.
+Settings persist in an independent profile in your user configuration directory. Managed mode does not read the working directory's `config.toml` or import terminal proxy settings. With the console entrypoint (`kone-cli.exe` on Windows, `kone-cli` on macOS, `kone` on Linux), `-manage` explicitly selects managed mode, `-data-dir` selects its profile and `-listen` selects the loopback listener. Console `-no-browser` prints a one-time local authorization URL; keep it private. After authorization, the browser uses an HttpOnly session cookie and removes the bootstrap token from its address. Desktop entrypoints discard bootstrap output and use the tray's explicit browser action instead.
 
 Windows keeps management at ordinary user privileges and requests a separate UAC network helper when capture needs elevation. Wintun is included; no separate TAP installation is required. Use an explicit `kone.exe` path when working beside an older extensionless binary. See [Windows setup and application trust](windows/README.md).
 
@@ -33,6 +33,8 @@ Use the tray/menu or management interface to pause capture or exit. Normal shutd
 ## Traffic and diagnostics
 
 Management shows business connections, traffic paths, DNS history, routing decisions and connection failures. Only traffic entering KONE is observable. DNS queries, diagnostic probes and business flows are different measurements; opening management does not make KONE observe all host traffic.
+
+Diagnostics also shows bounded, redacted recent runtime logs with level/source filters. Configured logging levels still control collection; a display filter cannot recover debug records that were never collected. Capture telemetry can be unavailable while management stays reachable; the page identifies stale snapshots without disabling management as if the connection had been lost. Tray capture failures open diagnostics and show a desktop notice without terminating management.
 
 Saving and applying settings are separate actions. Rule/outbound updates preserve virtual addresses and established connections; existing flows retain their original policy. Changes that require restarting capture are checked before application, and a configuration conflict preserves the local draft.
 
@@ -55,7 +57,7 @@ kone -check -config config.toml
 sudo kone -config config.toml
 ```
 
-On Windows use `kone.exe -config config.toml`; file mode requests a visible administrator window when necessary. Services/headless callers can use `-no-elevate` when the calling process already has the required privileges. This option does not grant permissions. See the platform instructions before enabling capture.
+On Windows use `kone-cli.exe -config config.toml`; on macOS use `kone-cli -config config.toml`. Windows console file mode requests a visible administrator window when necessary. Services/headless callers can use `-no-elevate` when the calling process already has the required privileges. This option does not grant permissions. See the platform instructions before enabling capture.
 
 `-check` validates without creating a TUN device or changing routes. `-version` prints the version and exits. `-debug` overrides the configured log level. Logs use structured text or JSON on stderr; CLI results go to stdout.
 

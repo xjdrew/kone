@@ -7,6 +7,12 @@ export class ApiError extends Error {
   }
 }
 
+export function explainError(message) {
+  return message === "enable the TUN inbound before starting capture"
+    ? "请先在“入站”启用 TUN 入口并保存，再启用接管。"
+    : message;
+}
+
 export function targetWithPort(value, port) {
   const target = String(value).trim();
   if (/^\[[^\]]+\]:\d+$/.test(target) || /^[^:]+:\d+$/.test(target))
@@ -83,9 +89,9 @@ export async function request(path, method = "GET", body, options = {}) {
     }
     if (!response.ok)
       throw new ApiError(
-        data.error?.message ||
+        explainError(data.error?.message ||
           data.message ||
-          (typeof data.error === "string" ? data.error : "操作未完成。"),
+          (typeof data.error === "string" ? data.error : "操作未完成。")),
         response.status,
         data.error || data,
       );
@@ -142,6 +148,7 @@ export const endpoints = {
   dns: () => request("/dns"),
   simulate: (body) => request("/rules/simulate", "POST", body),
   diagnostics: () => request("/diagnostics"),
+  logs: (query) => request(`/logs?${new URLSearchParams(query || {})}`),
   diagnose: (body) => request("/diagnostics", "POST", body),
   cancel: (id) =>
     request(`/diagnostics/${encodeURIComponent(id)}/cancel`, "POST", {}),

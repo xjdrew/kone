@@ -3,6 +3,10 @@
 当前使用 SagerNet/sing-tun 的 Wintun 后端。官方 Wintun DLL 已内嵌到程序中，不需要单独下载 DLL、安装 TAP 或预先创建网卡。
 程序在管理员权限下部署驱动并创建自有网卡；这不意味着系统不再需要驱动或管理员权限。退出时关闭并移除自有网卡，驱动包可能保留在系统驱动存储中。
 
+日常双击 `kone.exe` 启动桌面托盘，不会弹出终端，也不会自动打开浏览器；从托盘选择“打开管理”。初始接管暂停，先在“入站”启用并保存 TUN，再配置出站/规则并启用接管。Web 使用独立用户 profile，不会读取项目的 `config.toml`。详细步骤及运行日志见 [桌面指南](../desktop.md)。
+
+终端的 `-check`、`-config`、`-version` 等操作请使用单独的 `kone-cli.exe`，它保留控制台输出和 CLI 提权行为。
+
 源码开发使用 Go 1.27.3、just 1.59.0，并在 Git Bash 的仓库根目录执行开发任务（见 [开发说明](../development.md)）：
 
 ```sh
@@ -10,10 +14,10 @@ just init
 just build
 cp configs/kone.example.toml config.toml
 # 修改代理地址；core.tun 可留空自动分配，或指定一个尚不存在的网卡名称。
-./dist/kone.exe -check -config config.toml
+./dist/kone-cli.exe -check -config config.toml
 ```
 
-Windows 请使用明确的 `./dist/kone.exe` 路径，避免同目录遗留的无扩展名 `dist/kone` 被其他终端执行。升级旧版本后先按 [配置迁移说明](../configuration.md) 更新配置，再运行 `-check`；不自动兼容旧配置字段。
+Windows 文件模式请使用明确的 `./dist/kone-cli.exe` 路径。升级旧版本后先按 [配置迁移说明](../configuration.md) 更新配置，再运行 `-check`；不自动兼容旧配置字段。
 
 `-check`、`-version`、`-help` 不请求管理员权限。普通启动先校验配置，再检查当前进程是否已提权；未提权时自动通过 Windows 官方 `runas` 机制请求 UAC。允许后在新的管理员窗口继续运行，配置路径转为绝对路径，保留工作目录与 `-debug`。已在管理员终端启动时直接运行，不重复弹框。
 
@@ -36,14 +40,14 @@ Let’s Encrypt 的免费证书用于 TLS，不签发代码签名证书，不能
 ## 启动与停止
 
 KONE 自动维护限定于当前程序和自有 TUN 地址的 TCP 防火墙例外，退出时清理。本机使用无需先运行额外防火墙脚本。
-普通 PowerShell、Windows Terminal 或 Git Bash 中启动会按需请求 UAC；需要额外对 LAN 放行 DNS 等流量时，可按部署需要运行辅助脚本：
+桌面托盘在启用接管时请求独立网络助手的 UAC；文件模式从 PowerShell、Windows Terminal 或 Git Bash 启动时按需提权。需要额外对 LAN 放行 DNS 等流量时，可按部署需要运行辅助脚本：
 
 ```powershell
 # 可选：为受信任 LAN 额外配置规则
-# just ci windows-firewall-update -Program ./dist/kone.exe
-./dist/kone.exe -config config.toml
+# just ci windows-firewall-update -Program ./dist/kone-cli.exe
+./dist/kone-cli.exe -config config.toml
 # 已提权的服务/自动化环境：
-# ./dist/kone.exe -no-elevate -config config.toml
+# ./dist/kone-cli.exe -no-elevate -config config.toml
 ```
 
 脚本默认只放行 Domain 和 Private 配置文件，需要 Public 时显式传 `-Profiles Public`。

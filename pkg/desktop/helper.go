@@ -57,7 +57,10 @@ type DeviceIdentity struct {
 	Index int
 	Known bool
 }
-type FinishedEvent struct{ Error string }
+type FinishedEvent struct {
+	Error        string
+	LogsDegraded bool
+}
 type TrafficRequest struct {
 	Query   kone.TrafficQuery
 	Options kone.SankeyOptions
@@ -75,10 +78,11 @@ type DNSReply struct {
 	Queries []kone.DNSQueryEvent
 }
 type StopReply struct {
-	Traffic    TrafficReply
-	Cumulative kone.SankeySnapshot
-	DNS        DNSReply
-	Identity   DeviceIdentity
+	Traffic      TrafficReply
+	Cumulative   kone.SankeySnapshot
+	DNS          DNSReply
+	Identity     DeviceIdentity
+	LogsDegraded bool
 }
 
 type disconnectStream struct {
@@ -126,9 +130,12 @@ type helperService struct {
 	runError       error
 	probes         map[string]context.CancelFunc
 	canceledProbes map[string]time.Time
+	logForwarder   *helperLogForwarder
+	configureLogs  func(kone.GeneralConfig) error
 }
 
-func (s *helperService) Start(request StartRequest, _ *Empty) error {
+func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
+	defer func() { s.logFailure("Capture startup failed", result) }()
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
@@ -144,6 +151,11 @@ func (s *helperService) Start(request StartRequest, _ *Empty) error {
 	cfg, err := kone.ParseManagedConfig(request.TOML)
 	if err != nil {
 		return errors.New(helperError(err))
+	}
+	if s.configureLogs != nil {
+		if err = s.configureLogs(cfg.General); err != nil {
+			return err
+		}
 	}
 	engine, err := s.factory(cfg)
 	if err != nil {
@@ -187,8 +199,9 @@ func (s *helperService) Start(request StartRequest, _ *Empty) error {
 		s.runError = err
 		s.mu.Unlock()
 		close(done)
+		s.logFailure("Capture engine stopped", err)
 		var reply Empty
-		s.events.Call("Callbacks.Finished", FinishedEvent{Error: helperError(err)}, &reply)
+		s.events.Call("Callbacks.Finished", FinishedEvent{Error: helperError(err), LogsDegraded: s.logsDegraded()}, &reply)
 	}()
 	select {
 	case <-engine.Ready():
@@ -216,6 +229,7 @@ func (s *helperService) current() (NetworkEngine, error) {
 	return s.engine, nil
 }
 func (s *helperService) Reload(request StartRequest, _ *Empty) error {
+	defer s.flushLogs()
 	if len(request.TOML) > 1024*1024 {
 		return errors.New("helper configuration exceeds bound")
 	}
@@ -229,6 +243,9 @@ func (s *helperService) Reload(request StartRequest, _ *Empty) error {
 	}
 	if err = engine.ReloadVersion(cfg, request.Version); err != nil {
 		return errors.New(helperError(err))
+	}
+	if s.configureLogs != nil {
+		return s.configureLogs(cfg.General)
 	}
 	return nil
 }
@@ -424,6 +441,7 @@ func (s *helperService) CancelProbe(id string, _ *Empty) error {
 	return nil
 }
 func (s *helperService) Stop(_ Empty, reply *StopReply) error {
+	defer func() { s.flushLogs(); reply.LogsDegraded = s.logsDegraded() }()
 	s.mu.Lock()
 	cancel := s.runCancel
 	var cancelProbes []context.CancelFunc
@@ -461,7 +479,7 @@ func (s *helperService) Stop(_ Empty, reply *StopReply) error {
 // ServeHelper is reachable only over authenticated private IPC transports.
 // Losing either parent connection cancels Run and executes its full rollback.
 // Its factory injection is for isolated tests and does not expose a public API.
-func ServeHelper(ctx context.Context, commands, events io.ReadWriteCloser, factory EngineFactory) error {
+func ServeHelper(ctx context.Context, commands, events io.ReadWriteCloser, factory EngineFactory, logging ...HelperLogging) error {
 	if commands == nil || events == nil {
 		return errors.New("private helper requires both IPC streams")
 	}
@@ -475,6 +493,11 @@ func ServeHelper(ctx context.Context, commands, events io.ReadWriteCloser, facto
 	commands = disconnectStream{ReadWriteCloser: commands, disconnected: cancel}
 	events = disconnectStream{ReadWriteCloser: events, disconnected: cancel}
 	service := &helperService{ctx: ctx, factory: factory, events: rpc.NewClient(events)}
+	if len(logging) > 0 && logging[0].Store != nil {
+		service.logForwarder = &helperLogForwarder{store: logging[0].Store, client: service.events}
+		service.configureLogs = logging[0].Configure
+		go service.pumpLogs(ctx)
+	}
 	defer service.events.Close()
 	server := rpc.NewServer()
 	if err := server.RegisterName("Network", service); err != nil {

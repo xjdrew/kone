@@ -13,6 +13,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	"github.com/xjdrew/kone/pkg/geoip"
 	"github.com/xjdrew/kone/pkg/kone"
+	"github.com/xjdrew/kone/pkg/logstore"
 	"github.com/xjdrew/kone/pkg/process"
 )
 
@@ -41,6 +42,7 @@ type Options struct {
 	Probe            func(context.Context, *kone.KoneConfig, string, string, bool) ProbeResult
 	Now              func() time.Time
 	ConfigureLogging func(kone.GeneralConfig) error
+	LogStore         *logstore.Store
 }
 type Controller struct {
 	mu                            sync.Mutex
@@ -76,6 +78,7 @@ type Controller struct {
 	ctx                           context.Context
 	requestRates                  map[string]rateWindow
 	configureLogging              func(kone.GeneralConfig) error
+	logs                          *logstore.Store
 }
 type State struct {
 	ControlState     string         `json:"control_state"`
@@ -136,6 +139,10 @@ func New(options Options) (*Controller, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &Controller{directory: options.Directory, version: options.Version, factory: options.Factory, preflight: options.Preflight, probe: options.Probe, now: options.Now, state: "paused", bootstrap: randomToken(), bootstrapExpiry: options.Now().Add(5 * time.Minute), sessions: map[string]*Session{}, pairs: map[string]Pairing{}, operations: map[string]*Operation{}, requestKeys: map[string]string{}, probeSlots: make(chan struct{}, 4), ctx: ctx, cancel: cancel}
 	c.requestRates = map[string]rateWindow{}
+	c.logs = options.LogStore
+	if c.logs == nil {
+		c.logs = logstore.New()
+	}
 	c.observer = kone.NewTrafficObserver(kone.ObservationOptions{Capacity: 2048, Retention: time.Hour})
 	doc, err := readDocument(c.settingsPath())
 	if errors.Is(err, os.ErrNotExist) {
@@ -337,7 +344,7 @@ func (c *Controller) Start(ctx context.Context) error {
 		return errors.New("repair configuration or recovery state before enabling capture")
 	}
 	if !doc.Inbound.Enabled {
-		return errors.New("enable the TUN inbound before starting capture")
+		return c.startFailure(errors.New("enable the TUN inbound before starting capture"), doc.Config)
 	}
 	check := c.preflight(ctx, engineConfig(doc))
 	if !check.Ready {
@@ -357,6 +364,12 @@ func (c *Controller) Start(ctx context.Context) error {
 		return c.startFailure(err, doc.Config)
 	}
 	observer := kone.NewTrafficObserver(kone.ObservationOptions{Capacity: 2048, Retention: time.Hour})
+	if logged, ok := engine.(interface{ SetLogStore(*logstore.Store) error }); ok {
+		if err = logged.SetLogStore(c.logs); err != nil {
+			engine.Close()
+			return c.startFailure(err, doc.Config)
+		}
+	}
 	if err = engine.SetTrafficObserver(observer); err != nil {
 		engine.Close()
 		return c.startFailure(err, doc.Config)
@@ -480,6 +493,7 @@ func (c *Controller) startFailure(err error, cfg *kone.KoneConfig) error {
 		c.state = "paused"
 	}
 	c.mu.Unlock()
+	c.logs.Append(logstore.Record{Level: "ERROR", Source: "management", Message: "Capture startup failed", Attrs: map[string]any{"stage": "start", "error": safeMessage(err, cfg)}})
 	return err
 }
 

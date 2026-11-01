@@ -9,6 +9,7 @@ import {
   validSHA,
   verifyMarker,
 } from "./model.mjs";
+import { entryDefinitions } from "./targets.mjs";
 
 if (
   process.env.GITHUB_ACTIONS !== "true" ||
@@ -140,6 +141,12 @@ if (build.sha !== sha || build.version !== version)
     "Binary/source build identity does not match CI verification",
   );
 const records = [];
+for (const binary of build.binaries || []) {
+  const expected = entryDefinitions(binary.target);
+  if (!Array.isArray(binary.entries) || binary.entries.length !== expected.length || expected.some(entry =>
+    !binary.entries.some(value => value.role === entry.role && value.name === entry.name && /^[a-f0-9]{64}$/.test(value.sha256))))
+    throw new Error("Build metadata is missing executable roles");
+}
 for (const platform of ["linux", "darwin", "win32"]) {
   const value = JSON.parse(
     await readFile(join(output, `packages-${platform}.json`), "utf8"),
@@ -151,6 +158,11 @@ for (const platform of ["linux", "darwin", "win32"]) {
   )
     throw new Error("Package identity mismatch");
   records.push(...value.assets);
+}
+for (const record of records) {
+  const binary = build.binaries.find(value => value.target === record.target);
+  if (!binary || !record.name.startsWith(`kone-${version}-${record.target}.`) || JSON.stringify(record.entries) !== JSON.stringify(binary.entries))
+    throw new Error("Package executable roles do not match verified build metadata");
 }
 const expected = expectedPackages(version);
 if (

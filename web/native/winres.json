@@ -1,0 +1,15 @@
+{
+  "RT_GROUP_ICON": {
+    "#101": { "0000": "kone.ico" }
+  },
+  "RT_MANIFEST": {
+    "#1": {
+      "0409": {
+        "description": "Kone",
+        "minimum-os": "win10",
+        "dpi-awareness": "per monitor v2",
+        "long-path-aware": true
+      }
+    }
+  }
+}

@@ -13,29 +13,29 @@ default:
     @just --justfile "$KONE_TASK_ROOT/justfile" --list
 
 # Prepare the local development environment.
-init:
-    node "$KONE_TASK_ROOT/scripts/tasks/init.mjs"
+init *args:
+    node "$KONE_TASK_ROOT/scripts/tasks/init.mjs" "$@"
 
 # Start desktop management by default, or use the frontend development server.
-dev mode='desktop':
-    node "$KONE_TASK_ROOT/scripts/tasks/dev.mjs" "$1"
+dev *args:
+    node "$KONE_TASK_ROOT/scripts/tasks/dev.mjs" "$@"
 
 # Run local quick checks; full, fmt, vet and benchmark are explicit modes.
-quality mode='quick':
-    node "$KONE_TASK_ROOT/scripts/tasks/quality.mjs" "$1"
+quality *args:
+    node "$KONE_TASK_ROOT/scripts/tasks/quality.mjs" "$@"
 
 # Build only the current platform, using system or mixed stack.
-build stack='system':
-    node "$KONE_TASK_ROOT/scripts/tasks/build.mjs" native "$1"
+build *args:
+    node "$KONE_TASK_ROOT/scripts/tasks/build.mjs" native "$@"
 
 # Cross-build all supported release targets.
-build-all:
-    node "$KONE_TASK_ROOT/scripts/tasks/build.mjs" all
+build-all *args:
+    node "$KONE_TASK_ROOT/scripts/tasks/build.mjs" all "$@"
 
 # Build an unsigned package for the current platform.
-package stack='system':
-    node "$KONE_TASK_ROOT/scripts/tasks/package.mjs" native "$1"
+package *args:
+    node "$KONE_TASK_ROOT/scripts/tasks/package.mjs" native "$@"
 
 # Build unsigned packages for every supported target.
-package-all:
-    node "$KONE_TASK_ROOT/scripts/tasks/package.mjs" all
+package-all *args:
+    node "$KONE_TASK_ROOT/scripts/tasks/package.mjs" all "$@"

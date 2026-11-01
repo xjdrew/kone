@@ -8,8 +8,16 @@ import {
   flowQueryChunks,
   normalizeTraffic,
   exactRuleTarget,
+  explainError,
 } from "../src/api.js";
 const originalFetch = globalThis.fetch;
+
+test("disabled TUN errors explain the required saved inbound setting", async () => {
+  const message = "enable the TUN inbound before starting capture";
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: { message } }), { status: 400 });
+  await assert.rejects(request("/lifecycle/start", "POST", {}), /入站.*TUN.*保存/);
+  assert.equal(explainError("other failure"), "other failure");
+});
 
 test("rule shortcuts retain exact domain, address, port and known transport scope", () => {
   assert.deepEqual(exactRuleTarget("Example.COM.:443", "udp"), {

@@ -152,6 +152,8 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		writeJSON(w, 200, map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role, "remote_session": session.Remote, "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf})
 	case path == "config" && r.Method == http.MethodGet:
 		writeJSON(w, 200, c.Document())
+	case path == "logs" && r.Method == http.MethodGet:
+		c.logsRoute(w, r)
 	case path == "recovery" && r.Method == http.MethodGet:
 		report, err := c.InspectRecovery(r.Context())
 		if err != nil {

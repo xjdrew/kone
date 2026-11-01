@@ -37,6 +37,7 @@ test("Windows packages zip, extract and install with no PowerShell in PATH", {
   await mkdir(join(source, "licenses"), { recursive: true });
   const files = {
     "kone.exe": "inert packaging fixture; never executed\n",
+    "kone-cli.exe": "inert console fixture; never executed\n",
     LICENSE: "license fixture\n",
     "LICENSE-MIT": "legacy license fixture\n",
     "build-info.json": '{"fixture":true}\n',

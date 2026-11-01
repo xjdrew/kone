@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { ensureFrontend, ensureWebDependencies, main } from "./common.mjs";
+import { showHelp } from "./help.mjs";
 
 export async function quality(ctx, mode = "quick") {
   const ci = (...recipes) => ctx.run("just", ["ci", ...recipes]);
@@ -36,4 +37,8 @@ export async function quality(ctx, mode = "quick") {
   }
 }
 
-await main(import.meta.url, (ctx) => quality(ctx, process.argv[2]));
+await main(import.meta.url, (ctx) => {
+  const args = process.argv.slice(2);
+  if (showHelp("quality", args)) return;
+  return quality(ctx, ...args);
+});

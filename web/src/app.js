@@ -9,8 +9,10 @@ import {
   targetWithPort,
   flowQueryChunks,
   exactRuleTarget,
+  explainError,
 } from "./api.js";
 import { aggregatePaths, bytes, nativePaths, renderSankey } from "./graph.js";
+import { mergeLogs } from "./logs.js";
 
 const pages = [
   ["home", "首页", "◈", "OVERVIEW", "看清流量，掌握每一次连接。"],
@@ -54,6 +56,7 @@ const model = {
   online: false,
   authenticated: true,
   traffic: normalizeTraffic(),
+  trafficError: "",
   graphPaused: false,
   graphFrozen: null,
   metric: "rate",
@@ -68,6 +71,15 @@ const model = {
   frozen: null,
   dns: null,
   diagnostics: [],
+  logs: [],
+  logPage: null,
+  logCursor: null,
+  logLevel: "info",
+  logSource: "",
+  logPaused: false,
+  logError: "",
+  logLoading: false,
+  logGeneration: 0,
   sessions: [],
   lan: {},
   lastSuccess: null,
@@ -598,6 +610,7 @@ function updateShell() {
     : model.state.config_error ||
       model.state.last_error ||
       model.state.error ||
+      model.trafficError ||
       "";
   if (
     !text &&
@@ -607,7 +620,7 @@ function updateShell() {
   )
     text = "已保存设置与运行中设置不同。请在设置页查看待应用变更。";
   banner.hidden = !text;
-  banner.textContent = text;
+  banner.textContent = explainError(text);
   banner.className = `banner ${!model.online || model.state.last_error ? "error" : ""}`;
   document.querySelector("#updated-at").textContent = model.lastSuccess
     ? `管理状态更新时间 ${time(model.lastSuccess)}`
@@ -620,6 +633,7 @@ function updateShell() {
   });
 }
 async function refreshState() {
+  const wasOnline = model.online;
   try {
     model.state = await endpoints.state();
     setSession(model.state);
@@ -627,10 +641,12 @@ async function refreshState() {
     model.authenticated = true;
     model.lastSuccess = new Date().toISOString();
     updateShell();
+    if (!wasOnline) renderPreserving();
   } catch (error) {
     model.online = false;
     if (error.status === 401) model.authenticated = false;
     updateShell();
+    if (wasOnline) renderPreserving();
     throw error;
   }
 }
@@ -665,7 +681,7 @@ async function watchOperation(operation) {
       )
     )
       throw new ApiError(
-        operation.error || statusLabels[operation.status] || "操作未完成。",
+        explainError(operation.error || statusLabels[operation.status] || "操作未完成。"),
       );
     return operation;
   };
@@ -693,6 +709,17 @@ function trafficQuery() {
     metric: model.metric === "cumulative" ? "cumulative" : model.direction,
     protocol: model.protocol,
   };
+}
+
+async function refreshTraffic() {
+  try {
+    model.traffic = normalizeTraffic(await endpoints.traffic(trafficQuery()));
+    model.trafficError = "";
+  } catch (error) {
+    if (error.status === 401) throw error;
+    model.trafficError = "管理连接正常，流量数据暂不可用；当前显示上次快照。可在诊断页查看启动结果与运行日志。";
+  }
+  updateShell();
 }
 function changeGraph(key, value) {
   model[key] = value;
@@ -904,7 +931,7 @@ function readonlyNote() {
 function renderHome() {
   const flows = model.traffic.flows;
   const stats = model.traffic.stats;
-  const historical = model.traffic.frozen || !model.online;
+  const historical = model.traffic.frozen || Boolean(model.trafficError) || !model.online;
   const upload = Number(
     stats.upload_rate ??
       stats.UploadRate ??
@@ -1187,7 +1214,9 @@ function renderHome() {
       h(
         "span",
         {},
-        model.traffic.frozen
+        model.trafficError
+          ? `数据暂不可用，显示上次采样 · ${time(graphData?.at)}`
+          : model.traffic.frozen
           ? `接管已停止，显示保留采样 · ${time(graphData?.at)}`
           : model.graphPaused && !model.online
           ? "图形已固定；管理连接中断，当前接管状态未知。"
@@ -1240,9 +1269,11 @@ function renderHome() {
     ),
   );
   return [
-    model.traffic.frozen &&
+    (model.traffic.frozen || model.trafficError) &&
       note(
-        `接管已停止：这里是 ${time(model.traffic.at)} 的保留快照，速率与活动数量属于停止前的采样，不会继续实时更新。`,
+        model.trafficError
+          ? `数据暂不可用：这里是 ${time(model.traffic.at)} 的上次快照，速率与活动数量尚未更新；接管状态以顶部管理状态为准。`
+          : `接管已停止：这里是 ${time(model.traffic.at)} 的保留快照，速率与活动数量属于停止前的采样，不会继续实时更新。`,
         "warning",
       ),
     metrics,
@@ -2615,6 +2646,68 @@ function renderDNS() {
   ];
 }
 
+async function loadLogs(force = false) {
+  if (model.logLoading || (model.logPaused && !force)) return;
+  model.logLoading = true;
+  const generation = model.logGeneration;
+  try {
+    const query = { limit: "100", min_level: model.logLevel };
+    if (model.logSource) query.source = model.logSource;
+    if (model.logCursor !== null) query.after = model.logCursor;
+    const page = await endpoints.logs(query);
+    if (generation !== model.logGeneration) return;
+    model.logs = mergeLogs(model.logs, page, model.logCursor === null);
+    model.logCursor = page.next_cursor;
+    model.logPage = { ...page, gap: Boolean(page.gap || model.logPage?.gap) };
+    model.logError = "";
+  } catch (error) {
+    if (generation === model.logGeneration) model.logError = error.message;
+  } finally {
+    model.logLoading = false;
+    if (generation !== model.logGeneration) await loadLogs(true);
+  }
+}
+
+function renderLogs() {
+  const filter = (key, value) => {
+    model[key] = value;
+    model.logGeneration++;
+    model.logCursor = null;
+    model.logs = [];
+    model.logPage = null;
+    loadLogs(true).then(renderPreserving);
+  };
+  return card(
+    "运行日志",
+    "主机与提权辅助进程的近期日志；仅保存在内存中，凭据会脱敏。此处暂停只停止日志刷新。",
+    h("div", { class: "toolbar" },
+      h("label", { for: "log-level" }, "最低级别", h("select", {
+        id: "log-level", value: model.logLevel, onchange: (event) => filter("logLevel", event.target.value),
+      }, ["debug", "info", "warn", "error"].map((level) => h("option", { value: level }, level.toUpperCase())))),
+      h("label", { for: "log-source" }, "来源", h("select", {
+        id: "log-source", value: model.logSource, onchange: (event) => filter("logSource", event.target.value),
+      }, [["", "全部"], ["management", "管理"], ["desktop", "桌面"], ["helper", "提权辅助进程"]].map(([value, text]) => h("option", { value }, text)))),
+      button(model.logPaused ? "继续日志刷新" : "暂停日志刷新", () => {
+        model.logPaused = !model.logPaused;
+        if (!model.logPaused) loadLogs().then(renderPreserving);
+        renderPreserving();
+      }, "ghost compact", false),
+      button("刷新日志", () => loadLogs(true).then(renderPreserving), "ghost compact", false),
+    ),
+    model.logError && note(`日志暂不可用：${model.logError}`, "error"),
+    model.logPage?.helper?.error && note(`辅助进程日志暂不可用：${model.logPage.helper.error}`),
+    model.logPage?.gap && note("部分旧日志已过期，当前保留记录不连续。"),
+    model.logPage && h("p", { class: "muted" }, `本页保留最近 ${model.logs.length} 条；主机已淘汰 ${model.logPage.dropped || 0} 条。辅助进程${model.logPage.helper?.connected ? "已连接" : "未连接"}。`),
+    model.logs.length ? h("div", { class: "runtime-logs", id: "runtime-logs" }, table(
+      ["时间", "级别", "来源", "消息"], [...model.logs].reverse().map((record) => [
+        time(record.time), record.level, { management: "管理", desktop: "桌面", helper: "提权辅助进程" }[record.source] || record.source,
+        h("div", {}, h("span", {}, record.message), Object.keys(record.attrs || {}).length > 0 && h("details", {},
+          h("summary", {}, "结构化字段"), h("pre", {}, JSON.stringify(record.attrs, null, 2)))),
+      ]),
+    )) : empty("暂无匹配的运行日志", "可调整级别或来源；尚未启用接管时，辅助进程未连接是正常状态。"),
+  );
+}
+
 function renderDiagnostics() {
   const candidates = [
     ...new Map(
@@ -2754,6 +2847,7 @@ function renderDiagnostics() {
   );
   return [
     readonlyNote(),
+    renderLogs(),
     note(
       "TCP 连接成功只说明该传输阶段可达，不代表应用业务成功。直连与代理都失败时，需要分别查看解析、认证和连接阶段。",
     ),
@@ -3774,8 +3868,10 @@ function navigate(page, nextNotice = null) {
 }
 async function loadPageData() {
   if (model.page === "dns") model.dns = await endpoints.dns();
-  if (model.page === "diagnostics")
+  if (model.page === "diagnostics") {
+    await loadLogs();
     model.diagnostics = await endpoints.diagnostics();
+  }
   if (model.page === "settings") {
     model.lan = await endpoints.lan();
     model.sessions = ["manage", "admin", "owner", "local"].includes(role())
@@ -3799,7 +3895,7 @@ async function loadPageData() {
 async function refreshAll() {
   await refreshState();
   await loadConfig(false);
-  model.traffic = normalizeTraffic(await endpoints.traffic(trafficQuery()));
+  await refreshTraffic();
   await loadPageData();
   renderPreserving();
 }
@@ -3861,31 +3957,30 @@ window.addEventListener("beforeunload", (event) => {
 });
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden)
-    refreshAll().catch(() => {
-      model.online = false;
-      updateShell();
-    });
+    refreshAll().catch(failure);
 });
 let polling = false;
 setInterval(async () => {
   if (polling || document.hidden || !model.authenticated || model.busy) return;
   polling = true;
+  const wasOnline = model.online;
   try {
     await refreshState();
-    model.traffic = normalizeTraffic(await endpoints.traffic(trafficQuery()));
+    await refreshTraffic();
     if (["dns", "diagnostics"].includes(model.page)) await loadPageData();
     if (
-      ["home", "connections", "dns", "diagnostics"].includes(model.page) &&
+      (["home", "connections", "dns", "diagnostics"].includes(model.page) || !wasOnline) &&
       !document.querySelector("#detail-dialog").open
     )
       renderPreserving();
   } catch (error) {
-    model.online = false;
-    updateShell();
+    // Only /state determines management connectivity. Optional telemetry may
+    // fail during helper startup without invalidating a working control plane.
     if (error.status === 401) {
       model.authenticated = false;
+      model.online = false;
       render();
-    }
+    } else if (wasOnline !== model.online) renderPreserving();
   } finally {
     polling = false;
   }
@@ -3908,6 +4003,6 @@ try {
 } catch (error) {
   if (error.status === 401) model.authenticated = false;
   else model.notice = { message: error.message, kind: "error" };
-  model.online = false;
+  if (error.status === 401) model.online = false;
   render();
 }

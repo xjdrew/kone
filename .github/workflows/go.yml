@@ -66,6 +66,9 @@ jobs:
         run: just ci test-release
       - name: Verify GeoIP conversion boundaries and provenance
         run: just ci test-data
+      - name: Verify generated application icons and Windows resources
+        if: ${{ hashFiles('cmd/kone-cli/main.go') != '' }}
+        run: just ci icons check
       - run: just ci web-build
       - name: Verify embedded assets match frontend sources
         run: just ci web-check

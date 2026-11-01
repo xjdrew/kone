@@ -22,6 +22,8 @@ async function fixture(t, options = {}) {
     await rm(cwd, { recursive: true, force: true });
   });
   await mkdir(join(cwd, "web/src"), { recursive: true });
+  await mkdir(join(cwd, "web/native"), { recursive: true });
+  await writeFile(join(cwd, "web/native/kone.icns"), Buffer.from("icns\0\0\0\b"));
   await mkdir(join(cwd, "licenses"));
   await writeFile(join(cwd, "LICENSE"), "license\n");
   await writeFile(join(cwd, "LICENSE-MIT"), "legacy license\n");
@@ -102,14 +104,17 @@ test("native builds only the host target, embeds its version and records the sel
   const f = await fixture(t, { env: { GOOS: "linux", KONE_VERSION: "0.4.0-local" } });
   const result = await build(f.ctx, "native", "mixed");
   const compiler = f.calls.filter((call) => call.command === "go" && call.args[0] === "build");
-  assert.equal(compiler.length, 1);
+  assert.equal(compiler.length, 2);
   assert.equal(compiler[0].settings.env.GOOS, "windows");
   assert.equal(compiler[0].settings.env.GOARCH, "amd64");
   assert.equal(compiler[0].settings.env.CGO_ENABLED, "0");
   assert.ok(compiler[0].args.includes("with_gvisor"));
-  assert.ok(compiler[0].args.includes("-X main.VERSION=0.4.0-local"));
+  assert.ok(compiler[0].args.includes("-H=windowsgui -X main.VERSION=0.4.0-local"));
+  assert.ok(compiler[1].args.includes("./cmd/kone-cli"));
+  assert.ok(compiler[1].args.includes("-X main.VERSION=0.4.0-local"));
   assert.equal(result.target, "windows-amd64");
   assert.equal(await readFile(join(f.cwd, "dist/kone.exe"), "utf8"), "compiled fixture\n");
+  assert.equal(await readFile(join(f.cwd, "dist/kone-cli.exe"), "utf8"), "compiled fixture\n");
   const metadata = f.calls.find((call) => call.args.some((arg) => arg.endsWith("build-info.mjs")));
   assert.deepEqual(metadata.args.slice(-2), ["--targets", "windows-amd64"]);
   assert.equal(metadata.settings.env.KONE_BUILD_STACK, "mixed");
@@ -123,6 +128,22 @@ test("invalid stacks and compiler failures stop before packaging or launching th
   assert.equal(f.calls.length, 0);
   await assert.rejects(packageBuild(f.ctx), /compile failure/);
   assert.ok(!f.calls.some((call) => call.args.some((arg) => arg.endsWith("package.mjs"))));
+});
+
+test("macOS builds a menu-bar application bundle and a separate terminal executable", async (t) => {
+  const f = await fixture(t, { platform: "darwin", arch: "arm64" });
+  await build(f.ctx);
+  const compiler = f.calls.filter(call => call.command === "go" && call.args[0] === "build");
+  assert.equal(compiler.length, 2);
+  assert.ok(compiler[0].args.includes("./cmd/kone"));
+  assert.ok(compiler[1].args.includes("./cmd/kone-cli"));
+  const plist = await readFile(join(f.cwd, "dist/Kone.app/Contents/Info.plist"), "utf8");
+  assert.match(plist, /<key>LSUIElement<\/key><true\/>/);
+  assert.ok(plist.includes(sha));
+  assert.equal(await readFile(join(f.cwd, "dist/kone-cli"), "utf8"), "compiled fixture\n");
+  await develop(f.ctx);
+  assert.equal(f.calls.at(-1).command, "open");
+  assert.deepEqual(f.calls.at(-1).args, [join(f.cwd, "dist/Kone.app")]);
 });
 
 test("package defaults to one native target; package-all requests all portable targets", async (t) => {

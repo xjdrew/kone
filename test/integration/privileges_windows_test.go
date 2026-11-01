@@ -13,7 +13,7 @@ import (
 )
 
 func TestCLIWindowsPrivileges(t *testing.T) {
-	root, binary := buildBinary(t, "./cmd/kone")
+	root, binary := buildBinary(t, "./cmd/kone-cli")
 	config := filepath.Join(t.TempDir(), "config with spaces.toml")
 	if err := os.WriteFile(config, []byte("[dns]\nservers=['1.1.1.1']\n"), 0600); err != nil {
 		t.Fatal(err)

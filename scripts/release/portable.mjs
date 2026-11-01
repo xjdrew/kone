@@ -38,7 +38,7 @@ export async function createPortableArchive({ stage, base, destination, unix }) 
         const stat = await lstat(path);
         if (stat.isDirectory()) await add(path, entry);
         else if (stat.isFile()) {
-          const mode = unix && ["kone", "install.sh"].includes(entry) ? "100755" : "100644";
+          const mode = unix && ["kone", "install.sh", "bin/kone-cli", "Kone.app/Contents/MacOS/kone"].includes(entry) ? "100755" : "100644";
           const object = git(["hash-object", "-w", "--no-filters", "--stdin"], await readFile(path));
           git(["update-index", "--add", "--cacheinfo", mode, object, entry]);
         } else throw new Error("Portable archives require regular files and directories");

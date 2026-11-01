@@ -1,1 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect width="48" height="48" rx="14" fill="#73e0c1"/><path d="M14 12v24m20-24L22 24l12 12M14 24h8" fill="none" stroke="#102026" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>Kone — K1 marine chronometer</title>
+  <rect width="256" height="256" rx="56" fill="#12343e"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M117 39h22m-11 0v17" stroke="#e4c690" stroke-width="12"/>
+    <circle cx="128" cy="140" r="80" stroke="#f4f6ef" stroke-width="12"/>
+    <path d="M107 94v92m0-46 52 46" stroke="#f4f6ef" stroke-width="15"/>
+    <path d="m107 140 52-46" stroke="#e4c690" stroke-width="15"/>
+  </g>
+</svg>
