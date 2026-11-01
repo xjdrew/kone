@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/rpc"
 	"regexp"
 	"sync"
@@ -51,6 +52,7 @@ type ProbeRequest struct {
 	TimeoutMS        int64
 	ExpectedVersion  uint64
 	Deadline         time.Time
+	ReportProgress   bool
 }
 type DeviceIdentity struct {
 	Name  string
@@ -119,23 +121,25 @@ func helperError(err error) string {
 }
 
 type helperService struct {
-	mu             sync.Mutex
-	ctx            context.Context
-	engine         NetworkEngine
-	factory        EngineFactory
-	events         *rpc.Client
-	started        bool
-	runCancel      context.CancelFunc
-	runDone        chan struct{}
-	runError       error
-	probes         map[string]context.CancelFunc
-	canceledProbes map[string]time.Time
-	logForwarder   *helperLogForwarder
-	configureLogs  func(kone.GeneralConfig) error
+	mu                 sync.Mutex
+	ctx                context.Context
+	engine             NetworkEngine
+	factory            EngineFactory
+	events             *rpc.Client
+	started            bool
+	runCancel          context.CancelFunc
+	runDone            chan struct{}
+	runError           error
+	probes             map[string]context.CancelFunc
+	probeProgressSlots chan struct{}
+	canceledProbes     map[string]time.Time
+	logForwarder       *helperLogForwarder
+	configureLogs      func(kone.GeneralConfig) error
 }
 
 func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
 	defer func() { s.logFailure("Capture startup failed", result) }()
+	s.logEvent(slog.LevelInfo, "Network helper received capture request", slog.String("stage", "configuration"), slog.Uint64("config_version", request.Version))
 	s.mu.Lock()
 	if s.started {
 		s.mu.Unlock()
@@ -157,6 +161,7 @@ func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
 			return err
 		}
 	}
+	s.logEvent(slog.LevelInfo, "Network helper configuration validated", slog.String("stage", "configuration"), slog.Uint64("config_version", request.Version))
 	engine, err := s.factory(cfg)
 	if err != nil {
 		return errors.New(helperError(err))
@@ -192,6 +197,7 @@ func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
 	s.runDone = make(chan struct{})
 	done := s.runDone
 	s.mu.Unlock()
+	s.logEvent(slog.LevelInfo, "Network helper starting capture engine", slog.String("stage", "engine"), slog.Uint64("config_version", request.Version))
 	go func() {
 		err := engine.Run(runCtx)
 		err = errors.Join(err, engine.Close())
@@ -199,12 +205,16 @@ func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
 		s.runError = err
 		s.mu.Unlock()
 		close(done)
+		if err == nil {
+			s.logEvent(slog.LevelInfo, "Network helper engine cleanup completed", slog.String("stage", "cleanup"))
+		}
 		s.logFailure("Capture engine stopped", err)
 		var reply Empty
 		s.events.Call("Callbacks.Finished", FinishedEvent{Error: helperError(err), LogsDegraded: s.logsDegraded()}, &reply)
 	}()
 	select {
 	case <-engine.Ready():
+		s.logEvent(slog.LevelInfo, "Network helper capture is ready", slog.String("stage", "ready"), slog.Uint64("config_version", request.Version))
 		return nil
 	case <-done:
 		s.mu.Lock()
@@ -409,6 +419,16 @@ func (s *helperService) Probe(request ProbeRequest, reply *kone.DiagnosticResult
 	s.probes[request.ID] = cancel
 	s.mu.Unlock()
 	defer func() { cancel(); s.mu.Lock(); delete(s.probes, request.ID); s.mu.Unlock() }()
+	if request.ReportProgress && s.events != nil {
+		s.mu.Lock()
+		if s.probeProgressSlots == nil {
+			s.probeProgressSlots = make(chan struct{}, 8)
+		}
+		slots := s.probeProgressSlots
+		s.mu.Unlock()
+		progress := helperProbeProgress{client: s.events, id: request.ID, slots: slots}
+		ctx = kone.WithDiagnosticProgress(ctx, func(result kone.DiagnosticResult) { progress.publish(ctx, result) })
+	}
 	*reply, err = owner.ProbeDiagnosticVersion(ctx, request.Outbound, request.Target, request.TLS, request.ExpectedVersion)
 	if err != nil {
 		return errors.New(helperError(err))
@@ -442,6 +462,7 @@ func (s *helperService) CancelProbe(id string, _ *Empty) error {
 }
 func (s *helperService) Stop(_ Empty, reply *StopReply) error {
 	defer func() { s.flushLogs(); reply.LogsDegraded = s.logsDegraded() }()
+	s.logEvent(slog.LevelInfo, "Network helper stopping capture", slog.String("stage", "stop"))
 	s.mu.Lock()
 	cancel := s.runCancel
 	var cancelProbes []context.CancelFunc

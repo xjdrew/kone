@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -184,9 +185,12 @@ func New(options Options) (*Controller, error) {
 	if previous, e := readDocument(c.confirmedPath() + ".previous"); e == nil {
 		c.previousConfirmed = previous
 	}
-	if _, e := os.Stat(c.journalPath()); e == nil {
-		c.state = "recovery_required"
-		c.lastError = "The previous capture did not finish cleanly; inspect recovery before starting"
+	c.logEvent(slog.LevelInfo, "Managed settings loaded; capture is paused", slog.String("stage", "startup"), slog.Uint64("saved_version", doc.Version))
+	if c.configError != "" {
+		c.logEvent(slog.LevelWarn, "Saved settings need repair", slog.String("stage", "startup"), slog.String("detail", c.configError))
+	}
+	if _, err := os.Stat(c.journalPath()); err == nil {
+		c.logEvent(slog.LevelInfo, "Previous capture will be checked automatically before the next start", slog.String("stage", "startup"))
 	}
 	return c, nil
 }
@@ -239,7 +243,11 @@ func (c *Controller) State() State {
 		"process_attribution": process.Supported(), "process_scope": "best effort for local IPv4 sockets; IPv6 and unverified owners remain unknown; remote sources remain remote",
 		"tls_lan": true, "persistent_config": true, "statistics": "business payload bytes", "temporary_rules": true, "temporary_rule_scope": "domain rules only",
 	}
-	return State{ControlState: control, DataState: c.state, State: c.state, Version: c.version, SavedVersion: c.doc.Version, RunningVersion: c.runningVersion, ConfirmedVersion: c.confirmed.Version, LastError: c.lastError, ConfigError: c.configError, Host: host, Scope: "Only traffic entering KONE; DNS, diagnostics and business traffic are separate", Capabilities: capabilities, Time: c.now(), CaptureLocked: c.captureLocked()}
+	state := c.state
+	if c.engine == nil && (state == "recovery_required" || state == "recovery_failed") {
+		state = "paused"
+	}
+	return State{ControlState: control, DataState: state, State: state, Version: c.version, SavedVersion: c.doc.Version, RunningVersion: c.runningVersion, ConfirmedVersion: c.confirmed.Version, LastError: c.lastError, ConfigError: c.configError, Host: host, Scope: "Only traffic entering KONE; DNS, diagnostics and business traffic are separate", Capabilities: capabilities, Time: c.now(), CaptureLocked: c.captureLocked()}
 }
 
 func (c *Controller) Document() map[string]any {
@@ -293,13 +301,18 @@ func (c *Controller) Save(request SaveRequest) (map[string]any, error) {
 }
 
 // Caller holds c.actions so resets and lifecycle changes cannot race a save.
-func (c *Controller) saveLocked(request SaveRequest) (map[string]any, error) {
+func (c *Controller) saveLocked(request SaveRequest) (result map[string]any, resultErr error) {
 	c.mu.Lock()
 	current := cloneDocument(c.doc)
 	repair := c.configError != ""
 	closed := c.closed
 	engine := c.engine
 	c.mu.Unlock()
+	defer func() {
+		if resultErr != nil {
+			c.logEvent(slog.LevelError, "Saving settings failed", slog.String("stage", "save"), slog.Uint64("base_version", request.BaseVersion), slog.String("error", safeMessage(resultErr, current.Config)))
+		}
+	}()
 	if closed {
 		return nil, errors.New("application is stopping")
 	}
@@ -332,11 +345,13 @@ func (c *Controller) saveLocked(request SaveRequest) (map[string]any, error) {
 	c.doc = next
 	c.configError = ""
 	c.mu.Unlock()
+	c.logEvent(slog.LevelInfo, "Settings saved", slog.String("stage", "save"), slog.Uint64("saved_version", next.Version))
 	value := c.Document()
 	value["applied"] = false
 	if engine != nil {
 		if directOnly(next.Config) && !next.DirectOnlyConfirmed {
 			value["apply_error"] = "Saved, but confirm direct-only capture before applying"
+			c.logEvent(slog.LevelWarn, "Saved settings require direct-only confirmation before applying", slog.String("stage", "apply"), slog.Uint64("saved_version", next.Version))
 			return value, nil
 		}
 		applyCtx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
@@ -356,14 +371,30 @@ func engineConfig(doc Document) *kone.KoneConfig {
 	return cfg
 }
 
-func (c *Controller) Preflight(ctx context.Context) kone.PreflightReport {
+func (c *Controller) Preflight(ctx context.Context) (report kone.PreflightReport) {
 	c.mu.Lock()
 	doc := cloneDocument(c.doc)
 	err := c.configError
-	state := c.state
 	c.mu.Unlock()
-	if err != "" || state == "recovery_required" || state == "recovery_failed" {
-		return kone.PreflightReport{Ready: false, Issues: []kone.PreflightIssue{{Code: "recovery", Severity: "error", Message: "Repair saved settings and inspect previous capture before enabling"}}}
+	c.logEvent(slog.LevelInfo, "Capture preflight requested", slog.String("stage", "preflight"), slog.Uint64("saved_version", doc.Version))
+	defer func() {
+		level := slog.LevelInfo
+		if !report.Ready {
+			level = slog.LevelWarn
+		}
+		c.logEvent(level, "Capture preflight completed", slog.String("stage", "preflight"), slog.Uint64("saved_version", doc.Version), slog.Bool("ready", report.Ready), slog.Int("issues", len(report.Issues)))
+		for _, issue := range report.Issues {
+			issueLevel := slog.LevelInfo
+			if issue.Severity == "warning" {
+				issueLevel = slog.LevelWarn
+			} else if issue.Severity == "error" {
+				issueLevel = slog.LevelError
+			}
+			c.logEvent(issueLevel, "Capture preflight reported an issue", slog.String("stage", "preflight"), slog.String("code", issue.Code), slog.String("detail", safeMessage(errors.New(issue.Message), doc.Config)))
+		}
+	}()
+	if err != "" {
+		return kone.PreflightReport{Ready: false, Issues: []kone.PreflightIssue{{Code: "configuration", Severity: "error", Message: "Repair saved settings before enabling capture"}}}
 	}
 	return c.preflight(ctx, engineConfig(doc))
 }
@@ -371,32 +402,51 @@ func (c *Controller) Preflight(ctx context.Context) kone.PreflightReport {
 func (c *Controller) Start(ctx context.Context) error {
 	c.actions.Lock()
 	defer c.actions.Unlock()
+	c.logEvent(slog.LevelInfo, "Capture start requested", slog.String("stage", "start"))
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
+		c.logEvent(slog.LevelWarn, "Capture start rejected because management is stopping", slog.String("stage", "start"))
 		return errors.New("application is stopping")
 	}
 	if c.engine != nil {
 		state := c.state
 		c.mu.Unlock()
 		if state == "running" {
+			c.logEvent(slog.LevelInfo, "Capture is already running", slog.String("stage", "start"))
 			return nil
 		}
 		return errors.New("an engine operation is already in progress")
 	}
 	doc := cloneDocument(c.doc)
-	bad := c.configError != "" || c.state == "recovery_required" || c.state == "recovery_failed"
+	bad := c.configError != ""
 	c.mu.Unlock()
 	if bad {
-		return errors.New("repair configuration or recovery state before enabling capture")
+		return c.startFailure(errors.New("repair saved settings before enabling capture"), doc.Config)
+	}
+	if err := doc.Config.Validate(); err != nil {
+		return c.startFailure(err, doc.Config)
 	}
 	check := c.readiness(ctx, doc, "paused", "")
+	c.logEvent(slog.LevelInfo, "Capture startup preflight completed", slog.String("stage", "preflight"), slog.Bool("ready", check.Ready), slog.Uint64("saved_version", doc.Version), slog.Int("blockers", len(check.Blockers)), slog.Int("warnings", len(check.Warnings)))
+	for _, issue := range check.Checks {
+		if issue.Severity == "error" || issue.Severity == "warning" {
+			level := slog.LevelWarn
+			if issue.Severity == "error" {
+				level = slog.LevelError
+			}
+			c.logEvent(level, "Capture startup check reported an issue", slog.String("stage", "preflight"), slog.String("code", issue.Code), slog.String("detail", safeMessage(errors.New(issue.Message), doc.Config)))
+		}
+	}
 	if !check.Ready {
 		messages := make([]string, 0, len(check.Blockers))
 		for _, issue := range check.Blockers {
 			messages = append(messages, issue.Message)
 		}
 		return c.startFailure(errors.New(strings.Join(messages, "; ")), doc.Config)
+	}
+	if err := c.inspectAndClearRecovery(ctx, true, doc.Config); err != nil {
+		return c.startFailure(err, doc.Config)
 	}
 	if c.configureLogging != nil {
 		if err := c.configureLogging(doc.Config.General); err != nil {
@@ -407,6 +457,7 @@ func (c *Controller) Start(ctx context.Context) error {
 	c.state = "starting"
 	c.lastError = ""
 	c.mu.Unlock()
+	c.logEvent(slog.LevelInfo, "Initializing capture engine", slog.String("stage", "engine"), slog.Uint64("saved_version", doc.Version))
 	engine, err := c.factory(engineConfig(doc))
 	if err != nil {
 		return c.startFailure(err, doc.Config)
@@ -451,11 +502,22 @@ func (c *Controller) Start(ctx context.Context) error {
 	c.engineDone = done
 	c.observer = observer
 	c.mu.Unlock()
+	c.logEvent(slog.LevelInfo, "Capture engine initialized; waiting for network readiness", slog.String("stage", "engine"), slog.Uint64("saved_version", doc.Version))
 	go func() {
 		e := engine.Run(engineCtx)
+		if e != nil {
+			c.logEvent(slog.LevelError, "Capture engine stopped with an error", slog.String("stage", "engine"), slog.String("error", safeMessage(e, doc.Config)))
+		} else {
+			c.logEvent(slog.LevelInfo, "Capture engine stopped", slog.String("stage", "engine"))
+		}
 		cleanupErr := engine.Close()
 		if cleanupErr == nil {
 			cleanupErr = c.removeRecoveryJournal(runID)
+		}
+		if cleanupErr != nil {
+			c.logEvent(slog.LevelError, "Capture cleanup was incomplete", slog.String("stage", "cleanup"), slog.String("run_id", runID), slog.String("error", safeMessage(cleanupErr, doc.Config)))
+		} else {
+			c.logEvent(slog.LevelInfo, "Capture resources released", slog.String("stage", "cleanup"), slog.String("run_id", runID))
 		}
 		c.mu.Lock()
 		if c.engine == engine {
@@ -491,6 +553,7 @@ func (c *Controller) Start(ctx context.Context) error {
 		c.state = "running"
 		c.runningVersion = doc.Version
 		c.mu.Unlock()
+		c.logEvent(slog.LevelInfo, "Capture is ready", slog.String("stage", "ready"), slog.Uint64("running_version", doc.Version))
 		if device, ok := engine.(interface{ CaptureDeviceIdentity() (string, int, bool) }); ok {
 			if name, _, known := device.CaptureDeviceIdentity(); known {
 				go c.watchCaptureNetwork(engineCtx, engine, name)
@@ -541,7 +604,7 @@ func (c *Controller) startFailure(err error, cfg *kone.KoneConfig) error {
 		c.state = "paused"
 	}
 	c.mu.Unlock()
-	c.logs.Append(logstore.Record{Level: "ERROR", Source: "management", Message: "Capture startup failed", Attrs: map[string]any{"stage": "start", "error": safeMessage(err, cfg)}})
+	c.logEvent(slog.LevelError, "Capture startup failed", slog.String("stage", "start"), slog.String("error", safeMessage(err, cfg)))
 	return err
 }
 
@@ -560,22 +623,29 @@ func (c *Controller) pauseLocked(ctx context.Context) error {
 	c.mu.Unlock()
 	if engine == nil {
 		if failed {
+			c.logEvent(slog.LevelError, "Capture cleanup remains incomplete", slog.String("stage", "pause"), slog.String("error", message))
 			return errors.New(message)
 		}
 		return nil
 	}
+	c.logEvent(slog.LevelInfo, "Pausing capture and restoring network state", slog.String("stage", "pause"))
 	cancel()
 	err := engine.Close()
 	select {
 	case <-done:
 	case <-ctx.Done():
+		c.logEvent(slog.LevelError, "Capture pause did not complete before cancellation", slog.String("stage", "pause"), slog.String("error", ctx.Err().Error()))
 		return ctx.Err()
 	}
 	if err != nil {
 		c.mu.Lock()
 		c.state = "recovery_failed"
 		c.lastError = safeMessage(err, c.doc.Config)
+		message := c.lastError
 		c.mu.Unlock()
+		c.logEvent(slog.LevelError, "Capture pause could not restore network state", slog.String("stage", "pause"), slog.String("error", message))
+	} else {
+		c.logEvent(slog.LevelInfo, "Capture paused; network cleanup completed", slog.String("stage", "pause"))
 	}
 	return err
 }
@@ -586,11 +656,20 @@ func (c *Controller) Apply(ctx context.Context) error {
 	return c.applyLocked(ctx)
 }
 
-func (c *Controller) applyLocked(ctx context.Context) error {
+func (c *Controller) applyLocked(ctx context.Context) (resultErr error) {
 	c.mu.Lock()
 	engine := c.engine
 	doc := cloneDocument(c.doc)
 	c.mu.Unlock()
+	c.logEvent(slog.LevelInfo, "Applying saved settings", slog.String("stage", "apply"), slog.Uint64("saved_version", doc.Version))
+	defer func() {
+		if resultErr != nil {
+			c.logEvent(slog.LevelError, "Applying saved settings failed", slog.String("stage", "apply"), slog.Uint64("saved_version", doc.Version), slog.String("error", safeMessage(resultErr, doc.Config)))
+			return
+		}
+		state := c.State()
+		c.logEvent(slog.LevelInfo, "Saved settings application completed", slog.String("stage", "apply"), slog.Uint64("saved_version", doc.Version), slog.Uint64("running_version", state.RunningVersion), slog.String("state", state.DataState))
+	}()
 	if engine == nil {
 		return errors.New("capture is paused; enable it explicitly to apply saved settings")
 	}

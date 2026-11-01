@@ -133,10 +133,26 @@ func (s *helperService) flushLogs() {
 	_ = s.logForwarder.flush(ctx)
 }
 func (s *helperService) logFailure(message string, err error) {
-	if err != nil && s.logForwarder != nil {
-		s.logForwarder.store.Append(logstore.Record{Level: "ERROR", Source: "helper", Message: message, Attrs: map[string]any{"error": err.Error()}})
+	if err != nil {
+		s.logEvent(slog.LevelError, message, slog.String("error", err.Error()))
 	}
 	s.flushLogs()
+}
+
+func (s *helperService) logEvent(level slog.Level, message string, attrs ...slog.Attr) {
+	if s.logForwarder != nil {
+		slog.New(s.logForwarder.store.Handler(nil, "helper")).With("service", "kone").LogAttrs(context.Background(), level, message, attrs...)
+	}
+}
+
+func (e *RemoteEngine) logEvent(level slog.Level, message string, attrs ...slog.Attr) {
+	e.mu.Lock()
+	local, sink := e.logs, e.logSink
+	e.mu.Unlock()
+	slog.New(local.Handler(nil, "helper")).With("service", "kone").LogAttrs(context.Background(), level, message, attrs...)
+	if sink != nil && sink != local {
+		slog.New(sink.Handler(nil, "helper")).With("service", "kone").LogAttrs(context.Background(), level, message, attrs...)
+	}
 }
 func (s *helperService) pumpLogs(ctx context.Context) {
 	if s.logForwarder == nil {

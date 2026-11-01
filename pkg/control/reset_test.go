@@ -81,7 +81,7 @@ func TestResetConfigurationRestoresAllManagedDefaults(t *testing.T) {
 }
 
 func TestResetConfigurationRejectsActiveAndUnrecoveredCapture(t *testing.T) {
-	for _, state := range []string{"starting", "running", "degraded", "pausing", "stopping", "recovery_required", "recovery_failed"} {
+	for _, state := range []string{"starting", "running", "degraded", "pausing", "stopping"} {
 		t.Run(state, func(t *testing.T) {
 			c := testController(t, Options{})
 			c.state = state
@@ -102,9 +102,25 @@ func TestResetConfigurationRejectsActiveAndUnrecoveredCapture(t *testing.T) {
 		c := testController(t, Options{})
 		require.NoError(t, c.writeRecoveryJournal(c.doc.Config, "reset-test-run"))
 		_, err := c.ResetConfiguration(t.Context(), c.doc.Version)
-		require.ErrorContains(t, err, "recovery")
+		require.NoError(t, err)
+		require.NoFileExists(t, c.journalPath())
+	})
+	t.Run("unverified-journal", func(t *testing.T) {
+		c := testController(t, Options{})
+		require.NoError(t, os.WriteFile(c.journalPath(), []byte("invalid"), 0600))
+		_, err := c.ResetConfiguration(t.Context(), c.doc.Version)
+		require.ErrorIs(t, err, errAutomaticRecovery)
 		require.FileExists(t, c.journalPath())
 	})
+	for _, state := range []string{"recovery_required", "recovery_failed"} {
+		t.Run(state, func(t *testing.T) {
+			c := testController(t, Options{})
+			c.state = state
+			_, err := c.ResetConfiguration(t.Context(), c.doc.Version)
+			require.NoError(t, err)
+			require.Equal(t, "paused", c.State().State)
+		})
+	}
 }
 
 func TestResetConfigurationRetainsPreviousStateOnFailure(t *testing.T) {

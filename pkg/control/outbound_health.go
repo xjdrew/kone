@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,21 +20,25 @@ const outboundHealthTTL = time.Minute
 const maxOutboundHealthEntries = 256
 
 type OutboundHealth struct {
-	ID              string     `json:"id"`
-	Name            string     `json:"name"`
-	Status          string     `json:"status"`
-	Stage           string     `json:"stage"`
-	Message         string     `json:"message"`
-	Target          string     `json:"target"`
-	TLS             bool       `json:"tls"`
-	CheckedAt       *time.Time `json:"checked_at,omitempty"`
-	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
-	Stale           bool       `json:"stale"`
-	OperationID     string     `json:"operation_id,omitempty"`
-	ConfigurationID string     `json:"configuration_id"`
-	DurationMS      int64      `json:"duration_ms"`
-	ConfigVersion   uint64     `json:"config_version"`
-	Scope           string     `json:"scope"`
+	ID               string                   `json:"id"`
+	Name             string                   `json:"name"`
+	Status           string                   `json:"status"`
+	Stage            string                   `json:"stage"`
+	Message          string                   `json:"message"`
+	Target           string                   `json:"target"`
+	TLS              bool                     `json:"tls"`
+	CheckedAt        *time.Time               `json:"checked_at,omitempty"`
+	ExpiresAt        *time.Time               `json:"expires_at,omitempty"`
+	Stale            bool                     `json:"stale"`
+	OperationID      string                   `json:"operation_id,omitempty"`
+	ConfigurationID  string                   `json:"configuration_id"`
+	DurationMS       int64                    `json:"duration_ms"`
+	ConfigVersion    uint64                   `json:"config_version"`
+	Scope            string                   `json:"scope"`
+	ConnectLatencyMS *int64                   `json:"connect_latency_ms,omitempty"`
+	Host             kone.DiagnosticHost      `json:"host"`
+	Protocols        kone.DiagnosticProtocols `json:"protocols"`
+	Progress         kone.DiagnosticProgress  `json:"progress"`
 }
 type outboundHealthEntry struct {
 	status     OutboundHealth
@@ -64,11 +69,11 @@ func outboundIdentity(cfg *kone.KoneConfig, outbound kone.OutboundConfig) string
 	// Credential-bearing hashes stay private; clients receive a random token,
 	// so the health API cannot become an offline password guessing oracle.
 	data, _ := json.Marshal(struct {
-		URL, Fallback string
-		Enabled       bool
-		Core          kone.CoreConfig
-		DNS           kone.DNSConfig
-	}{outbound.URL, outbound.UDPFallback, outbound.Enabled == nil || *outbound.Enabled, cfg.Core, cfg.DNS})
+		URL     string
+		Enabled bool
+		Core    kone.CoreConfig
+		DNS     kone.DNSConfig
+	}{outbound.URL, outbound.Enabled == nil || *outbound.Enabled, cfg.Core, cfg.DNS})
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])
 }
@@ -89,10 +94,27 @@ func (c *Controller) healthEntryLocked(identity string, now time.Time) *outbound
 		}
 		delete(c.health.entries, oldest)
 	}
-	entry := &outboundHealthEntry{status: OutboundHealth{Status: "unknown", Stage: "not_tested", Message: "Not tested; run an explicit outbound test", ConfigurationID: randomID("health"), Scope: "explicit TCP connection test; UDP and application behavior are not tested"}, updated: now}
+	entry := &outboundHealthEntry{status: OutboundHealth{
+		Status: "unknown", Stage: "not_tested", Message: "Not tested; run an explicit outbound test",
+		ConfigurationID: randomID("health"), Scope: "explicit TCP connection test; UDP and application behavior are not tested",
+		Host: kone.DiagnosticHost{Status: "unknown", Message: "Endpoint connection was not tested"}, Protocols: kone.DiagnosticProtocolEvidence(""),
+	}, updated: now}
 	c.health.entries[identity] = entry
 	return entry
 }
+
+func (c *Controller) reserveOutboundTestLocked(version uint64, identity string) (*outboundHealthStore, uint64, error) {
+	// Preparing a credential-bearing draft happens outside the controller lock.
+	// A reset or save in that interval must invalidate the old configuration
+	// before it can recreate health state or start a diagnostic connection.
+	if c.doc.Version != version {
+		return nil, 0, ErrConflict
+	}
+	c.healthEntryLocked(identity, c.now())
+	c.health.sequence++
+	return c.health, c.health.sequence, nil
+}
+
 func (c *Controller) outboundStatuses(cfg *kone.KoneConfig) []OutboundHealth {
 	now := c.now()
 	result := make([]OutboundHealth, 0, len(cfg.Outbounds))
@@ -254,16 +276,21 @@ func (c *Controller) TestOutbound(request OutboundTestRequest, key string) (Oper
 		}
 	}
 	c.mu.Lock()
-	c.healthEntryLocked(identity, c.now())
-	c.health.sequence++
-	generation := c.health.sequence
+	healthStore, generation, err := c.reserveOutboundTestLocked(current.Version, identity)
 	c.mu.Unlock()
+	if err != nil {
+		return Operation{}, err
+	}
 	gate := make(chan struct{})
 	operationID := ""
 	operation := c.beginOperation("outbound_test", key, 12*time.Second, func(ctx context.Context) (any, error) {
 		<-gate
 		now := c.now()
 		c.mu.Lock()
+		if c.health != healthStore {
+			c.mu.Unlock()
+			return OutboundHealth{ID: outbound.ID, Name: outbound.Name, Status: "unknown", Stage: "canceled", Message: "Configuration reset canceled this outbound test"}, context.Canceled
+		}
 		entry := c.healthEntryLocked(identity, now)
 		status := entry.status
 		status.ID, status.Name = outbound.ID, outbound.Name
@@ -271,13 +298,23 @@ func (c *Controller) TestOutbound(request OutboundTestRequest, key string) (Oper
 		status.Target, status.TLS, status.OperationID = target, withTLS, operationID
 		status.ConfigVersion = current.Version
 		status.Stale = false
+		status.CheckedAt, status.ExpiresAt, status.ConnectLatencyMS = nil, nil, nil
+		status.DurationMS = 0
+		status.Host = kone.DiagnosticHost{Status: "testing", Message: "Waiting for the endpoint connection test"}
+		status.Protocols = kone.DiagnosticProtocolEvidence("")
+		status.Protocols.TCP.Status = "testing"
+		status.Progress = kone.DiagnosticProgress{Stage: "connect", Total: 2}
+		if withTLS {
+			status.Progress.Total++
+		}
 		if generation >= entry.generation {
 			entry.status, entry.generation, entry.updated = status, generation, now
 		}
 		c.mu.Unlock()
+		c.publishOutboundProgress(identity, generation, operationID, status)
 		if err := ctx.Err(); err != nil {
 			status.Status, status.Stage, status.Message = "unknown", "canceled", "Outbound test canceled or timed out"
-			c.finishOutboundTest(identity, generation, status)
+			status = c.finishOutboundTest(identity, generation, status)
 			return status, err
 		}
 		select {
@@ -285,10 +322,21 @@ func (c *Controller) TestOutbound(request OutboundTestRequest, key string) (Oper
 			defer func() { <-c.probeSlots }()
 		default:
 			status.Status, status.Stage, status.Message = "unknown", "capacity", "Diagnostic concurrency limit reached; retry later"
-			c.finishOutboundTest(identity, generation, status)
+			status = c.finishOutboundTest(identity, generation, status)
 			return status, errors.New(status.Message)
 		}
 		probeCfg := engineConfig(prepared)
+		ctx = kone.WithDiagnosticProgress(ctx, func(result kone.DiagnosticResult) {
+			if result.Progress.Stage == "complete" {
+				return
+			}
+			status.ConnectLatencyMS, status.Host, status.Protocols, status.Progress = result.ConnectLatencyMS, result.Host, result.Protocols, result.Progress
+			status.Stage = result.Progress.Stage
+			if status.Stage == "" {
+				status.Stage = result.Stage
+			}
+			c.publishOutboundProgress(identity, generation, operationID, status)
+		})
 		var result ProbeResult
 		var probeErr error
 		if request.Draft == nil {
@@ -327,6 +375,20 @@ func (c *Controller) TestOutbound(request OutboundTestRequest, key string) (Oper
 		expires := checked.Add(outboundHealthTTL)
 		status.CheckedAt, status.ExpiresAt = &checked, &expires
 		status.DurationMS = result.DurationMS
+		status.ConnectLatencyMS, status.Host, status.Protocols, status.Progress = result.ConnectLatencyMS, result.Host, result.Protocols, result.Progress
+		if status.Host.Status == "" {
+			status.Host = kone.DiagnosticHost{Status: "unknown", Message: "The probe did not report endpoint connection evidence"}
+		}
+		if status.Protocols.TCP.Status == "" {
+			status.Protocols = kone.DiagnosticProtocolEvidence("")
+		}
+		status.Progress.Stage = "complete"
+		if status.Progress.Total == 0 {
+			status.Progress.Total = 2
+			if withTLS {
+				status.Progress.Total++
+			}
+		}
 		status.Stage = result.Stage
 		if status.Stage == "" {
 			status.Stage = "connect"
@@ -346,22 +408,55 @@ func (c *Controller) TestOutbound(request OutboundTestRequest, key string) (Oper
 		}
 		if err := ctx.Err(); err != nil {
 			status.Status, status.Stage, status.Message = "unknown", "canceled", "Outbound test canceled or timed out"
-			c.finishOutboundTest(identity, generation, status)
+			status = c.finishOutboundTest(identity, generation, status)
 			return status, err
 		}
-		c.finishOutboundTest(identity, generation, status)
+		status = c.finishOutboundTest(identity, generation, status)
 		return status, probeErr
 	})
 	operationID = operation.ID
 	close(gate)
 	return operation, nil
 }
-func (c *Controller) finishOutboundTest(identity string, generation uint64, status OutboundHealth) {
+func (c *Controller) finishOutboundTest(identity string, generation uint64, status OutboundHealth) OutboundHealth {
+	status.Progress.Stage = "complete"
+	if status.Host.Status == "testing" {
+		status.Host.Status, status.Host.Message = "unknown", "The endpoint connection test did not finish"
+	}
+	for _, check := range []*kone.DiagnosticCheck{&status.Protocols.TCP, &status.Protocols.TLS} {
+		if check.Status == "testing" {
+			check.Status, check.Tested, check.Message = "unknown", false, "The probe did not finish"
+		}
+	}
+	level := slog.LevelInfo
+	if status.Status != "healthy" {
+		level = slog.LevelWarn
+	}
+	c.logEvent(level, "Outbound connectivity test completed", slog.String("stage", status.Stage), slog.String("outbound_id", status.ID), slog.String("operation_id", status.OperationID), slog.String("status", status.Status), slog.Int64("duration_ms", status.DurationMS))
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if entry := c.health.entries[identity]; entry != nil && entry.generation == generation {
-		entry.status, entry.updated = status, c.now()
+	if c.health != nil {
+		if entry := c.health.entries[identity]; entry != nil && entry.generation == generation && entry.status.ConfigurationID == status.ConfigurationID {
+			entry.status, entry.updated = status, c.now()
+		}
 	}
+	return status
+}
+
+func (c *Controller) publishOutboundProgress(identity string, generation uint64, operationID string, status OutboundHealth) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Values contain no mutable maps/slices. Published snapshots remain stable
+	// while a later stage is produced or serialized by concurrent HTTP readers.
+	if c.health != nil {
+		if entry := c.health.entries[identity]; entry != nil && entry.generation == generation && entry.status.ConfigurationID == status.ConfigurationID {
+			entry.status, entry.updated = status, c.now()
+		}
+	}
+	if operation := c.operations[operationID]; operation != nil && operation.Status == "running" {
+		operation.Stage, operation.Result = status.Stage, status
+	}
+	c.logEvent(slog.LevelInfo, "Outbound connectivity test progressed", slog.String("stage", status.Stage), slog.String("outbound_id", status.ID), slog.String("operation_id", operationID), slog.String("status", status.Status))
 }
 
 func (c *Controller) outboundReadiness(cfg *kone.KoneConfig) []ReadinessCheck {

@@ -15,6 +15,10 @@ func loadTrayIcon(module uintptr) (uintptr, error) {
 	if width == 0 || height == 0 {
 		width, height = 16, 16
 	}
+	return loadTrayIconSize(module, width, height)
+}
+
+func loadTrayIconSize(module, width, height uintptr) (uintptr, error) {
 	icon, _, _ := trayUser32.NewProc("LoadImageW").Call(module, 101, 1, width, height, 0)
 	if icon == 0 && len(web.WindowsTrayIcon) > 0 {
 		icon, _, _ = trayUser32.NewProc("CreateIconFromResourceEx").Call(

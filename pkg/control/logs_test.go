@@ -21,6 +21,9 @@ func (s logStatusSource) LogStatus() logstore.RemoteStatus { return s.status }
 func TestRuntimeLogsAuthorizationLatestPageAndIncrementalQueries(t *testing.T) {
 	store := logstore.New()
 	c := testController(t, Options{LogStore: store})
+	initial, err := store.Query(logstore.Query{})
+	require.NoError(t, err)
+	base := initial.NextCursor
 	for i := range 5 {
 		store.Append(logstore.Record{Level: "INFO", Source: "management", Message: fmt.Sprint(i)})
 	}
@@ -40,14 +43,14 @@ func TestRuntimeLogsAuthorizationLatestPageAndIncrementalQueries(t *testing.T) {
 	}
 	latest := read("/api/v1/logs?limit=2")
 	require.Len(t, latest.Records, 2)
-	require.Equal(t, uint64(4), latest.Records[0].ID)
-	require.Equal(t, uint64(5), latest.NextCursor)
-	first := read("/api/v1/logs?after=0&limit=2")
-	require.Equal(t, uint64(1), first.Records[0].ID)
+	require.Equal(t, base+4, latest.Records[0].ID)
+	require.Equal(t, base+5, latest.NextCursor)
+	first := read(fmt.Sprintf("/api/v1/logs?after=%d&limit=2", base))
+	require.Equal(t, base+1, first.Records[0].ID)
 	require.True(t, first.HasMore)
 	next := read(fmt.Sprintf("/api/v1/logs?after=%d&limit=2", first.NextCursor))
-	require.Equal(t, uint64(3), next.Records[0].ID)
-	require.Empty(t, read("/api/v1/logs?after=5").Records)
+	require.Equal(t, base+3, next.Records[0].ID)
+	require.Empty(t, read(fmt.Sprintf("/api/v1/logs?after=%d", base+5)).Records)
 	require.Empty(t, read("/api/v1/logs?min_level=error&source=helper").Records)
 	c.mu.Lock()
 	c.dataSource = logStatusSource{status: logstore.RemoteStatus{Dropped: 7, Error: "helper disconnected"}}
