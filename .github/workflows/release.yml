@@ -64,7 +64,7 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: just release-plan
+        run: just ci release-plan
   verify:
     name: Verify ${{ matrix.sha }}
     needs: plan
@@ -134,10 +134,10 @@ jobs:
           RELEASE_VERSION: ${{ matrix.version }}
           RELEASE_TAG: ${{ matrix.tag }}
           RELEASE_STABLE: ${{ matrix.stable }}
-        run: just release-publish
+        run: just ci release-publish
       - name: Explain skipped release
         if: steps.evidence.outcome != 'success'
-        run: just release-skipped
+        run: just ci release-skipped
   withdraw:
     needs: plan
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && needs.plan.outputs.withdraw == 'true' }}
@@ -161,4 +161,4 @@ jobs:
       - name: Withdraw without deleting the traceable source tag
         env:
           GH_TOKEN: ${{ github.token }}
-        run: just release-withdraw
+        run: just ci release-withdraw

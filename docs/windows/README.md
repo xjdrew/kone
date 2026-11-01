@@ -6,7 +6,8 @@
 源码开发使用 Go 1.27.3、just 1.59.0，并在 Git Bash 的仓库根目录执行开发任务（见 [开发说明](../development.md)）：
 
 ```sh
-just build dist/kone.exe
+just init
+just build
 cp configs/kone.example.toml config.toml
 # 修改代理地址；core.tun 可留空自动分配，或指定一个尚不存在的网卡名称。
 ./dist/kone.exe -check -config config.toml
@@ -39,18 +40,18 @@ KONE 自动维护限定于当前程序和自有 TUN 地址的 TCP 防火墙例�
 
 ```powershell
 # 可选：为受信任 LAN 额外配置规则
-# just windows-firewall-update -Program ./dist/kone.exe
+# just ci windows-firewall-update -Program ./dist/kone.exe
 ./dist/kone.exe -config config.toml
 # 已提权的服务/自动化环境：
 # ./dist/kone.exe -no-elevate -config config.toml
 ```
 
 脚本默认只放行 Domain 和 Private 配置文件，需要 Public 时显式传 `-Profiles Public`。
-源码开发者可用 `just windows-firewall-check` 检查规则，以上两个维护任务均不随构建或启动自动执行。
+源码开发者可用 `just ci windows-firewall-check` 检查规则，以上两个维护任务均不随构建或启动自动执行。
 卸载本项目脚本创建的防火墙规则：`Remove-NetFirewallRule -Name Kone-TCP,Kone-UDP`。
 
 配置迁移见 [TOML 配置说明](../configuration.md)。管理接口默认仅绑定回环地址。
 
 全局 IPv4 接管需要设置 `core.auto-route = true` 和真实的 `core.outbound-interface`（例如 `Ethernet`）。接口名可用 `Get-NetAdapter` 查看，名称允许空格。上游代理传输和 DNS 查询绑定该接口，避免进入 TUN 循环。
-`stack = "system"` 使用 `just build dist/kone.exe`；`mixed` 使用 `just build-mixed dist/kone.exe`，后者启用 `with_gvisor`。
+`stack = "system"` 使用 `just build`；`mixed` 使用 `just build mixed`，后者启用 `with_gvisor`。
 现有 TAP 名称不能直接复用；旧版本启动时被 panic 掩盖的驱动错误现在会正常返回。

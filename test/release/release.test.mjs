@@ -27,7 +27,9 @@ const workflows = fileURLToPath(
 const taskRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 async function taskImplementation(name) {
-  const justfile = (await readFile(join(taskRoot, "justfile"), "utf8")).replaceAll("\r\n", "\n");
+  const root = await readFile(join(taskRoot, "justfile"), "utf8");
+  assert.match(root, /^mod ci 'scripts\/ci\/justfile'$/m, "CI tasks must use the real module");
+  const justfile = (await readFile(join(taskRoot, "scripts/ci/justfile"), "utf8")).replaceAll("\r\n", "\n");
   const lines = justfile.split("\n");
   const start = lines.findIndex(line => new RegExp(`^${name}(?:\\s[^\\n]*)?:`).test(line));
   assert.notEqual(start, -1, `the ${name} recipe must exist`);
@@ -43,7 +45,7 @@ async function taskImplementation(name) {
 }
 
 function invokesTask(job, name) {
-  assert.match(job, new RegExp(`\\bjust\\s+${name}(?:\\s|$)`), `workflow must invoke the ${name} recipe`);
+  assert.match(job, new RegExp(`\\bjust\\s+ci\\s+${name}(?:\\s|$)`), `workflow must invoke the ci ${name} recipe`);
 }
 
 function jobSections(workflow) {
@@ -270,8 +272,8 @@ test("the container uses checksum-pinned task bootstrap and keeps task tools out
   const [builder, runtime] = dockerfile.split("FROM debian:bookworm-slim");
   assert.match(builder, /github\.com\/casey\/just\/releases\/download\/1\.59\.0\/just-1\.59\.0-/);
   assert.match(builder, /sha256sum --check --strict/);
-  assert.match(builder, /just go-deps/);
-  assert.match(builder, /just build-container/);
+  assert.match(builder, /just ci go-deps/);
+  assert.match(builder, /just ci build-container/);
   assert.match(await taskImplementation("build-container"), /CGO_ENABLED=0 GOOS="\$\{TARGETOS:-linux\}" GOARCH="\$\{TARGETARCH:-amd64\}" go build -tags with_gvisor -trimpath -ldflags='-s -w' -o \/out\/kone/);
   assert.ok(runtime, "the runtime must remain a separate image");
   assert.doesNotMatch(runtime, /just|curl|golang:/);

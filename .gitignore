@@ -11,3 +11,9 @@ cmd/kone/local.ini
 *.local.toml
 /dist/
 /coverage.out
+/coverage-base.out
+/.coverage-base/
+/.ci-tools/
+/baseline/
+/release-assets/
+/release-input/

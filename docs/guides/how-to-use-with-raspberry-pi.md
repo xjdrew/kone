@@ -1,19 +1,19 @@
 # Raspberry Pi / Linux 网关部署
 
 KONE 可以接管 Raspberry Pi 家庭或小企业网关后面的 LAN 客户端流量，迁移到 sing-tun 后保留此部署方式。需要 Linux TUN、`iproute2` 和相应管理权限。下面以 64 位 Linux / arm64 树莓派为例。
-先阅读 [当前功能边界](../../README.md#current-boundaries) 和 [配置说明](../configuration.md)。
+先阅读 [使用与协议范围](../usage.md#gateway-and-protocol-scope) 和 [配置说明](../configuration.md)。
 
 ## 构建与配置
 
 在树莓派上从源码构建时，先安装 Go 1.27.3 和 just 1.59.0，再在仓库根目录执行（[开发任务](../development.md)）：
 
 ```sh
+just init
 just build
 cp configs/kone.example.toml config.toml
 ```
 
-也可以在开发机交叉编译：`GOOS=linux GOARCH=arm64 just build dist/kone-linux-arm64`。
-32 位 ARMv7 使用 `GOOS=linux GOARCH=arm GOARM=7 just build dist/kone-linux-armv7`，使用默认 system 栈；CI 也编译此目标。arm64 的 mixed 构建使用 `GOOS=linux GOARCH=arm64 just build-mixed dist/kone-linux-arm64`。使用发行包时无需安装开发工具，下面的配置和运行命令直接操作 KONE。
+也可以在开发机执行 `just build-all`，选择生成的 `dist/kone-linux-arm64` 或 `dist/kone-linux-armv7`。ARMv7 使用默认 system 栈，arm64 发行目标包含 mixed 支持；本机 `just build` 只编译本机 OS/架构。使用发行包时无需安装开发工具，下面的配置和运行命令直接操作 KONE。
 
 编辑上游代理与规则，确认 `core.network` 不与现有 LAN/VPN 冲突。
 显式设置可达的上游 DNS，避免把已转到 KONE 的路由器 DNS 再作为它自己的上游。
@@ -71,10 +71,10 @@ KONE 添加两条半网默认路由捕获 IPv4，退出时删除它们并保留�
 - 开启 IPv4 forwarding，放行 LAN 与 TUN 之间的转发，保留部署已有的 NAT/防火墙策略。需要普通直连流量经上游路由器返回 LAN 时，配置相应回程路由或源 NAT。
 - 将客户端 DNS 指向 KONE 的虚拟地址；DHCP 可统一下发 DNS 和网关。KONE 不接管 DHCP 服务，不自动重写客户端网络配置。
 - 根据非对称 TUN 路由需要设置 reverse-path filtering，例如相关接口采用 loose 模式 `rp_filter=2`；严格模式可能丢弃来自 LAN 的回注报文。不要直接清空现有防火墙规则。
-- 本轮只接管 IPv4。若网络也启用 IPv6，应由部署者明确选择独立 IPv6 路由/过滤策略，不能假定 IPv6 自动经过 KONE。
+- 本示例只配置 IPv4。若网络也启用 IPv6，应由部署者明确选择独立 IPv6 路由/过滤策略，不能假定 IPv6 自动经过 KONE；可选接管范围见 [IPv6 说明](../ipv6.md)。
 
-UDP 命中 `direct` 时直连，命中 `reject` 时拒绝；命中 HTTP/HTTPS/SOCKS5 代理时默认拒绝，因为这些出站目前只实现 TCP。确实允许代理规则的 UDP 直连时，在对应代理条目添加 `udp-fallback = "direct"`；该设置可热更新，新 UDP 会话立即使用新策略。全局接管不会自动增加 UDP 代理协议支持。
-当前管理页面只监听树莓派本机回环地址，可用 SSH 端口转发访问。停止或卸载后，管理员仍需撤销自己配置的 DHCP、静态路由、forwarding 和防火墙设置；KONE 只回滚自己拥有的设备和路由。
+UDP 命中 `direct` 时直连，命中 `reject` 时拒绝；SOCKS5 和支持的 Shadowsocks 出站使用原生 UDP，HTTP/HTTPS CONNECT 不支持 UDP，默认拒绝。确实允许不支持 UDP 的代理规则改为直连时，在该代理条目显式添加 `udp-fallback = "direct"`；该设置可热更新，新 UDP 会话采用新策略。原生 UDP 关联失败不会自动改为直连。
+本示例文件模式的管理页面只监听树莓派本机回环地址，可用 SSH 端口转发访问；持久化管理模式的手机访问见 [使用说明](../usage.md#phone-and-tablet-management)。停止或卸载后，管理员仍需撤销自己配置的 DHCP、静态路由、forwarding 和防火墙设置；KONE 只回滚自己拥有的设备和路由。
 
 ## 验收
 

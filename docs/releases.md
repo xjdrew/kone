@@ -22,13 +22,15 @@ The execution groups are:
 
 These are 11 execution checks, plus the release-only verification marker. Grouping reuses setup, compiler caches and compatible test binaries; it does not remove platform, protocol or failure assertions. PR coverage still measures the exact target-branch SHA afresh with the same Windows toolchain and flags. The three-platform package checks and each native-stack matrix must all succeed before release evidence is emitted.
 
-All development and CI tasks enter through [just](development.md). PRs use their root justfile. For `workflow_call` qualification of a historical SHA, the workflow checks out orchestration tools from `github.workflow_sha` into `.ci-tools`, sets `JUST_JUSTFILE` to that revision's root justfile and `JUST_WORKING_DIRECTORY` to the tested source. Application code, configuration, tests, packaging and publication scripts remain bound to the target SHA; only orchestration is supplied by the fixed workflow revision. An older source checkout need not contain the newer justfile. Exact PR-base coverage similarly uses `just test-coverage .coverage-base ../coverage-base.out` from the current task entrypoint.
+All development and CI tasks enter through [just](development.md). Daily builds and local packages use the short root commands; detailed qualification and publication tasks use `just ci <task>`. PRs use their root justfile. For `workflow_call` qualification of a historical SHA, the workflow checks out orchestration tools from `github.workflow_sha` into `.ci-tools`, sets `JUST_JUSTFILE` to that revision's root justfile and `JUST_WORKING_DIRECTORY` to the tested source. Application code, configuration, tests, packaging and publication scripts remain bound to the target SHA; only orchestration is supplied by the fixed workflow revision. An older source checkout need not contain the newer justfile. Exact PR-base coverage similarly uses `just ci test-coverage .coverage-base ../coverage-base.out` from the current task entrypoint.
 
 Previously published development evidence with the complete original 12-gate list remains valid for historical stable promotion. New evidence records only the current seven groups. Verification accepts a complete current set or a complete historical set; combining incomplete sets cannot qualify a release. SHA, version, run/attempt, marker schema and the actual latest successful verification job remain required in both cases.
 
 ## Packages and trust
 
-| Platform | Packages | Validation |
+Local `just package` and `just package-all` only build and create package files and manifests. They never run the resulting executable, including `-version`, or extract/install it into a temporary prefix. Local metadata records `native_version_checked=false` and conservatively marks these packages experimental and unverified. CI's default `just ci package` retains the actual executable, extraction and installation checks below; local output is not release qualification evidence.
+
+| Platform | Packages | CI validation |
 | --- | --- | --- |
 | Linux amd64/arm64/ARMv7 | Portable `.tar.gz`, `.deb` | Native runner architecture: extract, install into a temporary prefix and verify `-version`; other architectures are cross-compiled and marked experimental |
 | macOS amd64/arm64 | Portable `.tar.gz`, unsigned `.pkg` | Native runner architecture: archive installation and package payload extraction, then `-version`; other architecture is marked experimental |

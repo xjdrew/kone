@@ -1,0 +1,278 @@
+# Comprehensive CI, native acceptance and advanced maintenance tasks.
+set minimum-version := '1.59.0'
+set shell := ["bash", "-euo", "pipefail", "-c"]
+set positional-arguments
+
+source_root := env('JUST_WORKING_DIRECTORY', justfile_directory())
+
+[working-directory(source_root)]
+default:
+    @just --justfile "$KONE_TASK_ROOT/justfile" --list ci
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+fmt:
+    gofmt -w cmd pkg test web/embed.go
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+check-config config='configs/kone.example.toml':
+    go run ./cmd/kone -check -config "$1"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+geoip-convert +args:
+    node scripts/data/convert-dbip.mjs "$@"
+
+[group('Web and contracts')]
+[working-directory(source_root)]
+web-deps:
+    cd web && npm ci
+
+[group('Web and contracts')]
+[working-directory(source_root)]
+web-dev:
+    cd web && npm run dev
+
+[group('Web and contracts')]
+[working-directory(source_root)]
+web-preview:
+    cd web && npm run preview
+
+[group('Web and contracts')]
+[working-directory(source_root)]
+test-web:
+    cd web && npm test
+
+[group('Web and contracts')]
+[working-directory(source_root)]
+test-release: test-tasks
+    node --test test/release/*.test.mjs
+
+[group('Web and contracts')]
+[working-directory(source_root)]
+test-tasks:
+    node --test "$KONE_TASK_ROOT"/test/tasks/*.test.mjs
+
+[group('Web and contracts')]
+[working-directory(source_root)]
+test-data:
+    node --test scripts/data/*.test.mjs
+
+[group('Web and contracts')]
+[working-directory(source_root)]
+web-build:
+    cd web && npm run build
+
+[group('Web and contracts')]
+[working-directory(source_root)]
+web-check:
+    git diff --exit-code -- web/dist
+
+[group('Web and contracts')]
+[working-directory(source_root)]
+web-browsers:
+    cd web && npx playwright install --with-deps chromium webkit firefox
+
+[group('Web and contracts')]
+[working-directory(source_root)]
+test-web-e2e:
+    bash "$KONE_TASK_ROOT/scripts/ci/web-e2e.sh"
+
+[group('native acceptance')]
+[working-directory(source_root)]
+ci-web-fixture:
+    bash "$KONE_TASK_ROOT/scripts/ci/web-fixture.sh"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+go-deps:
+    go mod download
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+go-verify:
+    go mod verify
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+vet:
+    go vet ./...
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+test:
+    go test -race -count=1 ./...
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+test-coverage directory='.' output='coverage.out':
+    bash "$KONE_TASK_ROOT/scripts/ci/go-coverage.sh" "$1" "$2"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+test-mixed:
+    go test -tags with_gvisor -race -count=1 ./...
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+test-pe:
+    go test -race -count=1 github.com/sagernet/sing-tun/internal/wintun github.com/sagernet/sing-tun/internal/wintun/memmod
+
+[group('Windows maintenance')]
+[windows]
+[working-directory(source_root)]
+test-windows-package:
+    node --test "$KONE_TASK_ROOT/test/integration/windows-package.test.mjs"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+test-macos-desktop:
+    go test -v -count=1 ./pkg/desktop -run '^TestDarwin(NativeTray(Selectors|PipeEOF)|AuthenticatedPrivateHelperLifecycleWithoutNetworkChanges)$'
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+coverage-check base='coverage-base.out' head='coverage.out':
+    go run ./cmd/covercheck -base "$1" -head "$2"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+quality-check:
+    bash "$KONE_TASK_ROOT/scripts/ci/go-quality.sh"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+fuzz duration='15s':
+    go test ./pkg/kone -run '^$' -fuzz '^FuzzParseConfig$' -fuzztime "$1"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+vuln:
+    go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+benchmark-metadata:
+    node "$KONE_TASK_ROOT/scripts/ci/benchmark-metadata.mjs"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+benchmark:
+    bash "$KONE_TASK_ROOT/scripts/ci/benchmark.sh"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+profile file='baseline/cpu.out' binary='baseline/kone.test':
+    go tool pprof "$2" "$1"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+build-all:
+    bash "$KONE_TASK_ROOT/scripts/ci/build-all.sh"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+source-bundle:
+    bash "$KONE_TASK_ROOT/scripts/ci/source-bundle.sh"
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+package:
+    node scripts/release/package.mjs
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+build-container:
+    CGO_ENABLED=0 GOOS="${TARGETOS:-linux}" GOARCH="${TARGETARCH:-amd64}" go build -tags with_gvisor -trimpath -ldflags='-s -w' -o /out/kone ./cmd/kone
+
+[group('native acceptance')]
+[working-directory(source_root)]
+ci-macos-build:
+    bash "$KONE_TASK_ROOT/scripts/ci/native-macos.sh" build
+
+[group('native acceptance')]
+[working-directory(source_root)]
+ci-macos-tun:
+    bash "$KONE_TASK_ROOT/scripts/ci/native-macos.sh" tun
+
+[group('native acceptance')]
+[working-directory(source_root)]
+ci-macos-session:
+    bash "$KONE_TASK_ROOT/scripts/ci/native-macos.sh" session
+
+[group('native acceptance')]
+[working-directory(source_root)]
+ci-linux-build:
+    bash "$KONE_TASK_ROOT/scripts/ci/native-linux.sh" build
+
+[group('native acceptance')]
+[working-directory(source_root)]
+ci-linux-tun:
+    bash "$KONE_TASK_ROOT/scripts/ci/native-linux.sh" tun
+
+[group('native acceptance')]
+[working-directory(source_root)]
+ci-linux-dns-tools:
+    bash "$KONE_TASK_ROOT/scripts/ci/native-linux.sh" dns-tools
+
+[group('native acceptance')]
+[working-directory(source_root)]
+ci-linux-dns:
+    bash "$KONE_TASK_ROOT/scripts/ci/native-linux.sh" dns
+
+[group('native acceptance')]
+[working-directory(source_root)]
+ci-ss:
+    bash scripts/test-shadowsocks-interop.sh
+
+[group('native acceptance')]
+[working-directory(source_root)]
+ci-windows-tun:
+    pwsh -NoLogo -NoProfile -File "$KONE_TASK_ROOT/scripts/ci/native-windows.ps1" tun
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+docker-build:
+    docker build -f deploy/docker/Dockerfile -t kone:ci .
+
+[group('Go, builds and quality')]
+[working-directory(source_root)]
+docker-check:
+    docker run --rm kone:ci -check -config /etc/kone/config.toml
+
+[group('Windows maintenance')]
+[windows]
+[working-directory(source_root)]
+windows-firewall-check:
+    powershell.exe -NoLogo -NoProfile -File scripts/windows/check-firewall-rules.ps1
+
+[group('Windows maintenance')]
+[windows]
+[working-directory(source_root)]
+windows-firewall-update +args:
+    powershell.exe -NoLogo -NoProfile -File scripts/windows/update-firewall-rules.ps1 "$@"
+
+[group('release')]
+[working-directory(source_root)]
+release-plan:
+    node scripts/release/plan.mjs
+
+[group('release')]
+[working-directory(source_root)]
+release-marker:
+    node scripts/release/marker.mjs
+
+[group('release')]
+[working-directory(source_root)]
+release-publish:
+    node scripts/release/publish.mjs
+
+[group('release')]
+[working-directory(source_root)]
+release-withdraw:
+    node scripts/release/withdraw.mjs
+
+[group('release')]
+[working-directory(source_root)]
+release-skipped:
+    @printf '%s\n' 'Required gates failed or evidence is unavailable for this SHA; no tag or release was created.'

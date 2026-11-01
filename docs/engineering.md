@@ -45,7 +45,7 @@ CLI 使用标准库 `signal.NotifyContext`，由 engine 统一负责关闭与恢
 
 ## 质量门禁
 
-- 三平台原生 `just test`、`just vet`、`just go-verify`。
+- 三平台原生 race、静态检查和模块校验，保留在 `just ci` 细分任务中；本地日常使用 `just quality`。
 - Linux/macOS/Windows × amd64/arm64 编译。
 - TOML 校验、环境变量、NAT 多目标/耗尽/并发、短包、热更新原子性、DNS 快照、日志脱敏、HTTP/SOCKS5 适配回归。
 - CLI 的版本、帮助、示例配置检查、无权限错误路径。
@@ -58,10 +58,10 @@ CLI 使用标准库 `signal.NotifyContext`，由 engine 统一负责关闭与恢
 基线会重新运行测试，不依赖历史 artifact；失败、缺失或无有效语句的覆盖率报告均使门禁失败。
 使用 Windows runner 和 PR 的 Go 工具链作为统一口径，避免跨平台语句集合不同，也兼容旧 `master` 的 Unix 构建问题。
 
-三平台通过 `just test-coverage` 枚举 KONE 模块的全部包，并将显式列表传给 `-coverpkg`，包含未执行代码的包；按语句数加权并合并重复 block，使用精确分数比较，不以四舍五入后的百分比判定。base 与 PR 使用同一枚举方式。
+三平台通过 `just ci test-coverage` 枚举 KONE 模块的全部包，并将显式列表传给 `-coverpkg`，包含未执行代码的包；按语句数加权并合并重复 block，使用精确分数比较，不以四舍五入后的百分比判定。base 与 PR 使用同一枚举方式。
 第三方 sing-tun 作为固定的外部 fork 模块，不进入 KONE 覆盖率分母；其修补由 fork CI 和 KONE 的 Windows 模块 race 回归、真实驱动/网关验收单独验证。覆盖率始终统计 KONE 模块全部包。
 单元测试和 `test/integration` 中的 CLI 端到端测试一起执行；覆盖率任务生成 Go profile，独立子进程的覆盖数据不会自动并入。
-本地比较：`just coverage-check base.out head.out`。工具包含单元测试和实际编译执行的端到端用例，验证下降、持平、提升、重复 block 和无效报告。精确旧版本测量与任务入口见 [开发说明](development.md)。
+本地比较：`just ci coverage-check base.out head.out`。工具包含单元测试和实际编译执行的端到端用例，验证下降、持平、提升、重复 block 和无效报告。精确旧版本测量与任务入口见 [开发说明](development.md)。
 
 ## 后续部署验收
 

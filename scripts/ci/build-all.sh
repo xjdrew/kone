@@ -6,6 +6,8 @@ if [[ -z "${KONE_VERSION:-}" ]]; then
   KONE_VERSION="0.4.0-dev.$(git rev-parse HEAD)"
 fi
 export KONE_VERSION CGO_ENABLED=0
+# The fixed matrix chooses stack capabilities; ignore a native-build override.
+unset KONE_BUILD_STACK
 mkdir -p dist
 build_target() {
   local target="$1" os="${1%%/*}" arch="${1##*/}" suffix=""

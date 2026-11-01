@@ -3,8 +3,8 @@
 源码镜像的构建和烟雾检查从仓库根目录统一执行 [just 开发任务](../../docs/development.md)：
 
 ```sh
-just docker-build
-just docker-check
+just ci docker-build
+just ci docker-check
 ```
 
 任务构建 `kone:ci` 镜像；此检查不需要 TUN、管理员网络能力或代理可达。以下 Compose 命令属于产品部署，直接使用 Docker，不依赖开发用 justfile。

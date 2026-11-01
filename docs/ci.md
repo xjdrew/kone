@@ -4,11 +4,11 @@ CI 目标是更快发现错误，同时保留同一提交的跨平台、权限�
 
 ## 统一任务入口
 
-本地开发和 CI 通过根 [justfile](../justfile) 的同名任务执行，固定 just 1.59.0；任务表和工具要求见 [开发说明](development.md)。默认 `just` 只列出帮助，不构建、不联网或修改系统网络。原生 `ci-linux-*`、`ci-macos-*`、`ci-windows-tun` 和 `ci-ss` 仅供临时 CI 环境验收，并在调用特权操作前检查运行边界。
+本地开发通过根 [justfile](../justfile) 的少量日常入口执行，细分 CI 与维护入口集中在 `just ci <task>`，固定 just 1.59.0；命令和工具要求见 [开发说明](development.md)。默认 `just` 只列出帮助，不构建、不联网或修改系统网络。模块中的原生 `ci-linux-*`、`ci-macos-*`、`ci-windows-tun` 和 `ci-ss` 仅供临时 CI 环境验收，并在调用特权操作前检查运行边界。
 
 PR 使用其根 justfile。`workflow_call` 重放历史提交时，额外把 `github.workflow_sha` 的编排工具检出到 `.ci-tools`：`JUST_JUSTFILE` 指向该工具版本的根文件，`JUST_WORKING_DIRECTORY` 指向被测源码目录。编排任务固定到工作流版本，应用源码、配置、测试及发布脚本仍取目标 SHA，历史源码不必自行包含 justfile。
 
-PR 覆盖率基线也复用这一入口：精确 base SHA 已检出到 `.coverage-base` 后执行 `just test-coverage .coverage-base ../coverage-base.out`，再用 `just coverage-check` 比较；输出路径相对于被测模块。不会要求旧 base 自带新任务文件，也不换成当前 PR 的应用代码。
+PR 覆盖率基线也复用这一入口：精确 base SHA 已检出到 `.coverage-base` 后执行 `just ci test-coverage .coverage-base ../coverage-base.out`，再用 `just ci coverage-check` 比较；输出路径相对于被测模块。不会要求旧 base 自带新任务文件，也不换成当前 PR 的应用代码。
 
 ## 11 个执行检查
 
