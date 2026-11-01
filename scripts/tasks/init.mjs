@@ -25,7 +25,7 @@ export async function initialize(ctx) {
   ctx.log("[2/3] Preparing Go modules…");
   // Resolve only the native application graph, rather than downloading optional
   // platforms, test tools and unused transitive modules on every developer PC.
-  ctx.run("go", ["list", "-deps", "./cmd/kone"], { stdio: ["ignore", "ignore", "inherit"] });
+  ctx.run("go", ["list", "-tags", "with_gvisor", "-deps", "./cmd/kone"], { stdio: ["ignore", "ignore", "inherit"] });
   ctx.log("[3/3] Preparing Web dependencies…");
   await ensureWebDependencies(ctx);
   ctx.log("Ready. Use just dev, just build, or just package.");

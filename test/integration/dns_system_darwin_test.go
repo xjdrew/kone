@@ -175,7 +175,7 @@ func TestSystemDarwinDNSGuidance(t *testing.T) {
 	}
 	require.Equal(t, 0, os.Geteuid())
 	require.True(t, kone.SupportsSystemDNS(), "macOS system DNS support must be enabled")
-	for _, stack := range []string{"system", "mixed"} {
+	for _, stack := range kone.SupportedStacks() {
 		for _, failure := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/late-failure=%t", stack, failure), func(t *testing.T) {
 				original := captureDarwinBaseline(t)

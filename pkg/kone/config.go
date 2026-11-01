@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
-	singtun "github.com/sagernet/sing-tun"
 	"github.com/xjdrew/kone/pkg/dnsconfig"
 	"github.com/xjdrew/kone/pkg/proxy"
 )
@@ -352,11 +351,8 @@ func (cfg *KoneConfig) Validate() error {
 	if strings.ContainsAny(cfg.Core.Tun, "\x00\r\n\t\"' ") {
 		return errors.New("core.tun contains unsupported characters")
 	}
-	if cfg.Core.Stack != "system" && cfg.Core.Stack != "mixed" {
-		return errors.New("core.stack must be system or mixed")
-	}
-	if cfg.Core.Stack == "mixed" && !singtun.WithGVisor {
-		return errors.New("core.stack=mixed requires a build with -tags with_gvisor")
+	if !slices.Contains(SupportedStacks(), cfg.Core.Stack) {
+		return errors.New("core.stack must be system, gvisor or mixed")
 	}
 	if strings.ContainsAny(cfg.Core.OutboundInterface, "\x00\r\n\t\"'") {
 		return errors.New("core.outbound-interface contains unsupported characters")

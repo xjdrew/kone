@@ -1,6 +1,6 @@
 # IPv6 接管
 
-IPv6 默认关闭，不改变现有 IPv4 客户端或 Raspberry Pi 网关配置。Linux/Windows 可显式启用 IPv6 TUN、AAAA Fake-IP、IPv6 TCP/UDP 转发与 IPv6 规则；system/mixed 使用相同的出站策略。macOS 在对应地址、路由恢复和驱动链路完成验收前，启动时明确拒绝非空 `ipv6-network`，不会悄悄忽略它。
+IPv6 默认关闭，不改变现有 IPv4 客户端或 Raspberry Pi 网关配置。Linux/Windows 可显式启用 IPv6 TUN、AAAA Fake-IP、IPv6 TCP/UDP 转发与 IPv6 规则；同一程序包含的 system/gvisor/mixed 使用相同出站策略，`core.stack` 默认 system。macOS 在对应地址、路由恢复和驱动链路完成验收前，启动时明确拒绝非空 `ipv6-network`，不会悄悄忽略它。
 
 ```toml
 [core]
@@ -14,7 +14,7 @@ outbound-interface = "eth0"
 
 默认只接管 IPv6 Fake-IP 子网和显式 `IP-CIDR6` 规则。`auto-route6 = true` 添加 `::/1`、`8000::/1` 两条路由，要求非空 `outbound-interface`；原默认路由及更具体路由保留。IPv4 的 `auto-route` 与 IPv6 的 `auto-route6` 相互独立。IPv6 地址、路由与 DNS 监听均由同一个引擎生命周期管理，启动失败逆序回滚，退出恢复自己的变更。
 
-Windows 使用同一个新建、独占的 Wintun 适配器承载双栈。配置前读取 IPv6 的 GUID/接口索引、MTU、路由度量、DAD 与自动配置状态；仅在自有适配器设置透明 TCP 所需参数、ULA 地址和相应防火墙本地地址。恢复检查适配器身份与当前属性，不覆盖其他程序的不同修改。路由使用 IPv6 地址族与 `::` on-link 下一跳；不会把这些参数应用到原物理网卡。
+Windows 使用同一个新建、独占的 Wintun 适配器承载双栈。配置前读取 IPv6 的 GUID/接口索引、MTU、路由度量、DAD 与自动配置状态；仅在自有适配器设置所需参数和 ULA 地址，system/mixed 另为系统 TCP 监听创建受限防火墙例外，完整 gvisor 无需该例外。恢复检查适配器身份与当前属性，不覆盖其他程序的不同修改。路由使用 IPv6 地址族与 `::` on-link 下一跳；不会把这些参数应用到原物理网卡。
 
 ```toml
 [[rules]]
@@ -39,6 +39,6 @@ SOCKS5/SS 使用原生 UDP，HTTP/HTTPS 没有 UDP 实现时按显式回退规�
 
 测试包含地址池/AAAA 双家族映射、规则和能力检查、活动映射保留、UDP6、IPv6 DNS UDP/TCP、地址与路由故障回滚；Linux CI 在临时网络命名空间运行实际 TUN 的 AAAA → TCP/UDP → 直连/加密代理链路和占端口/路由冲突验收。实际执行结果以对应 PR 的 CI 为准，编译不等于通过驱动或特权网络验收。
 
-Windows 的 [Wintun 原生验收](https://github.com/xjdrew/kone/actions/runs/41230440840/job/124623356690)已在临时管理员 runner 对 system/mixed 分别执行 Fake-AAAA → HTTP/SOCKS5/SS TCP、SOCKS5/SS UDP、真实 AAAA 的 IPv6 TCP/UDP 直连、IPv6 DNS UDP/TCP，以及监听端口占用和自有连接路由冲突后的退出清理。用例仅创建独有 ULA 接管范围和回环测试端点；`auto-route6` 的两条全局路由保留命令/冲突回归，不在联网 runner 改写外网路径。这份结果不能代替实际 ISP/VPN IPv6 出口、LAN IPv6 路由和真实终端部署验收。
+历史 [Wintun 原生验收](https://github.com/xjdrew/kone/actions/runs/41230440840/job/124623356690)在临时管理员 runner 对当时的 system/mixed 分别执行 Fake-AAAA → HTTP/SOCKS5/SS TCP、SOCKS5/SS UDP、真实 AAAA 的 IPv6 TCP/UDP 直连、IPv6 DNS UDP/TCP，以及监听端口占用和自有连接路由冲突后的退出清理。当前 CI 将同一组用例扩展到 system/gvisor/mixed，需按对应 SHA 的三栈结果判断，不能把历史两栈通过记为 gvisor 已通过。用例仅创建独有 ULA 接管范围和回环测试端点；`auto-route6` 的两条全局路由保留命令/冲突回归，不在联网 runner 改写外网路径。这些结果不能代替实际 ISP/VPN IPv6 出口、LAN IPv6 路由和真实终端部署验收。
 
 这项能力接管受支持的 IPv6 TCP/UDP 流。ICMP、扩展首部和分片依赖所选协议栈的支持范围；没有通过对应场景验收时，不把一次 ping 或 TCP 成功当作全部 IPv6 协议已可用。客户端绕过 KONE 使用加密 DNS 时，也不能保证按域名选择性接管。

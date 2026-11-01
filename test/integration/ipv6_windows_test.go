@@ -229,7 +229,7 @@ func windowsIPv6Clean(t *testing.T, one *kone.One, cfg *kone.KoneConfig) {
 }
 
 func TestSystemWindowsIPv6Wintun(t *testing.T) {
-	for _, stack := range []string{"system", "mixed"} {
+	for _, stack := range kone.SupportedStacks() {
 		t.Run(stack+"/traffic", func(t *testing.T) { testWindowsIPv6Traffic(t, stack) })
 		for _, failure := range []string{"udp6", "tcp6", "route"} {
 			t.Run(stack+"/"+failure+" rollback", func(t *testing.T) {

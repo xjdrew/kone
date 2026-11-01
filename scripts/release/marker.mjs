@@ -6,7 +6,7 @@ await writeFile(
   "verification/verification.json",
   JSON.stringify(
     {
-      schema: 1,
+      schema: 2,
       verified: true,
       sha,
       version: process.env.RELEASE_VERSION,

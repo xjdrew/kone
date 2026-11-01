@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { gunzipSync, inflateRawSync } from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { binaryName, entryDefinitions, nativeTarget, packagePlan, selectedTargets } from "../../scripts/release/targets.mjs";
-import { targets, hashFile } from "../../scripts/release/model.mjs";
+import { targets, supportedTargets, hashFile } from "../../scripts/release/model.mjs";
 import { createPortableArchive } from "../../scripts/release/portable.mjs";
 import { verifyWindowsRole } from "../../scripts/release/desktop.mjs";
 
@@ -87,7 +87,7 @@ function zipEntries(archive) {
   return entries;
 }
 
-test("native target and package plans distinguish OS, architecture and the unchanged CI installer matrix", () => {
+test("package plans publish one native format per target and retain explicit ARMv7 builds", () => {
   assert.equal(nativeTarget("win32", "x64"), "windows-amd64");
   assert.equal(nativeTarget("darwin", "arm64"), "darwin-arm64");
   assert.equal(nativeTarget("linux", "arm"), "linux-armv7");
@@ -97,9 +97,12 @@ test("native target and package plans distinguish OS, architecture and the uncha
     const ci = packagePlan([], platform, "x64");
     assert.deepEqual(ci.targets, targets.filter(target => target.startsWith(`${os}-`)));
     assert.deepEqual(ci.installers, platform === "win32" ? [] : ci.targets);
+    assert.deepEqual(ci.portables, platform === "win32" ? ci.targets : []);
     const all = packagePlan(["--all-portable"], platform, "x64");
     assert.deepEqual(all.targets, targets);
     assert.deepEqual(all.installers, platform === "win32" ? [] : [native]);
+    assert.deepEqual(all.portables, targets);
+    assert.deepEqual(packagePlan(["--all-portable", "--include-armv7"], platform, "x64").targets, supportedTargets);
     assert.deepEqual(packagePlan(["--target", native], platform, "x64").targets, [native]);
   }
   for (const value of ["../linux-amd64", "linux-amd64,linux-amd64", "", "other-amd64"])
@@ -196,7 +199,7 @@ test("local native and all-portable packaging never execute or install even host
   for (const file of ["LICENSE", "LICENSE-MIT", "licenses/component.txt"]) await writeFile(join(input, file), "fixture license\n");
   await writeFile(join(input, "build-info.json"), JSON.stringify({ schema: 1, sha, version: "1.2.3", binaries }));
   for (const [mode, args, count] of [
-    ["native", ["--target", nativeTarget()], process.platform === "win32" ? 1 : 2],
+    ["native", ["--target", nativeTarget()], 1],
     ["all", ["--all-portable"], targets.length + (process.platform === "win32" ? 0 : 1)],
   ]) {
     const output = join(directory, `${mode} package outputs`);
@@ -237,7 +240,7 @@ test("local native and all-portable packaging never execute or install even host
   }
 });
 
-test("build manifests support a native subset, preserve the all-target default, and accurately record stacks", async (t) => {
+test("build manifests record all runtime stacks, exact kernels and optional ARMv7", async (t) => {
   const directory = await fixture(t);
   const git = (...args) => execFileSync("git", args, { cwd: directory, encoding: "utf8", stdio: "pipe" }).trim();
   git("init", "--quiet", "--template=", "-b", "master");
@@ -245,20 +248,31 @@ test("build manifests support a native subset, preserve the all-target default, 
   git("add", "fixture");
   git("-c", "user.name=Package Test", "-c", "user.email=package@example.invalid", "commit", "-m", "fixture");
   await mkdir(join(directory, "dist"));
-  for (const target of targets) await executableFixture(join(directory, "dist"), target);
+  for (const target of supportedTargets) await executableFixture(join(directory, "dist"), target);
+  await writeFile(join(directory, "go.mod"), `module fixture\nrequire (\n github.com/sagernet/sing-tun v0.9.7\n github.com/sagernet/gvisor v0.0.0-20260727.0-sing-box-mod.1\n)\nreplace github.com/sagernet/sing-tun => github.com/xjdrew/sing-tun v0.0.0-20261031132454-fc4685fee0a3\n`);
   await mkdir(join(directory, "web/native"), { recursive: true });
   await writeFile(join(directory, "web/native/kone.icns"), Buffer.from("icns\0\0\0\b"));
-  const run = (args, stack) => execFileSync(process.execPath, [join(root, "scripts/release/build-info.mjs"), ...args], {
+  const run = (args, stack = "") => execFileSync(process.execPath, [join(root, "scripts/release/build-info.mjs"), ...args], {
     cwd: directory, env: { ...process.env, KONE_VERSION: "1.2.3", KONE_BUILD_STACK: stack }, stdio: "pipe",
   });
-  run(["--targets", nativeTarget()], "system");
+  assert.throws(() => run(["--targets", nativeTarget()], "system"), /KONE_BUILD_STACK was removed/);
+  run(["--targets", nativeTarget()]);
   let manifest = JSON.parse(await readFile(join(directory, "dist/build-info.json"), "utf8"));
-  assert.deepEqual(manifest.binaries.map(binary => [binary.target, binary.stack]), [[nativeTarget(), "system"]]);
-  run(["--targets", "linux-amd64"], "mixed");
+  assert.deepEqual(manifest.binaries.map(binary => [binary.target, binary.stack]), [[nativeTarget(), "system,gvisor,mixed"]]);
+  assert.equal(manifest.kernels.tun.replace.path, "github.com/xjdrew/sing-tun");
+  assert.equal(manifest.kernels.tun.replace.version, "v0.0.0-20261031132454-fc4685fee0a3");
+  assert.equal(manifest.kernels.gvisor.version, "v0.0.0-20260727.0-sing-box-mod.1");
+  run(["--targets", "linux-armv7"]);
   manifest = JSON.parse(await readFile(join(directory, "dist/build-info.json"), "utf8"));
-  assert.equal(manifest.binaries[0].stack, "system,mixed");
+  assert.equal(manifest.binaries[0].target, "linux-armv7");
+  assert.equal(manifest.binaries[0].stack, "system,gvisor,mixed");
   run([], "");
   manifest = JSON.parse(await readFile(join(directory, "dist/build-info.json"), "utf8"));
   assert.deepEqual(manifest.binaries.map(binary => binary.target), targets);
-  for (const binary of manifest.binaries) assert.equal(binary.stack, binary.target === "linux-armv7" ? "system" : "system,mixed");
+  assert.equal(manifest.default_stack, "system");
+  assert.deepEqual(manifest.build_tags, ["with_gvisor"]);
+  for (const binary of manifest.binaries) {
+    assert.deepEqual(binary.stacks, ["system", "gvisor", "mixed"]);
+    assert.equal(binary.default_stack, "system");
+  }
 });

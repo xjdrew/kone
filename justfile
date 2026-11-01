@@ -24,7 +24,7 @@ dev *args:
 quality *args:
     node "$KONE_TASK_ROOT/scripts/tasks/quality.mjs" "$@"
 
-# Build only the current platform, using system or mixed stack.
+# Build all runtime stacks for the current platform.
 build *args:
     node "$KONE_TASK_ROOT/scripts/tasks/build.mjs" native "$@"
 

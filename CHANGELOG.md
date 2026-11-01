@@ -2,6 +2,7 @@
 
 ## Features
 
+- Include system, gVisor and mixed stacks in every build, selected at runtime with system as the default.
 - Require a management password on first use and password authentication on later logins.
 - Guide first-time capture setup with ready-to-use defaults and explicit direct-only confirmation.
 - Show configuration as status lists with focused editors, outbound connection tests and live rule/outbound updates.
@@ -47,6 +48,8 @@
 
 ## Changes
 
+- Derive versions from cumulative feature and bugfix changes, with master prereleases and tag-triggered stable releases.
+- Publish Windows ZIP, macOS PKG and Linux DEB for amd64/arm64; keep ARMv7 gateway builds as an explicit option.
 - Remove legacy HTTP management and `general.manager-addr`; use the password-protected Web console.
 - Speed up CI while preserving platform and release validation.
 - Simplify setup, development, checks, builds and packaging into a few just commands.

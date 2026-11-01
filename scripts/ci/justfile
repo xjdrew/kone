@@ -29,7 +29,7 @@ check-config *args:
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     entry=./cmd/kone
     if [[ -d cmd/kone-cli ]]; then entry=./cmd/kone-cli; fi
-    go run "$entry" -check -config "$1"
+    go run -tags with_gvisor "$entry" -check -config "$1"
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]
@@ -212,7 +212,7 @@ vet *args:
     task_arguments vet "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    go vet ./...
+    go vet -tags with_gvisor ./...
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]
@@ -222,7 +222,7 @@ test *args:
     task_arguments test "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    go test -race -count=1 ./...
+    go test -tags with_gvisor -race -count=1 ./...
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]
@@ -237,22 +237,12 @@ test-coverage *args:
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
-test-mixed *args:
-    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
-    task_arguments test-mixed "$@"
-    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
-    if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    go test -tags with_gvisor -race -count=1 ./...
-
-[group('Go, builds and quality')]
-[script('bash', '-euo', 'pipefail')]
-[working-directory(source_root)]
 test-pe *args:
     source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
     task_arguments test-pe "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    go test -race -count=1 github.com/sagernet/sing-tun/internal/wintun github.com/sagernet/sing-tun/internal/wintun/memmod
+    go test -tags with_gvisor -race -count=1 github.com/sagernet/sing-tun/internal/wintun github.com/sagernet/sing-tun/internal/wintun/memmod
 
 [group('Windows maintenance')]
 [script('bash', '-euo', 'pipefail')]
@@ -272,7 +262,7 @@ test-macos-desktop *args:
     task_arguments test-macos-desktop "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    go test -v -count=1 ./pkg/desktop -run '^TestDarwin(NativeTray(Selectors|PipeEOF)|AuthenticatedPrivateHelperLifecycleWithoutNetworkChanges)$'
+    go test -tags with_gvisor -v -count=1 ./pkg/desktop -run '^TestDarwin(NativeTray(Selectors|PipeEOF)|AuthenticatedPrivateHelperLifecycleWithoutNetworkChanges)$'
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]
@@ -302,7 +292,7 @@ fuzz *args:
     task_arguments fuzz "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    go test ./pkg/kone -run '^$' -fuzz '^FuzzParseConfig$' -fuzztime "$1"
+    go test -tags with_gvisor ./pkg/kone -run '^$' -fuzz '^FuzzParseConfig$' -fuzztime "$1"
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]
@@ -312,7 +302,7 @@ vuln *args:
     task_arguments vuln "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+    go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -tags with_gvisor ./...
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]
@@ -363,6 +353,15 @@ source-bundle *args:
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
     bash "$KONE_TASK_ROOT/scripts/ci/source-bundle.sh"
+
+[group('Go, builds and quality')]
+[script('bash', '-euo', 'pipefail')]
+[working-directory(source_root)]
+wait-build *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments wait-build "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    node "$KONE_TASK_ROOT/scripts/ci/wait-build.mjs"
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]
@@ -517,12 +516,22 @@ windows-firewall-update *args:
 [group('release')]
 [script('bash', '-euo', 'pipefail')]
 [working-directory(source_root)]
+release-version *args:
+    source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
+    task_arguments release-version "$@"
+    if [[ "$TASK_HELP" == true ]]; then exit 0; fi
+    set -- "${TASK_ARGS[@]}"
+    node "$KONE_TASK_ROOT/scripts/release/version-policy.mjs" --format "$1" --sha "$2"
+
+[group('release')]
+[script('bash', '-euo', 'pipefail')]
+[working-directory(source_root)]
 release-plan *args:
     source "$KONE_TASK_ROOT/scripts/ci/task-help.sh"
     task_arguments release-plan "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    node scripts/release/plan.mjs
+    node "$KONE_TASK_ROOT/scripts/release/plan.mjs"
 
 [group('release')]
 [script('bash', '-euo', 'pipefail')]
@@ -532,7 +541,7 @@ release-marker *args:
     task_arguments release-marker "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    node scripts/release/marker.mjs
+    node "$KONE_TASK_ROOT/scripts/release/marker.mjs"
 
 [group('release')]
 [script('bash', '-euo', 'pipefail')]
@@ -542,7 +551,7 @@ release-publish *args:
     task_arguments release-publish "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    node scripts/release/publish.mjs
+    node "$KONE_TASK_ROOT/scripts/release/publish.mjs"
 
 [group('release')]
 [script('bash', '-euo', 'pipefail')]
@@ -552,7 +561,7 @@ release-withdraw *args:
     task_arguments release-withdraw "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    node scripts/release/withdraw.mjs
+    node "$KONE_TASK_ROOT/scripts/release/withdraw.mjs"
 
 [group('release')]
 [script('bash', '-euo', 'pipefail')]

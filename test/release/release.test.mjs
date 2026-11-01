@@ -89,7 +89,7 @@ test("release channel identities are unique, traceable and reject unsafe tags", 
 
 test("qualification binds all required gates to the exact SHA/version/run/attempt", () => {
   const marker = {
-    schema: 1,
+    schema: 2,
     sha,
     version: "0.4.0",
     run_id: 123,
@@ -110,6 +110,9 @@ test("qualification binds all required gates to the exact SHA/version/run/attemp
     { run_attempt: 1 },
     { verified: false },
     { required_jobs: ["test", "build"] },
+    { required_jobs: [...requiredJobs, "extra"] },
+    { required_jobs: [...requiredJobs, requiredJobs[0]] },
+    { schema: 1 },
   ])
     assert.throws(() =>
       verifyMarker(
@@ -129,40 +132,35 @@ test("qualification binds all required gates to the exact SHA/version/run/attemp
 });
 
 test("historical qualification accepts only whole gate sets and new evidence uses current groups", async () => {
-  const legacy = [
+  const histories = [["web", "test", "build", "packages", "quality", "linux-system", "windows-system"], [
     "web", "test", "build", "packages", "performance", "robustness", "docker",
     "system", "dns-system", "shadowsocks-interop", "windows-system", "mac-system",
-  ];
+  ]];
   const marker = {
     schema: 1, sha, version: "0.4.0", run_id: 123, run_attempt: 2,
-    verified: true, required_jobs: legacy,
+    verified: true,
   };
   const expected = { sha, version: "0.4.0", runID: 123, runAttempt: 2 };
-  verifyMarker(marker, expected);
-  for (const omitted of legacy)
-    assert.throws(
-      () => verifyMarker({ ...marker, required_jobs: legacy.filter((job) => job !== omitted) }, expected),
-      /missing required gates/,
-      `historical qualification still requires ${omitted}`,
-    );
+  for (const legacy of histories) {
+    verifyMarker({ ...marker, required_jobs: legacy }, expected);
+    for (const omitted of legacy)
+      assert.throws(
+        () => verifyMarker({ ...marker, required_jobs: legacy.filter((job) => job !== omitted) }, expected),
+        /missing required gates/,
+        `historical qualification still requires ${omitted}`,
+      );
+    for (const invalid of [[...legacy, "extra"], [...legacy, legacy[0]]])
+      assert.throws(() => verifyMarker({ ...marker, required_jobs: invalid }, expected), /missing required gates/);
+    assert.throws(() => verifyMarker({ ...marker, schema: 2, required_jobs: legacy }, expected), /missing required gates/);
+  }
+  assert.throws(() => verifyMarker({ ...marker, required_jobs: requiredJobs }, expected), /missing required gates/);
   for (const replacement of [
-    { schema: 2 }, { sha: "a".repeat(40) }, { version: "0.5.0" },
+    { schema: 3 }, { sha: "a".repeat(40) }, { version: "0.5.0" },
     { run_id: 456 }, { run_attempt: 1 }, { verified: false },
   ])
-    assert.throws(() => verifyMarker({ ...marker, ...replacement }, expected));
-  for (const currentMissing of requiredJobs.filter((job) => !legacy.includes(job))) {
-    for (const legacyMissing of legacy.filter((job) => !requiredJobs.includes(job))) {
-      const partialSets = [...new Set([
-        ...requiredJobs.filter((job) => job !== currentMissing),
-        ...legacy.filter((job) => job !== legacyMissing),
-      ])];
-      assert.throws(
-        () => verifyMarker({ ...marker, required_jobs: partialSets }, expected),
-        /missing required gates/,
-        "labels from two incomplete gate sets cannot qualify a release",
-      );
-    }
-  }
+    assert.throws(() => verifyMarker({ ...marker, required_jobs: histories[0], ...replacement }, expected));
+  const mixed = [...new Set([...histories[0], ...histories[1]])];
+  assert.throws(() => verifyMarker({ ...marker, required_jobs: mixed }, expected), /missing required gates/);
   const directory = await mkdtemp(join(tmpdir(), "kone-marker-test-"));
   try {
     execFileSync(process.execPath, [join(scripts, "marker.mjs")], {
@@ -178,7 +176,8 @@ test("historical qualification accepts only whole gate sets and new evidence use
     });
     const generated = JSON.parse(await readFile(join(directory, "verification/verification.json"), "utf8"));
     assert.deepEqual(generated.required_jobs, requiredJobs);
-    assert.equal(generated.required_jobs.length, 7);
+    assert.equal(generated.required_jobs.length, 4);
+    assert.equal(generated.schema, 2);
     verifyMarker(generated, expected);
   } finally {
     const absolute = resolve(directory);
@@ -201,11 +200,11 @@ test("workflow qualification covers every grouped gate and retains exact-source 
   assert.ok(jobs.verified.includes("inputs.ref != ''"), "PRs cannot emit a publication marker");
   assert.ok(jobs.verified.includes("RELEASE_SHA: ${{ inputs.ref }}"));
   invokesTask(jobs.verified, "release-marker");
-  assert.match(await taskImplementation("release-marker"), /node scripts\/release\/marker\.mjs/);
+  assert.match(await taskImplementation("release-marker"), /node "\$KONE_TASK_ROOT\/scripts\/release\/marker\.mjs"/);
   assert.ok(jobs.verified.includes("name: ${{ inputs.artifact-prefix }}verification"));
   assert.ok(jobs.build.includes("name: ${{ inputs.artifact-prefix }}binaries"));
   assert.ok(jobs.build.includes("install-packages-"), "Linux packages remain required inside the build group");
-  assert.ok(jobs.packages.includes("install-packages-"));
+  assert.ok(jobs.test.includes("install-packages-"), "native packages remain required inside each platform group");
   assert.ok(release.includes("name: ${{ matrix.prefix }}binaries"));
   assert.ok(release.includes("pattern: ${{ matrix.prefix }}install-packages-*"));
   assert.ok(release.includes("name: ${{ matrix.prefix }}verification"));
@@ -215,7 +214,7 @@ test("workflow qualification covers every grouped gate and retains exact-source 
   assert.ok(verify.includes("artifact-prefix: ${{ matrix.prefix }}"));
   for (const [job, recipe] of [["plan", "release-plan"], ["publish", "release-publish"], ["withdraw", "release-withdraw"]]) {
     invokesTask(jobSections(release)[job], recipe);
-    assert.match(await taskImplementation(recipe), new RegExp(`node scripts/release/${job}\\.mjs`));
+    assert.match(await taskImplementation(recipe), new RegExp(`node "\\$KONE_TASK_ROOT/scripts/release/${job}\\.mjs"`));
   }
 });
 
@@ -230,24 +229,39 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
   assert.match(release, /if: github\.ref == 'refs\/heads\/master'/);
   const jobs = jobSections(go);
   assert.deepEqual(flowList(jobs.test, "os"), ["macos-latest", "ubuntu-latest", "windows-latest"]);
-  assert.deepEqual(flowList(jobs.packages, "os"), ["macos-latest", "windows-latest"]);
-  assert.deepEqual(flowList(jobs["windows-system"], "stack"), ["mixed", "system"]);
+  assert.equal(requiredJobs.length - 1 + flowList(jobs.test, "os").length, 6, "matrix expansion has six active qualification jobs");
+  assert.doesNotMatch(jobs.test, /^    needs:/m, "unit/native checks must not wait for cross-builds to start");
   assert.ok(jobs.test.includes("github.event.pull_request.base.sha"), "coverage must measure the exact PR base");
-  for (const recipe of ["go-verify", "vet", "test-coverage", "test-mixed", "test-pe", "test-macos-desktop", "coverage-check", "ci-macos-build", "ci-macos-tun", "ci-macos-session"])
+  for (const recipe of ["go-verify", "vet", "test-coverage", "test-pe", "test-macos-desktop", "coverage-check", "ci-macos-build", "ci-macos-tun", "ci-macos-session", "wait-build", "package"])
     invokesTask(jobs.test, recipe);
+  assert.doesNotMatch(jobs.test, /just ci test-mixed/, "the unified binary must avoid repeating the full race suite per stack");
+  assert.match(jobs.test, /steps\.package-input\.outcome == 'success'/);
+  assert.match(jobs.test, /steps\.package-download\.outcome == 'success'/);
+  assert.ok(jobs.test.indexOf("just ci wait-build") > jobs.test.indexOf("just ci ci-windows-tun"));
+  const waitBuild = await taskImplementation("wait-build");
+  assert.match(waitBuild, /attempts\/\$\{env\.GITHUB_RUN_ATTEMPT\}\/jobs/);
+  assert.match(waitBuild, /buildJobName\(env\.KONE_BUILD_SHA\)/);
+  assert.ok(jobs.build.includes("name: Cross-build and Linux packages (${{ inputs.ref || github.sha }})"), "wait-build must select the exact source-labelled build job");
+  assert.match(await taskImplementation("vet"), /go vet -tags with_gvisor/);
   assert.match(await taskImplementation("coverage-check"), /go run \.\/cmd\/covercheck -base "\$1" -head "\$2"/);
   const coverage = await taskImplementation("test-coverage");
-  assert.match(coverage, /go test -race/);
+  assert.match(coverage, /go test -tags with_gvisor -race/);
   assert.match(coverage, /-coverpkg=\$packages/);
-  assert.match(coverage, /go list \.\/\.\.\./);
+  assert.match(coverage, /go list -tags with_gvisor \.\/\.\.\./);
   const nativeMac = await taskImplementation("ci-macos-build");
   for (const name of ["TestSystemDarwinUTUN", "TestSystemDarwinDNSGuidance", "TestDarwinOwnedSystemDNSSessionDeath"])
     assert.ok(nativeMac.includes(`-test.list '^${name}$' | grep -qx ${name}`), `${name} must be present in the native binary`);
-  assert.match(await taskImplementation("ci-macos-tun"), /-test\.run '\^TestSystemDarwin\(UTUN\|DNSGuidance\)\$' -test\.v/);
+  const nativeMacRun = await taskImplementation("ci-macos-tun");
+  assert.match(nativeMacRun, /-test\.run '\^TestSystemDarwin\(UTUN\|DNSGuidance\)\$' -test\.v/);
+  assert.match(nativeMacRun, /stacks=\(system gvisor mixed\)/);
+  assert.match(nativeMacRun, /--- PASS: TestSystemDarwinUTUN\/\$stack\/\$case/);
+  assert.match(nativeMacRun, /--- PASS: TestSystemDarwinDNSGuidance\/\$stack\/late-failure=\$failure/);
   assert.match(await taskImplementation("ci-macos-session"), /-test\.run '\^TestDarwinOwnedSystemDNSSessionDeath\$' -test\.v/);
   for (const recipe of ["ci-linux-build", "ci-linux-tun", "ci-linux-dns-tools", "ci-linux-dns", "ci-ss", "docker-build", "docker-check"])
-    invokesTask(jobs["linux-system"], recipe);
-  assert.match(await taskImplementation("ci-linux-tun"), /for stack in system mixed/);
+    invokesTask(jobs.test, recipe);
+  assert.match(await taskImplementation("ci-linux-tun"), /stacks=\(system gvisor mixed\)/);
+  assert.match(await taskImplementation("ci-linux-tun"), /-f pkg\/kone\/stack_modes\.go/);
+  assert.match(await taskImplementation("ci-linux-tun"), /--- PASS: \$test/);
   assert.match(await taskImplementation("ci-linux-dns"), /scripts\/test-system-dns\.sh/);
   assert.match(await taskImplementation("ci-ss"), /scripts\/test-shadowsocks-interop\.sh/);
   assert.match(await taskImplementation("docker-build"), /docker build/);
@@ -257,14 +271,20 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
   assert.match(await taskImplementation("vuln"), /govulncheck/);
   assert.match(await taskImplementation("fuzz"), /-fuzz/);
   assert.match(await taskImplementation("benchmark"), /-bench/);
-  invokesTask(jobs["windows-system"], "ci-windows-tun");
+  invokesTask(jobs.test, "ci-windows-tun");
+  assert.doesNotMatch(jobs.test, /KONE_TEST_STACK:/, "the Windows job must run every supported stack, without a matrix override");
   const nativeWindows = await taskImplementation("ci-windows-tun");
-  assert.match(nativeWindows, /go test -tags with_gvisor -race -failfast -count=1/);
+  assert.match(nativeWindows, /go test -tags with_gvisor -race -c/);
+  assert.equal((nativeWindows.match(/go test -tags/g) || []).length, 1, "compile the native acceptance binary once");
+  assert.match(nativeWindows, /@\('system', 'gvisor', 'mixed'\)/);
+  assert.match(nativeWindows, /foreach \(\$stack in \$stacks\)/);
+  assert.match(nativeWindows, /go tool test2json/);
+  assert.match(nativeWindows, /-test\.count=1/);
   for (const name of ["traffic", "udp6_rollback", "tcp6_rollback", "route_rollback"])
     assert.ok(nativeWindows.includes(`'${name}'`));
   assert.match(nativeWindows, /\$passed -notcontains "TestSystemWindowsIPv6Wintun\/\$stack\/\$case"/);
   assert.match(nativeWindows, /\$passed -notcontains "TestSystemWindowsWintun\/\$stack\/occupied=\$occupied"/);
-  assert.match(nativeWindows, /Unexpected stack executed on this runner/);
+  assert.match(nativeWindows, /Unexpected stack executed in this test process/);
 });
 
 test("the container uses checksum-pinned task bootstrap and keeps task tools out of the runtime image", async () => {
@@ -318,9 +338,10 @@ test("publication retry accepts the latest successful gate and rejects stale evi
 
 test("release packages cover three platforms and every declared architecture", () => {
   const packages = expectedPackages("1.2.3");
-  assert.equal(packages.length, 12);
-  assert.equal(new Set(packages).size, 12);
-  assert.ok(packages.includes("kone-1.2.3-linux-armv7.deb"));
+  assert.equal(packages.length, 6);
+  assert.equal(new Set(packages).size, 6);
+  assert.ok(!packages.some(name => name.includes("armv7") || name.endsWith(".tar.gz")));
+  assert.ok(packages.includes("kone-1.2.3-linux-arm64.deb"));
   assert.ok(packages.includes("kone-1.2.3-darwin-arm64.pkg"));
   assert.ok(packages.includes("kone-1.2.3-windows-arm64.zip"));
   assertVersion("Version: 1.2.3\r\n", "1.2.3");
@@ -381,7 +402,8 @@ test("a batched master push plans every first-parent commit in order", async () 
       matrix.include.map((item) => item.sha),
       [second, third],
     );
-    assert.equal(matrix.include[0].tag, releaseTag(second));
+    assert.match(matrix.include[0].tag, new RegExp(`^v0\\.4\\.0-dev\\.\\d{8}\\.2\\.g${second.slice(0, 12)}$`));
+    assert.equal(matrix.include[0].context.sha, second);
     assert.notEqual(matrix.include[0].prefix, matrix.include[1].prefix);
     await writeFile(
       join(directory, "event.json"),

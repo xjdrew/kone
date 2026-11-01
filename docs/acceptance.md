@@ -1,6 +1,6 @@
 # 新特性实现与验收索引
 
-本索引将 [产品需求](features.md) 和 [管理页面需求](management-ui-requirements.md) 关联到实现、自动化证据和仍需人工验收的边界。实现代码、用例存在、CI 通过及真机验收是四个不同状态；最终结果以 [本轮 PR 的最新检查](https://github.com/xjdrew/kone/pull/40/checks) 为准，不以编译成功或界面显示推断网络已经成功。
+本索引将 [产品需求](features.md) 和 [管理页面需求](management-ui-requirements.md) 关联到实现、自动化证据和仍需人工验收的边界。实现代码、用例存在、CI 通过及真机验收是四个不同状态；最终结果以 [对应 SHA 的 CI 记录](https://github.com/xjdrew/kone/actions) 为准，不以编译成功或界面显示推断网络已经成功。
 
 开发验证只运行合成/回环服务及隔离浏览器 API，没有启动本机 KONE，也没有修改用户正在使用的代理、DNS、路由或防火墙。需要真实 TUN 的测试只在 CI 的 Linux 临时网络命名空间及 Windows/macOS 专用 runner 中执行。
 
@@ -27,7 +27,7 @@
 | UI-06 | 默认回环；主机显式私网 HTTPS、本地 CA、短期配对、只读/管理与撤销 | [LAN/TLS](../pkg/control/lan_test.go)、[会话](../pkg/control/server_test.go)、[访问说明](../README.md) | 不自动安装根证书、修改防火墙或开放路由器；手机证书信任/网络隔离需真机检查 |
 | DESK-01/02 | 默认管理、单实例与受控停机；Windows 托盘、macOS 原生菜单及独立权限助手，三平台安装包链路 | [CLI 与管理](../test/integration/control_test.go)、[Mac 菜单与原生证据](macos-tray.md)、[打包工作流](../.github/workflows/go.yml)、[发布矩阵](releases.md) | 菜单/IPC/真实 TUN 已有原生自动验收；真实鼠标、权限弹窗、干净机器升级/卸载及签名/公证仍需部署验收 |
 | 桌面与诊断补充 | Win/mac GUI 与 CLI 分离、统一图标、托盘失败反馈、Web 运行日志和数据降级提示 | [共享应用回归](../pkg/application/desktop_test.go)、[托盘动作](../pkg/application/tray_actions_test.go)、[启动期间管理可用性](../pkg/control/start_availability_test.go)、[日志边界](../pkg/logstore)、[使用步骤](desktop.md) | 编译、图标/包结构和注入测试不代替真机双击、权限窗口及真实网络验收；近期日志不是持久审计 |
-| PERF-01/02 | 核心 CPU/分配、观察开关/查询与容量基线；system/mixed 真实 TUN direct TCP/UDP 的有限载荷与 RTT 采样 | [基线说明](performance.md)、[核心基准](../pkg/kone/core_benchmark_test.go)、[观察基准](../pkg/kone/observation_benchmark_test.go)、[原生采样](../test/integration/performance_linux_test.go) | 区分合成计数和实际转发；共享 runner 的有限回环采样不代表物理链路、加密代理或 Raspberry Pi 长时性能 |
+| PERF-01/02 | 核心 CPU/分配、观察开关/查询与容量基线；三种运行栈的真实 TUN direct TCP/UDP 有限载荷与 RTT 采样 | [基线说明](performance.md)、[核心基准](../pkg/kone/core_benchmark_test.go)、[观察基准](../pkg/kone/observation_benchmark_test.go)、[原生采样](../test/integration/performance_linux_test.go) | 区分合成计数和实际转发；旧 SHA 的两栈数据不能证明新增 gvisor 性能；共享 runner 采样不代表物理链路、加密代理或 Raspberry Pi 长时性能 |
 | DATA-01 | 有界本地文件、可信 SHA-256、来源许可版本、原子保存、回退与明确下次加载 | [GeoIP 数据](../pkg/geoip/database_test.go)、[控制 API](../pkg/control/geoip_test.go)、[端到端](../test/integration/geoip_test.go)、[界面校验](../web/e2e/console.spec.js) | 不根据输入 URL 自动下载；保存前需暂停，不替换旧流持有的数据快照 |
 | PROTO-01 | SOCKS5 原生 UDP、保留 direct/reject/显式回退；Linux/Windows 可选 IPv6 A/AAAA、规则、TCP/UDP、清理 | [Linux IPv6](../test/integration/ipv6_linux_test.go)、[Windows IPv6](../test/integration/ipv6_windows_test.go)、[IPv6 范围](ipv6.md)、[UDP 传输](../pkg/proxy) | macOS IPv6 启用明确拒绝；ICMP、任意分片/扩展头不在未验收时承诺 |
 | PROTO-02 | 三种 Shadowsocks AEAD2017 方法，TCP/原生 UDP、认证与篡改拒绝；与固定官方 shadowsocks-rust v1.25.0 镜像互操作 | [独立协议互操作](../test/integration/shadowsocks_test.go)、[官方服务端验收](shadowsocks-interop.md)、[出站说明](configuration.md) | 不支持旧流密码、AEAD-2022、插件；其他服务端/版本需独立验收 |
@@ -35,7 +35,7 @@
 
 ## 评审时按这条路径验证
 
-先检查最新 SHA 的 Go 三平台 race/覆盖率、Web、包安装、漏洞/模糊、Linux namespace、Windows Wintun 与 macOS UTUN/菜单/权限助手任务结果，再从运行行为验收：
+先检查最新 SHA 的六个执行检查：Web、三平台、交叉构建及质量/性能；其中仍包含全包 race/覆盖率、安装验证、漏洞/模糊、Linux namespace、三栈 Windows Wintun 与 macOS UTUN/DNS/菜单/权限助手。分组与门禁对应关系见 [CI 说明](ci.md)，再从运行行为验收：
 
 1. 在独立配置目录打开无参数管理；确认未接管，纯直连可配置，坏代理不影响管理。
 2. 编辑入站/出站/规则/DNS；确认草稿、已保存、运行版本分开，重名/引用/凭据/并发冲突不会静默覆盖。

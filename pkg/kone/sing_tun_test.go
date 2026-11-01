@@ -25,15 +25,11 @@ type stubTun struct {
 
 func TestStackConfigurationSelection(t *testing.T) {
 	cleanProxyEnv(t)
-	for _, name := range []string{"system", "mixed"} {
+	for _, name := range SupportedStacks() {
 		cfg, err := ParseConfig([]byte(baseConfig + "stack='" + name + "'"))
-		if name == "mixed" && !singtun.WithGVisor {
-			require.ErrorContains(t, err, "requires a build with -tags with_gvisor")
-			continue
-		}
 		require.NoError(t, err)
 		require.Equal(t, name, cfg.Core.Stack)
-		if name == "mixed" {
+		if name != StackSystem {
 			one := testEngine(t)
 			updated := one.Snapshot().Config
 			updated.Core.Stack = name
@@ -41,6 +37,11 @@ func TestStackConfigurationSelection(t *testing.T) {
 			require.Equal(t, "system", one.Snapshot().Config.Core.Stack)
 		}
 	}
+	require.Equal(t, StackSystem, DefaultConfig().Core.Stack)
+	require.Equal(t, []string{StackSystem, StackGVisor, StackMixed}, SupportedStacks())
+	copy := SupportedStacks()
+	copy[0] = "mutated"
+	require.Equal(t, StackSystem, SupportedStacks()[0])
 }
 
 func (d *stubTun) Name() (string, error)                    { return "kone-test", d.nameErr }

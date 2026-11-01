@@ -112,13 +112,22 @@ servers = ["192.168.1.53"]
 
 设备与透明流量处理改用 SagerNet/sing-tun，Windows 使用内嵌 Wintun，Linux 使用 TUN，macOS 使用 utun。`core.tun` 留空时自动分配名称，指定时必须尚不存在；macOS 名称必须为 utunN。
 
-- 在 `[core]` 下设置 `stack = "system"` 或 `stack = "mixed"`；示例显式选择默认的 `system`，使用系统 TCP 和 sing-tun UDP，对应 `just build`。`mixed` 使用系统 TCP 和 gVisor UDP，用 `just build mixed` 构建，任务会启用 `with_gvisor`。输出自动匹配本机平台，Windows 为 `dist/kone.exe`。缺少构建能力时会返回明确错误，不静默切换协议栈；修改协议栈需要重启。
+- 同一安装包包含所有三种协议栈，在 `[core]` 下通过 `stack` 运行时选择；省略时默认为 `system`，修改后需暂停并重新启用接管。`just build` 和发布包使用相同能力，不再按协议栈分开编译。输出自动匹配本机平台，Windows 为 `dist/kone.exe`。
+
+| `core.stack` | 客户端 TCP | 客户端 UDP |
+| --- | --- | --- |
+| `system`（默认） | 主机系统 TCP 栈 | sing-tun UDP |
+| `gvisor` | gVisor netstack | gVisor netstack |
+| `mixed` | 主机系统 TCP 栈 | gVisor netstack |
+
+这三种模式来自当前固定的 sing-tun 基线，支持 Linux、Windows、macOS 以及构建目标中的 Linux ARMv7；平台 IPv6 限制仍单独生效。sing-box 1.15 文档所述的新自有 TCP/IP 栈不属于本项目固定依赖，不能将其配置或性能说明直接套用，见 [依赖基线](sing-tun.md)。
+
 - `core.auto-route = false` 保留原来的 Fake-IP 子网和显式 CIDR 接管；`true` 添加 `0.0.0.0/1` 与 `128.0.0.0/1` 路由，实现 IPv4 全局接管，同时保留原默认路由供退出后使用。已有更具体路由仍按系统路由优先级处理。
 - 全局接管必须指定 `core.outbound-interface`，代理连接、直连连接和上游 DNS 查询使用这个真实接口。回环地址上的本地代理和 DNS stub 使用原回环路径。出口不能与 TUN 同名；IP-CIDR 默认捕获路由同样要求指定出口。接口切换需要修改配置并重启。
 - `core.network` 的接口地址之后一个地址供协议栈使用，两者均不会分配为 Fake-IP。该地址必须保留至少一个后继主机地址。
 - 旧 `tcp-listen-port`、`udp-listen-port`、`tcp-nat-port-start/end`、`udp-nat-port-start/end` 已移除，旧配置必须删除这些键，严格校验会明确报错。内部监听和会话映射由 sing-tun 分配。
 
-IPv6 默认关闭，Linux/Windows 可通过 `core.ipv6-network` 显式启用；`core.auto-route6` 独立控制 IPv6 全局路由，需要指定真实出口。macOS 在 IPv6 后端未完成平台验收前明确拒绝启用。采用 `mixed` 不改变出站协议能力。IPv6 细节见 [IPv6 配置与边界](ipv6.md)，LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
+IPv6 默认关闭，Linux/Windows 可通过 `core.ipv6-network` 显式启用；`core.auto-route6` 独立控制 IPv6 全局路由，需要指定真实出口。macOS 在 IPv6 后端未完成平台验收前明确拒绝启用。更换协议栈不改变出站协议能力。IPv6 细节见 [IPv6 配置与边界](ipv6.md)，LAN 网关部署参见 [Raspberry Pi 指南](guides/how-to-use-with-raspberry-pi.md)。
 
 ## UDP 策略与显式回退
 

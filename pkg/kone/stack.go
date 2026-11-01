@@ -110,17 +110,26 @@ func tracePacket(ctx context.Context, direction string, packet []byte) {
 type singStack struct {
 	packetStack
 	io   *supervisedTun
+	tun  *gvisorTun
 	once sync.Once
 	err  error
 }
 
-func (s *singStack) Wait() { s.io.wait() }
+func (s *singStack) Wait() {
+	if s.tun != nil {
+		s.tun.waitEndpoint()
+	}
+	s.io.wait()
+}
 
 func (s *singStack) Close() error {
 	s.once.Do(func() {
 		s.io.mu.Lock()
 		s.io.closed = true
 		s.io.mu.Unlock()
+		if s.tun != nil {
+			s.tun.closeEndpoint()
+		}
 		s.err = s.packetStack.Close()
 	})
 	return s.err
@@ -146,7 +155,8 @@ func newSingStack(ctx context.Context, device Device, cfg CoreConfig, handler *f
 	if err != nil {
 		return nil, err
 	}
-	return &singStack{packetStack: stack, io: io}, nil
+	adapter, _ := t.(*gvisorTun)
+	return &singStack{packetStack: stack, io: io, tun: adapter}, nil
 }
 
 // Fatal/Panic from a dependency are engine failures, never process-wide exits.

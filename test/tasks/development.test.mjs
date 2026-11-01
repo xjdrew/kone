@@ -40,6 +40,7 @@ async function fixture(t, options = {}) {
     if (command === "node") return "v26.13.0";
     if (command === "just" && args[0] === "--version") return "just 1.59.0";
     if (command === "bash" && args[0] === "--version") return "GNU bash, version 5";
+    if (command === process.execPath && args.some(arg => arg.endsWith("version-policy.mjs"))) return "0.4.0-dev.20261101.1.gaaaaaaaaaaaa";
     if (command === "bash" && args.includes("kone-npm")) {
       const npmArgs = args.slice(args.indexOf("kone-npm") + 1);
       if (npmArgs[0] === "--version") return "11.20.0";
@@ -100,9 +101,9 @@ test("frontend rebuilds only for changed inputs or missing/changed outputs", asy
   assert.ok(f.logs.some((message) => message.includes("skipped")));
 });
 
-test("native builds only the host target, embeds its version and records the selected stack", async (t) => {
+test("native builds only the host target and includes every runtime stack", async (t) => {
   const f = await fixture(t, { env: { GOOS: "linux", KONE_VERSION: "0.4.0-local" } });
-  const result = await build(f.ctx, "native", "mixed");
+  const result = await build(f.ctx);
   const compiler = f.calls.filter((call) => call.command === "go" && call.args[0] === "build");
   assert.equal(compiler.length, 2);
   assert.equal(compiler[0].settings.env.GOOS, "windows");
@@ -117,14 +118,14 @@ test("native builds only the host target, embeds its version and records the sel
   assert.equal(await readFile(join(f.cwd, "dist/kone-cli.exe"), "utf8"), "compiled fixture\n");
   const metadata = f.calls.find((call) => call.args.some((arg) => arg.endsWith("build-info.mjs")));
   assert.deepEqual(metadata.args.slice(-2), ["--targets", "windows-amd64"]);
-  assert.equal(metadata.settings.env.KONE_BUILD_STACK, "mixed");
+  assert.ok(!("KONE_BUILD_STACK" in metadata.settings.env));
   await build(f.ctx);
   assert.equal(npmCalls(f.calls, "run build").length, 1);
 });
 
-test("invalid stacks and compiler failures stop before packaging or launching the application", async (t) => {
+test("obsolete stack arguments and compiler failures stop before packaging or launching the application", async (t) => {
   const f = await fixture(t, { compileFailure: true });
-  await assert.rejects(build(f.ctx, "native", "invalid"), /Stack/);
+  await assert.rejects(build(f.ctx, "native", "mixed"), /core.stack at runtime/);
   assert.equal(f.calls.length, 0);
   await assert.rejects(packageBuild(f.ctx), /compile failure/);
   assert.ok(!f.calls.some((call) => call.args.some((arg) => arg.endsWith("package.mjs"))));
@@ -140,6 +141,8 @@ test("macOS builds a menu-bar application bundle and a separate terminal executa
   const plist = await readFile(join(f.cwd, "dist/Kone.app/Contents/Info.plist"), "utf8");
   assert.match(plist, /<key>LSUIElement<\/key><true\/>/);
   assert.ok(plist.includes(sha));
+  assert.ok(plist.includes("0.4.0-dev.20261101.1.gaaaaaaaaaaaa"));
+  assert.ok(f.calls.some(call => call.command === process.execPath && call.args.slice(-4).join(" ") === `--format version --sha ${sha}`));
   assert.equal(await readFile(join(f.cwd, "dist/kone-cli"), "utf8"), "compiled fixture\n");
   await develop(f.ctx);
   assert.equal(f.calls.at(-1).command, "open");
@@ -159,13 +162,19 @@ test("package defaults to one native target; package-all requests all portable t
   assert.ok(!("KONE_BUILD_STACK" in matrix.settings.env));
   packager = f.calls.find((call) => call.args.some((arg) => arg.endsWith("/release/package.mjs") || arg.endsWith("\\release\\package.mjs")));
   assert.equal(packager.args.at(-1), "--all-portable");
+  assert.equal(matrix.settings.env.KONE_BUILD_TARGETS.split(",").length, 6);
+  assert.ok(!matrix.settings.env.KONE_BUILD_TARGETS.includes("armv7"));
+  f.calls.length = 0;
+  await packageBuild(f.ctx, "all", "--include-armv7");
+  assert.ok(f.calls.find(call => call.command === "just").settings.env.KONE_BUILD_TARGETS.includes("linux-armv7"));
+  assert.deepEqual(f.calls.at(-1).args.slice(-2), ["--all-portable", "--include-armv7"]);
   assert.ok(!f.calls.some((call) => call.args.includes("release-publish")));
 });
 
 test("quick quality checks omit race, browsers, fuzzing and benchmarks", async (t) => {
   const f = await fixture(t);
   await quality(f.ctx);
-  assert.ok(f.calls.some((call) => call.command === "go" && call.args.join(" ") === "test -vet=off ./cmd/... ./pkg/... ./web/..."));
+  assert.ok(f.calls.some((call) => call.command === "go" && call.args.join(" ") === "test -tags with_gvisor -vet=off ./cmd/... ./pkg/... ./web/..."));
   assert.ok(!f.calls.some((call) => call.args.some((arg) => ["test-release", "test-data", "test-tasks"].includes(arg))));
   assert.ok(!f.calls.some((call) => /race|fuzz|vuln|browser|benchmark/.test(call.args.join(" "))));
 });

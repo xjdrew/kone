@@ -10,7 +10,7 @@ const event = JSON.parse(await readFile(process.env.GITHUB_EVENT_PATH, "utf8"));
 const tag = event.inputs?.tag || "";
 const reason = event.inputs?.reason?.trim();
 if (
-  !/^(dev-[a-f0-9]{12}|v\d+\.\d+\.\d+)$/.test(tag) ||
+  !/^(dev-[a-f0-9]{12}|v\d+\.\d+\.\d+(?:-dev\.\d{8}\.\d+\.g[a-f0-9]{12})?)$/.test(tag) ||
   !reason ||
   reason.length > 2000
 )

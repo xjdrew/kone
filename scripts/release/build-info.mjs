@@ -7,14 +7,21 @@ const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== "--targets"))
   throw new Error("Usage: build-info.mjs [--targets target[,target...]]");
 const selected = args.length ? selectedTargets(args[1]) : targets;
-const stack = process.env.KONE_BUILD_STACK;
-if (stack && !["system", "mixed"].includes(stack)) throw new Error("KONE_BUILD_STACK must be system or mixed");
+if (process.env.KONE_BUILD_STACK) throw new Error("KONE_BUILD_STACK was removed; all stacks are included and core.stack selects at runtime");
+const stacks = ["system", "gvisor", "mixed"];
+const mod = await readFile("go.mod", "utf8");
+const moduleVersion = (path) => {
+  const escaped = path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const version = mod.match(new RegExp(`^\\s*${escaped}\\s+(v[^\\s]+)`, "m"))?.[1];
+  const replace = mod.match(new RegExp(`^replace\\s+${escaped}\\s+=>\\s+([^\\s]+)\\s+(v[^\\s]+)`, "m"));
+  return version ? { path, version, ...(replace ? { replace: { path: replace[1], version: replace[2] } } : {}) } : null;
+};
+const kernels = { tun: moduleVersion("github.com/sagernet/sing-tun"), gvisor: moduleVersion("github.com/sagernet/gvisor") };
 const sha = validSHA(
   execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
 );
 const binaries = [];
 for (const target of selected) {
-  if (target === "linux-armv7" && stack === "mixed") throw new Error("Linux ARMv7 supports only the system stack");
   const name = binaryName(target);
   const entries = [];
   let icon;
@@ -38,7 +45,9 @@ for (const target of selected) {
     target,
     name,
     sha256: await hashFile(`dist/${name}`),
-    stack: stack === "system" || target === "linux-armv7" ? "system" : "system,mixed",
+    stack: stacks.join(","),
+    stacks,
+    default_stack: "system",
     entries,
     ...(icon ? { icon } : {}),
   });
@@ -54,6 +63,10 @@ await writeFile(
       binaries,
       ldflags: `-X main.VERSION=${process.env.KONE_VERSION}`,
       cgo: false,
+      stacks,
+      default_stack: "system",
+      kernels,
+      build_tags: ["with_gvisor"],
     },
     null,
     2,

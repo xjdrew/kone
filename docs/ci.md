@@ -6,44 +6,44 @@ CI 目标是更快发现错误，同时保留同一提交的跨平台、权限�
 
 本地开发通过根 [justfile](../justfile) 的少量日常入口执行，细分 CI 与维护入口集中在 `just ci <task>`，固定 just 1.59.0；命令和工具要求见 [开发说明](development.md)。默认 `just` 只列出帮助，不构建、不联网或修改系统网络。模块中的原生 `ci-linux-*`、`ci-macos-*`、`ci-windows-tun` 和 `ci-ss` 仅供临时 CI 环境验收，并在调用特权操作前检查运行边界。
 
-PR 使用其根 justfile。`workflow_call` 重放历史提交时，额外把 `github.workflow_sha` 的编排工具检出到 `.ci-tools`：`JUST_JUSTFILE` 指向该工具版本的根文件，`JUST_WORKING_DIRECTORY` 指向被测源码目录。编排任务固定到工作流版本，应用源码、配置、测试及发布脚本仍取目标 SHA，历史源码不必自行包含 justfile。
+PR 使用其根 justfile。`workflow_call` 重放历史提交时，额外把 `github.workflow_sha` 的编排工具检出到 `.ci-tools`：`JUST_JUSTFILE` 指向该工具版本的根文件，`JUST_WORKING_DIRECTORY` 指向被测源码目录。应用源码、配置、测试及构建/打包实现取目标 SHA；发布计划、验收标记、发布与撤回使用工作流固定的可信工具。历史源码不必自行包含 justfile。
 
 PR 覆盖率基线也复用这一入口：精确 base SHA 已检出到 `.coverage-base` 后执行 `just ci test-coverage .coverage-base ../coverage-base.out`，再用 `just ci coverage-check` 比较；输出路径相对于被测模块。不会要求旧 base 自带新任务文件，也不换成当前 PR 的应用代码。
 
-## 11 个执行检查
+## 6 个执行检查
 
 | 分组 | 合并后的职责 | 保留的验收 |
 | --- | --- | --- |
 | Web 管理与浏览器 | 前端、发布脚本及数据转换单测、离线构建、三种浏览器 | 真实管理服务的 Cookie/CSRF、保存/刷新/重启闭环；全程接管暂停 |
-| Linux 单元与竞态 | 模块校验、vet、普通及 mixed 构建的测试 | 全包 race；普通构建的全包语句覆盖率工件 |
-| macOS 单元、竞态与原生 | 原单元任务和 UTUN/DNS 原生任务 | 普通/mixed、AppKit、权限助手、真实 UTUN、系统 DNS 及退出恢复 |
-| Windows 单元、竞态与覆盖率 | 原单元任务与独立覆盖率比较任务 | 全包 race、mixed、PE 加载器回归；每个 PR 重测精确 base SHA 并比较 |
-| Windows 原生 system | 原 Wintun 任务的 system 子用例 | IPv4、IPv6、TCP/UDP、端口/路由失败及清理，共 6 个叶子用例 |
-| Windows 原生 mixed | 原 Wintun 任务的 mixed 子用例 | 与 system 相同的 6 个叶子用例，使用独立 runner |
-| Linux 系统与互操作 | 原 TUN、系统 DNS、官方 SS 互操作和容器任务 | 两种协议栈、网关、私有 resolver、固定官方 SS 镜像和 Docker 烟雾检查 |
+| Linux 平台 | 模块校验、vet、全包 race/覆盖率、原生网络、互操作与容器 | 三种协议栈的 TUN/网关/IPv6/恢复、私有 resolver、固定官方 SS 镜像和 Docker 检查 |
+| macOS 平台与安装包 | 全包 race/覆盖率、AppKit/权限助手、UTUN/DNS 及 PKG | 三种协议栈的真实 UTUN/系统 DNS/退出恢复；复用交叉构建工件，临时安装/版本验证 |
+| Windows 平台与安装包 | 全包 race/覆盖率、PE 加载器、PowerShell 打包、Wintun 及 ZIP | PR 精确 base 覆盖率；三种协议栈各 6 个 IPv4/IPv6/TCP/UDP/故障恢复叶子用例；临时安装/版本验证 |
 | 质量与性能 | 原 fuzz/漏洞检查及性能任务 | fuzz、govulncheck、核心/GeoIP 三样本基线及一组画像 |
-| 跨平台构建与 Linux 交付 | 七目标构建、对应源码及 Linux 打包 | Linux amd64/arm64/ARMv7、macOS/Windows amd64/arm64；Linux 临时安装验证 |
-| macOS 安装包 | 下载同提交构建并打包 | 原生架构临时安装/版本验证，其他架构保留实验标记 |
-| Windows 安装包 | 下载同提交构建并打包 | 原生架构临时安装/版本验证，其他架构保留实验标记 |
+| 跨平台构建与 Linux 交付 | 六目标构建、对应源码及 Linux DEB | Linux/macOS/Windows 的 amd64/arm64，共 10 个 GUI/CLI 程序；Linux 临时安装验证 |
 
-覆盖率门禁变成 Windows 单元任务中的步骤，不再等待三平台任务全部结束后启动第四个 runner。它仍每次执行目标分支精确 base SHA 的全包测试，使用相同 Go、race、atomic 覆盖模式及包枚举方式；不使用历史比例或缓存 profile 代替测量。
+工作流只有 `web`、`test`、`build`、`quality` 四个验收组，`test` 展开为三个 OS，因此 PR 实际执行六个检查。发布调用另加一个汇总检查任务，只有四组全部成功才产生标记；该任务不在 PR 中执行。ARMv7 保留为显式开发构建，不属于默认发行矩阵。
 
-Windows 的 system/mixed 使用两个独立 runner 并行，不能在同一主机上直接并行同一套原生用例：两种模式使用相同的测试虚拟地址、路由和防火墙范围。分开运行仍须核对全部 12 个叶子用例实际通过，空匹配、跳过或运行错误的栈不能算成功。
+覆盖率门禁位于 Windows 平台任务中。每个 PR 重新执行目标分支精确 base SHA 的全包测试，使用相同 Go、`with_gvisor`、race、atomic 覆盖模式及包枚举方式；不使用历史比例或缓存 profile 代替测量。
 
-Linux 系统验收共享编译好的测试程序，但 TUN/网关与 resolved 的隔离环境仍分开创建。权限操作仅作用于 CI 的临时网络/挂载命名空间；SS 对端继续使用隔离容器。macOS 原生验收仍在专用 runner 中顺序执行并核对物理 DNS/默认路由基线，不和用户开发主机共享网络环境。
+普通程序统一包含 `system`、`gvisor`、`mixed`；全包 race 只测这一种构建，不再重复执行整套 mixed 构建测试。Windows 原生测试只编译一次，再在同一 runner 中依次启动三次独立测试进程；各栈结束并清理后才运行下一栈，不并发修改系统网络。门禁逐栈核对共 18 个叶子用例实际通过，空匹配、跳过或运行错误的栈不能算成功。
+
+Linux 系统验收共享编译好的测试程序，但逐栈的 TUN/网关与 resolved 隔离环境仍分开创建。权限操作仅作用于 CI 的临时网络/挂载命名空间；SS 对端继续使用隔离容器。macOS 在平台 runner 中顺序验收三栈，并逐栈核对四个 UTUN 和两个 DNS 叶子用例及物理 DNS/默认路由恢复。原生测试不会在用户开发主机运行。
+
+重放历史源码时，编排脚本按被测目录内的 `pkg/kone/stack_modes.go` 能力标记决定协议栈范围：新源码必须通过三栈，尚无该能力的旧 SHA 保留原来的 system/mixed 验收，不能把新源码失败当作兼容跳过。
 
 ## 去掉重复工作
 
 - 核心规则、DNS 缓存、观察器和 GeoIP 基准没有协议栈实现分支，只测一轮；保留 `-cpu=1,2`、`-count=3` 和画像。真实 TUN 性能采样仍逐栈执行，见 [性能基线](performance.md)。
-- 同平台的短任务合并后，共享检出、工具链、模块与本地编译缓存；耗时较长的 Windows 原生验收保持独立并行。
+- 同平台单元、原生和打包任务共享检出、工具链和编译缓存；三平台任务与交叉构建同时开始。
+- macOS/Windows 只在打包阶段等待本次 run、attempt 和源码 SHA 对应的交叉构建成功，再下载同一份 `binaries`；不重复编译发行程序，也不因前置 `needs: build` 延迟单元和原生验收。构建失败不能复用旧 attempt 的工件。
 - 交叉构建和质量基线分别使用独立编译缓存：前者依赖 `go.sum`、工作流和构建身份脚本，后者依赖 `go.sum`、工作流和核心基准源码，与其他 Linux Go 任务的默认缓存分开。这样跨架构和 fuzz/基准编译结果不会始终被较早完成的普通任务缓存替代。缓存只加速编译，所有测试与构建命令仍执行。
 - `master` 的完整资格检查由发布流程调用同一个工作流执行，避免同一 SHA 再跑一份普通 master CI。PR 与 master 发布资格仍使用同一套必需检查；开发分支 push 不触发。
 
-每个 first-parent master 提交仍独立验收，工件、版本及源码固定到该 SHA。发布汇总标记只在所有合并后的门禁成功时产生；PR 不发布 Release。详见 [发布流程](releases.md)。
+每个 first-parent master 提交仍独立验收，工件、版本及源码固定到该 SHA。新资格标记使用 schema 2 的完整四组；历史 schema 1 仅接受原来的完整七组或十二组，不能拼接缺失门禁。PR 不发布 Release。详见 [发布流程](releases.md)。
 
-## 优化前后的测量
+## 历史测量：17 个检查收敛到 11 个
 
-下表是上一轮 CI 分组优化的测量，尚不代表本轮 just 入口调整后的性能。优化前采用 [成功运行 41237028594](https://github.com/xjdrew/kone/actions/runs/41237028594) 为参照，提交为 `e81114f213875790083c9315ca25e424a4587f6d`。优化后在同一提交 `63f225229624ebaf7f3eb2b249733e4f7d046063` 执行 [首轮](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/1) 与 [暖缓存重跑](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/2)，两轮全部检查通过。
+下表只描述当时 SHA 的旧版 17→11 分组，不代表当前六检查、统一三栈程序的性能。当前改动需另取对应 SHA 的首次运行及暖缓存样本，分别比较等待时间和 runner 时间，不能沿用旧样本宣称提速。旧版优化前采用 [成功运行 41237028594](https://github.com/xjdrew/kone/actions/runs/41237028594) 为参照，提交为 `e81114f213875790083c9315ca25e424a4587f6d`。优化后在同一提交 `63f225229624ebaf7f3eb2b249733e4f7d046063` 执行 [首轮](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/1) 与 [暖缓存重跑](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/2)，两轮全部检查通过。
 
 等待时间取首个执行任务开始至最后一个任务完成，不含启动前排队；runner 秒数是各执行任务耗时之和，包含检出、工具链、测试和工件步骤，未按平台计费权重换算。
 

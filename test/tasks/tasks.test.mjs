@@ -104,13 +104,37 @@ test("coverage follows the selected source and preserves directory and output ar
   assert.equal(result.status, 0, result.stderr);
   const calls = await f.calls();
   assert.equal(calls.length, 2);
-  assert.deepEqual(calls[0].argv, ["list", "./..."]);
+  assert.deepEqual(calls[0].argv, ["list", "-tags", "with_gvisor", "./..."]);
   assert.deepEqual(calls[1].argv, [
-    "test", "-race", "-count=1", "-coverpkg=example.invalid/one,example.invalid/two",
+    "test", "-tags", "with_gvisor", "-race", "-count=1", "-coverpkg=example.invalid/one,example.invalid/two",
     `-coverprofile=${profile}`, "-covermode=atomic", "./...",
   ]);
   for (const call of calls) assert.equal(resolve(call.cwd), resolve(module));
   assert.equal(await readFile(profile, "utf8"), "mode: atomic\n");
+});
+
+test("read-only version inspection uses the trusted tool and selected source with explicit bounded arguments", async (t) => {
+  const f = await fixture(t);
+  await mkdir(join(f.tools, "scripts/release"));
+  await writeFile(join(f.tools, "scripts/release/version-policy.mjs"), 'console.log(JSON.stringify({argv:process.argv.slice(2),cwd:process.cwd()}));\n');
+  const sha = "1234567890abcdef1234567890abcdef12345678";
+  for (const [args, expected] of [
+    [[], ["--format", "json", "--sha", "HEAD"]],
+    [["version"], ["--format", "version", "--sha", "HEAD"]],
+    [["next-tag", sha], ["--format", "next-tag", "--sha", sha]],
+  ]) {
+    const result = f.run(["ci", "release-version", ...args]);
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.deepEqual(output.argv, expected);
+    assert.equal(resolve(output.cwd), resolve(f.source));
+  }
+  for (const args of [["text"], ["json", "master"], ["json", "HEAD; echo unexpected"], ["json", "A".repeat(40)], ["json", "HEAD", "extra"]]) {
+    const result = f.run(["ci", "release-version", ...args]);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Version format|Version source|Invalid arguments/);
+  }
+  assert.deepEqual(await f.calls(), [], "version inspection never invokes the compiler");
 });
 
 test("coverage propagates go list and go test failures and rejects an empty package set", async (t) => {
@@ -142,14 +166,14 @@ test("coverage comparison forwards paths as individual arguments and propagates 
 });
 
 test("native CI tasks refuse local execution before invoking Go or system-network commands", async (t) => {
-  const recipes = ["ci-linux-build", "ci-linux-tun", "ci-linux-dns-tools", "ci-linux-dns", "ci-macos-build", "ci-macos-tun", "ci-macos-session", "ci-ss"];
+  const recipes = ["ci-linux-build", "ci-linux-tun", "ci-linux-dns-tools", "ci-linux-dns", "ci-macos-build", "ci-macos-tun", "ci-macos-session", "ci-ss", "wait-build"];
   if (process.platform === "win32") recipes.push("ci-windows-tun");
   for (const recipe of recipes) {
     await t.test(recipe, async (t) => {
       const f = await fixture(t);
       const result = f.run(["ci", recipe]);
       assert.notEqual(result.status, 0);
-      assert.match(result.stderr, /restricted to disposable GitHub Actions|only in disposable CI/);
+      assert.match(result.stderr, /restricted to disposable GitHub Actions|restricted to GitHub Actions|only in disposable CI/);
       assert.deepEqual(await f.calls(), []);
     });
   }

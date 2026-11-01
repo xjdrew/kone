@@ -20,7 +20,7 @@ func buildBinary(t *testing.T, pkg string) (string, string) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.Command("go", "build", "-o", binary, pkg)
+	build := exec.Command("go", "build", "-tags", "with_gvisor", "-o", binary, pkg)
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
@@ -45,6 +45,8 @@ outbound = "direct"
 		"alias":    "[[outbounds]]\nname='local'\ntype='direct'",
 		"proxy":    "[core]\nstack='system'\n[[outbounds]]\nname='office'\nurl='socks5://127.0.0.1:1080'\n[[rules]]\ntype='FINAL'\noutbound='office'",
 		"stack":    "[core]\nstack='unknown'",
+		"gvisor":   "[core]\nstack='gvisor'",
+		"mixed":    "[core]\nstack='mixed'",
 		"udp":      "[[outbounds]]\nname='office'\nurl='http://127.0.0.1:8080'\nudp-fallback='direct'",
 		"bad-udp":  "[[outbounds]]\nname='office'\nurl='http://127.0.0.1:8080'\nudp-fallback='office'",
 		"legacy":   "[core]\nudp-nat-port-start=10000",
@@ -68,7 +70,9 @@ outbound = "direct"
 		{"builtin override", []string{"-check", "-config", filepath.Join(configs, "override.toml")}, "reserved for built-in outbound direct", 2},
 		{"builtin alias", []string{"-check", "-config", filepath.Join(configs, "alias.toml")}, "unknown configuration key", 2},
 		{"proxy and explicit stack", []string{"-check", "-config", filepath.Join(configs, "proxy.toml")}, "Configuration valid", 0},
-		{"invalid stack", []string{"-check", "-config", filepath.Join(configs, "stack.toml")}, "core.stack must be system or mixed", 2},
+		{"gvisor in the same executable", []string{"-check", "-config", filepath.Join(configs, "gvisor.toml")}, "Configuration valid", 0},
+		{"mixed in the same executable", []string{"-check", "-config", filepath.Join(configs, "mixed.toml")}, "Configuration valid", 0},
+		{"invalid stack", []string{"-check", "-config", filepath.Join(configs, "stack.toml")}, "core.stack must be system, gvisor or mixed", 2},
 		{"explicit UDP fallback", []string{"-check", "-config", filepath.Join(configs, "udp.toml")}, "Configuration valid", 0},
 		{"invalid UDP fallback", []string{"-check", "-config", filepath.Join(configs, "bad-udp.toml")}, "udp-fallback must be direct or reject", 2},
 		{"removed relay setting", []string{"-check", "-config", filepath.Join(configs, "legacy.toml")}, "unknown configuration key", 2},

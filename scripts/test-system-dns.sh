@@ -70,7 +70,13 @@ for attempt in $(seq 1 100); do
   if busctl --system --no-pager call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s org.freedesktop.resolve1 >/dev/null 2>&1; then break; fi
   sleep 0.1
 done
-for stack in system mixed; do
+stacks=(system mixed)
+if [[ -f pkg/kone/stack_modes.go ]]; then stacks=(system gvisor mixed); fi
+for stack in "${stacks[@]}"; do
   export KONE_SYSTEM_TEST=1 KONE_TEST_STACK="$stack"
-  "$1" -test.run '^TestSystemDNSOwnedLink' -test.v -test.timeout 180s
+  output="$KONE_FIXTURE/dns-$stack.log"
+  "$1" -test.run '^TestSystemDNSOwnedLink' -test.v -test.timeout 180s | tee "$output"
+  for test in TestSystemDNSOwnedLinkGuidanceAndRestore TestSystemDNSOwnedLinkRollsBackLateStartupFailure; do
+    grep -Fq -- "--- PASS: $test (" "$output"
+  done
 done

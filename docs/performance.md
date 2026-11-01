@@ -2,7 +2,9 @@
 
 CI 的质量任务保留可复现性能基线，不设置未经校准的“最高性能”或延迟阈值。每次 PR 和 master 验证使用固定源 SHA、相同 Go 工具链和确定性数据，保留三个样本以及一组 CPU/内存画像。完整发布资格要求这些步骤成功执行，但不会因为共享 runner 的一次耗时波动拒绝提交。
 
-规则、DNS 响应缓存、观察器和 GeoIP 基准不创建协议栈，也没有按 `with_gvisor` 切换的实现，因此只执行一轮，避免把同一算法分别标成 system/mixed 重复测量。`system` 和 `mixed` 的构建、race 与真实 TUN 验收仍然保留；下文的原生采样也继续逐栈运行。CI 分组及优化前后的耗时记录见 [CI 说明](ci.md)。
+规则、DNS 响应缓存、观察器和 GeoIP 基准不创建协议栈，因此只执行一轮，避免把同一算法标成不同协议栈重复测量。当前同一程序包含 `system`、`gvisor`、`mixed`，race 使用同一构建，下文的真实 TUN 采样按运行模式分别执行。CI 分组及注明版本的历史耗时记录见 [CI 说明](ci.md)。
+
+本文对应固定 sing-tun fork `fc4685fee0a3` 的三栈实现，不包含 sing-box 1.15 引入的新自有 TCP/IP 栈。旧 SHA 的 system/mixed 样本仍只证明当时的实现；新增 gvisor 模式需要本次 SHA 的原始样本，不能从旧数据推导其性能，也不将新版上游的性能说明作为 KONE 的测量结果。完整版本关系见 [依赖说明](sing-tun.md)。
 
 `performance-baseline` 工件包含：
 
@@ -24,15 +26,15 @@ CI 的质量任务保留可复现性能基线，不设置未经校准的“最�
 | `BenchmarkObservationBoundedLoad` | 4096 目标周转，明细上限 512、路径上限 128 加其他 | 容量/淘汰行为及 `retained_records`、`retained_paths`，不承诺无限保留 |
 | `BenchmarkQuery`、`BenchmarkImmutableDatabaseLookup`、`BenchmarkBuiltinDecode` | 内置/可替换 GeoIP 的确定性地址查找与解码 | 地址归属查找及初始化代价，不表示网络连通性 |
 
-观察基准中的载荷字节是合成计数。Go 输出的 `MB/s` 表示该计数操作承载的模拟字节量，**不能称为 TUN 吞吐、实际 TCP/UDP 转发速度或链路带宽**。这些指标描述共用的核心算法，不表示已经测量两种协议栈的报文处理差异。
+观察基准中的载荷字节是合成计数。Go 输出的 `MB/s` 表示该计数操作承载的模拟字节量，**不能称为 TUN 吞吐、实际 TCP/UDP 转发速度或链路带宽**。这些指标描述共用的核心算法，不表示已经测量不同协议栈的报文处理差异。
 
 ## 真实 TUN 的有限 runner 采样
 
-Linux 原生生命周期任务还在独立网络命名空间中运行 `TestSystemPerformanceBaseline`，分别验证 `system` 和 `mixed` 的真实 Fake-IP → TUN → direct TCP/UDP → 本地回显服务 → TUN 回程。它先生成虚拟地址，再热更新为直连；准备映射的代理出站不参与实际转发。
+Linux 原生生命周期任务还在独立网络命名空间中运行 `TestSystemPerformanceBaseline`，当前流程分别运行 `system`、`gvisor`、`mixed` 的真实 Fake-IP → TUN → direct TCP/UDP → 本地回显服务 → TUN 回程。它先生成虚拟地址，再热更新为直连；准备映射的代理出站不参与实际转发。实际执行与数值以对应 SHA 的工件为准。
 
 每种协议比较三种模式：保留明细、仅独立整体计数，以及保留明细并以目标 200 次/秒并发查询一致的 Snapshot/Sankey。关闭明细不等于关闭整体计数或全部观察开销，输出记录实际完成的查询数。TCP 每轮每方向 16 KiB，UDP 每轮每方向 1200 字节；4 轮预热后计量 128 轮，整个采样有 20 秒上下文上限，每种协议栈的总往返载荷小于 16 MiB。
 
-`native-data-plane-baseline` 工件包含 `environment.txt` 和 `system.log`、`mixed.log`：前者记录精确 SHA、Go、OS/内核、CPU 型号/核数、内存和 race 构建参数；日志中的 `KONE_NATIVE_PERFORMANCE` JSON 记录完整回显验证的实际载荷字节、耗时、载荷吞吐、单轮 RTT 的 p50/p95/p99、同进程用户/内核 CPU 时间和查询数。百分位采用最近秩；TCP 的 RTT 对应一轮完整载荷回显。传输或退出清理失败仍使任务失败，性能数值不设置波动门禁。
+`native-data-plane-baseline` 工件包含 `environment.txt` 和逐栈日志 `system.log`、`gvisor.log`、`mixed.log`：前者记录精确 SHA、Go、OS/内核、CPU 型号/核数、内存和 race 构建参数；日志中的 `KONE_NATIVE_PERFORMANCE` JSON 记录完整回显验证的实际载荷字节、耗时、载荷吞吐、单轮 RTT 的 p50/p95/p99、同进程用户/内核 CPU 时间和查询数。百分位采用最近秩；TCP 的 RTT 对应一轮完整载荷回显。传输或退出清理失败仍使任务失败，性能数值不设置波动门禁。
 
 这是共享 runner、race 插桩、回环目标和测试夹具共同参与的集成采样。CPU 包括同进程的回显服务和查询负载；每轮校验也有开销。结果可追踪同类环境的变化，不能当作纯内核性能、物理链路上限、不同模式之间的因果结论，或 Raspberry Pi、HTTP/SOCKS5/SS 的实测吞吐。
 

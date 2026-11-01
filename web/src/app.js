@@ -1820,6 +1820,13 @@ function renderInboundsEditor() {
             options: [
               { value: "system", label: "system · 系统 TCP + sing-tun UDP" },
               {
+                value: "gvisor",
+                label: "gvisor · gVisor TCP + UDP",
+                disabled: !list(model.state.capabilities?.stacks).includes(
+                  "gvisor",
+                ),
+              },
+              {
                 value: "mixed",
                 label: "mixed · 系统 TCP + gVisor UDP",
                 disabled: !list(model.state.capabilities?.stacks).includes(
@@ -1827,7 +1834,7 @@ function renderInboundsEditor() {
                 ),
               },
             ],
-            hint: "mixed 需要对应构建能力。更换设备、出口、栈或范围需要重启。",
+            hint: "同一安装包包含全部协议栈，默认 system。更换设备、出口、栈或范围需要先暂停再启用。",
           },
         ),
       ),
