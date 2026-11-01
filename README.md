@@ -109,7 +109,7 @@ go test -race ./... # requires CGO and a platform C compiler
 go test ./pkg/kone -run '^$' -fuzz '^FuzzParseConfig$' -fuzztime 15s
 ```
 
-CI groups native race tests, non-decreasing PR coverage, cross-platform builds, dependency checks and container smoke tests into 11 execution checks. Privileged acceptance exercises TUN lifecycle, route ownership, reload, shutdown, Windows Wintun and traffic from a separate LAN client. [CI grouping and measurements](docs/ci.md) explains the parallelism, shared build work and per-commit master qualification. Real Raspberry Pi throughput, suspend/resume and multi-VPN coexistence still need deployment-specific testing.
+CI covers native race tests, non-decreasing PR coverage, cross-platform builds, dependency checks and container smoke tests. Privileged acceptance exercises TUN lifecycle, route ownership, reload, shutdown, Windows Wintun and traffic from a separate LAN client. [CI grouping and measurements](docs/ci.md) explains the parallelism, shared build work and per-commit master qualification. Real Raspberry Pi throughput, suspend/resume and multi-VPN coexistence still need deployment-specific testing.
 
 See [product requirements and roadmap](docs/features.md), [management UI requirements](docs/management-ui-requirements.md), [dependency decisions and remaining work](docs/engineering.md), [Raspberry Pi deployment](docs/guides/how-to-use-with-raspberry-pi.md), and [Docker deployment](deploy/docker/README.md). Older network recipes are retained under `docs/guides` as historical references.
 
