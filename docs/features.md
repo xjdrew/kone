@@ -300,7 +300,7 @@ Web、桌面、CLI 复用管理契约，包含 API 版本、能力、结构化�
 
 ## 8. 验证策略与验收集
 
-单元测试随包，跨模块/真实网络端到端测试放 `test/integration/`。新代码补两类测试，KONE 模块全包语句覆盖率不低于目标分支同口径基线，独立第三方模块另行验证补丁；运行 `just vet`、`just test` 和 `just test-mixed`。system/mixed 与平台特权边界分别验收，文档完成不表示下述场景已通过。统一入口见 [开发说明](development.md)。
+单元测试随包，跨模块/真实网络端到端测试放 `test/integration/`。新代码补两类测试，KONE 模块全包语句覆盖率不低于目标分支同口径基线，独立第三方模块另行验证补丁；日常运行 `just quality` 和 `just quality vet`，全面检查使用 `just quality full`。system/mixed、race 与平台特权边界仍分别由 CI 验收，文档完成不表示下述场景已通过。统一入口见 [开发说明](development.md)。
 
 | 场景 | 必测情形 | 关联需求 |
 | --- | --- | --- |

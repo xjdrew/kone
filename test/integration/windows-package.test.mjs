@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runWindowsScript } from "../../scripts/release/windows-powershell.mjs";
+import { createPortableArchive } from "../../scripts/release/portable.mjs";
 
 const scripts = fileURLToPath(new URL("../../scripts/release/", import.meta.url));
 
@@ -45,16 +46,19 @@ test("Windows packages zip, extract and install with no PowerShell in PATH", {
   for (const [name, contents] of Object.entries(files))
     await writeFile(join(source, name), contents);
   await cp(join(scripts, "install.ps1"), join(source, "install.ps1"));
-  const archive = join(f.directory, "package 中文 with spaces.zip");
-  const extracted = join(f.directory, "extracted 中文 with spaces");
-  const installed = join(f.directory, "installed 中文 with spaces");
-  f.run(join(scripts, "zip.ps1"), ["-Source", source, "-Destination", archive]);
-  assert.equal((await readFile(archive)).subarray(0, 2).toString(), "PK");
-  f.run(join(scripts, "expand.ps1"), ["-Source", archive, "-Destination", extracted]);
-  f.run(join(extracted, base, "install.ps1"), ["-Prefix", installed]);
-  for (const [name, contents] of Object.entries(files)) {
-    assert.equal(await readFile(join(extracted, base, name), "utf8"), contents);
-    assert.equal(await readFile(join(installed, name), "utf8"), contents);
+  for (const writer of ["powershell", "portable"]) {
+    const archive = join(f.directory, `package 中文 with spaces-${writer}.zip`);
+    const extracted = join(f.directory, `extracted 中文 with spaces-${writer}`);
+    const installed = join(f.directory, `installed 中文 with spaces-${writer}`);
+    if (writer === "powershell") f.run(join(scripts, "zip.ps1"), ["-Source", source, "-Destination", archive]);
+    else await createPortableArchive({ stage: source, base, destination: archive, unix: false });
+    assert.equal((await readFile(archive)).subarray(0, 2).toString(), "PK");
+    f.run(join(scripts, "expand.ps1"), ["-Source", archive, "-Destination", extracted]);
+    f.run(join(extracted, base, "install.ps1"), ["-Prefix", installed]);
+    for (const [name, contents] of Object.entries(files)) {
+      assert.equal(await readFile(join(extracted, base, name), "utf8"), contents);
+      assert.equal(await readFile(join(installed, name), "utf8"), contents);
+    }
   }
 });
 

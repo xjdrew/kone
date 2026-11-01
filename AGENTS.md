@@ -7,6 +7,6 @@
 - 每次变更更新 `CHANGELOG.md`；行为或配置变化同步更新示例和文档。
 - CHANGELOG 面向用户，按版本或日期归类，区分 Features、Bugfixes，其他变更列 Changes；每项尽量一句话，只写用户可感知的变化和必要迁移，不写实现、调试、测试细节或未实现计划。
 - 使用 Go 1.27.3、`gofmt`、结构化 `log/slog` 和严格 TOML 配置；源码放在 `cmd/`、`pkg/`，根目录不放 Go 源码。
-- 开发、测试、构建及脚本统一从根 `justfile` 的任务进入；Windows 开发使用 Git Bash，新增入口同步文档。
+- 日常开发统一使用根 just 入口（init/dev/quality/build/package）；细分 CI 与维护任务使用 `just ci`。Windows 使用 Git Bash，新增入口同步文档。
 - 修改系统网络前校验配置；检查外部输入边界与并发安全，不记录凭据。依赖变更检查维护状态、平台兼容性与 GPL-3.0-or-later 许可要求。
-- 提交前检查 diff，仅提交本任务文件，保留用户改动；运行相关 just 测试任务和 `just vet`，如实报告未验证的边界。
+- 提交前检查 diff，仅提交本任务文件，保留用户改动；运行相关质量检查和 `just quality vet`，如实报告未验证的边界。

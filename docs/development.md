@@ -1,113 +1,75 @@
-# 开发与任务入口
+# 开发
 
-从仓库根目录使用 [just](https://github.com/casey/just) **1.59.0** 执行开发、测试、构建和脚本任务。Go 固定为 **1.27.3**；前端、数据转换和发行元数据任务使用 **Node 26.13.0**。Windows 开发使用 Git Bash，并让 `just`、Go、Node 和 Git Bash 在 PATH 中可用。race 测试还需要 CGO 和平台 C 编译器。
+日常只使用根 [justfile](../justfile) 的七个入口。工具版本为 just **1.59.0**、Go **1.27.3**、Node **26.13.0**；Windows 使用 Git Bash。安装包用户无需这些开发工具，直接按 [使用说明](usage.md) 运行 KONE。
 
-```sh
-just
-```
+## 开始开发
 
-默认只列出任务，不构建、不下载依赖、不启动 KONE，也不修改系统网络。参数和当前任务以根 [justfile](../justfile) 为准；添加新入口时同时更新这里。just 调用底层 Go、npm、Node 和平台脚本，不改变其测试或权限要求。
-
-安装包用户直接运行 `kone`、`install.sh` 或 `install.ps1`，不需要安装 just。文档中的 KONE 启动参数、HTTP API、Docker Compose 和操作系统网络设置属于产品使用；不要为了使用发行包安装开发工具。
-
-## 桌面构建与运行
-
-在 Windows 的 Git Bash 中构建包含最新管理页面的桌面程序：
+在仓库根目录执行：
 
 ```sh
-just web-deps
-just web-build
-just build dist/kone.exe
+just init
+just dev
 ```
 
-然后双击 `dist/kone.exe` 或在终端执行 `./dist/kone.exe`，不传 `-config`。也可以在安装前端依赖后用 `just desktop` 一次构建页面、编译并启动管理程序；这个任务会实际启动 KONE。程序打开管理界面并保持接管暂停，使用普通用户的持久配置目录；托盘提供管理、启用、暂停、诊断和退出。启用接管时才按需请求独立 UAC 网络助手。`just build-mixed dist/kone.exe` 另外编入 mixed 协议栈支持，仍需在配置中选择协议栈。
+`init` 检查 Git、Go、Node/npm、just、Bash 等基本工具，缺失时提示手工安装；只安装项目依赖，不安装系统工具、不运行端到端测试或修改系统网络。`dev` 默认构建所需页面和本机程序，再打开接管暂停的桌面管理；启用接管仍须用户明确操作。仅开发前端时使用 `just dev web` 启动 Vite。
 
-Linux/macOS 使用 `just build` 后运行 `./dist/kone`；macOS 在桌面会话中提供原生菜单栏，并按需授权独立网络助手。已有的管理页面已经内嵌，未修改前端时可直接构建，无需重新安装 Node 依赖。
+单独执行 `just` 只显示帮助，不下载、构建或启动程序。初始化后，构建和打包复用未变更的依赖及前端资产，只做必要的增量工作。
 
-`just package-local` 构建页面、七个二进制目标，并在 `release-assets/` 生成当前主机平台的本地安装包；它校验原生架构的程序版本，不发布 Release。Windows 便携 ZIP 随附按用户安装的 `install.ps1`。macOS 的便携包和未签名 `.pkg` 安装的是命令行程序及资源，并不是已签名、公证的 `.app`。托盘、菜单、助手和真实 TUN 已有 CI 验收；真实鼠标交互、授权弹窗、干净机器升级/卸载、手机证书信任以及签名/公证仍需目标设备验收。打包范围和信任边界见 [发布说明](releases.md)、[Windows 使用](windows/README.md) 与 [macOS 权限](macos-helper.md)。
+## 日常入口
 
-Windows 打包使用系统自带的 Windows PowerShell 5.1，无需另装 PowerShell 7（`pwsh`）；可用 `just test-windows-package` 验证压缩、解压和临时安装流程。
-
-## 常用任务
-
-| 任务 | 用途 |
+| 命令 | 用途 |
 | --- | --- |
-| `just build [output]` | 构建 system 栈 CLI；Windows 默认 `dist/kone.exe`，其他平台默认 `dist/kone` |
-| `just build-mixed [output]` | 构建包含 `with_gvisor` 的 CLI，允许选择 mixed 栈 |
-| `just desktop` | 构建页面及本机程序，然后实际启动默认暂停的管理界面 |
-| `just fmt` | 格式化 Go 源码 |
-| `just check-config [config]` | 校验 TOML；默认使用完整示例，不启用接管 |
-| `just go-deps` / `just go-verify` | 下载依赖 / 核验模块摘要 |
-| `just vet` | 静态检查全部 Go 包 |
-| `just test` / `just test-mixed` | 普通 / mixed 构建的全包 race 测试 |
-| `just test-coverage [directory] [output]` | 被测目录的全包 atomic 语句覆盖率；默认 `.` 与 `coverage.out` |
-| `just coverage-check [base] [head]` | 按语句数精确比较覆盖率，默认 `coverage-base.out` 与 `coverage.out` |
-| `just test-pe` | Windows 上的 sing-tun PE 加载器回归 |
-| `just test-macos-desktop` | macOS 原生菜单和私有助手边界测试 |
-| `just quality-check` | 格式与模块文件一致性检查 |
-| `just fuzz [duration]` / `just vuln` | 配置 fuzz（默认 15 秒）/ 依赖可达漏洞检查 |
+| `just init` | 检查基本工具并安装项目依赖 |
+| `just dev [desktop\|web]` | 默认启动桌面管理；`web` 启动前端开发服务 |
+| `just quality [quick\|full\|fmt\|vet\|benchmark]` | 默认快速检查；按需选择全面检查、格式化、静态检查或性能基准 |
+| `just build [system\|mixed]` | 默认 system，只构建本机 OS/架构 |
+| `just build-all` | 构建全部七个发行目标 |
+| `just package [system\|mixed]` | 只打包本机 OS/架构，默认 system |
+| `just package-all` | 生成全部平台便携包及本机可构建的原生安装器 |
 
-`just test` 同时运行包内单元测试和普通端到端测试。带权限的真实 TUN/DNS 用例单独由 CI 执行，不能把本地跳过算作通过。覆盖率输出路径相对于被测模块；将精确 base SHA 检出到 `.coverage-base` 后可以运行：
+快速迭代使用 `just quality`：检查格式和 Go 静态问题，复用 Go 测试缓存运行不带 race 的应用单元测试，再运行 Web 单测。完整端到端、任务、发布和数据回归留给 CI。`just quality full` 可显式执行 race、全包覆盖率、mixed、浏览器、fuzz 和漏洞检查，可能较慢，也可能需要下载浏览器及其平台依赖；race 需要 CGO 和平台 C 编译器。特权原生协议栈及权限恢复验收只在 CI 执行。
 
-```sh
-just test-coverage
-just test-coverage .coverage-base ../coverage-base.out
-just coverage-check
-```
+格式化使用 `just quality fmt`，提交前运行相关检查及 `just quality vet`。基准使用 `just quality benchmark`，计量边界见 [性能说明](performance.md)。
 
-第二条复用当前任务定义，旧 base 无需自带 justfile。
+## 桌面程序和安装包
 
-## 前端与浏览器
-
-所有前端任务也从仓库根目录执行，无需先进入子目录：
-
-| 任务 | 用途 |
-| --- | --- |
-| `just web-deps` | 安装锁文件中的前端依赖 |
-| `just web-dev` / `just web-preview` | 启动前端开发 / 构建预览服务 |
-| `just test-web` | 前端单元测试 |
-| `just web-build` / `just web-check` | 更新内嵌离线资产 / 检查资产与源码一致 |
-| `just web-browsers` | 安装浏览器和所需系统依赖 |
-| `just test-web-e2e` | 三种浏览器的旅程及真实管理闭环检查 |
-| `just test-release` / `just test-data` | 发布与任务约束单测 / 数据转换单测 |
-| `just test-tasks` | 单独验证 just 入口、脚本边界和历史重放约束 |
-
-### Browser journeys
-
-先完成前端依赖、页面构建和浏览器安装，然后运行：
+只需要程序时：
 
 ```sh
-just web-deps
-just web-build
-just web-browsers
-just test-web-e2e
+just init
+just build
 ```
 
-同一入口适用于 Windows Git Bash。未提供 `KONE_MANAGEMENT_TEST_BINARY` 时，任务自动构建专用管理测试程序并为本次运行设置绝对路径；已有该变量时复用指定程序。CI 通过 `just ci-web-fixture` 在 runner 临时目录构建并传递该路径，这是依赖 `RUNNER_TEMP` 和 `GITHUB_ENV` 的 CI 入口。浏览器仅监听回环并使用临时配置，真实管理始终保持接管暂停，不启用 TUN；用例清单、真实执行报告和跳过检查仍必须通过。
+Windows 输出 `dist/kone.exe`，Linux/macOS 输出 `dist/kone`。双击 Windows 程序或无参数运行相应文件，会打开持久化管理和托盘/菜单，初始接管暂停。日常开发也可以直接用 `just dev`；它会实际启动程序。
 
-## 基准、数据与构建
+`just build mixed` 编入 gVisor 支持，随后仍须在配置中选择 mixed 协议栈。构建任务只生成本机程序，不因为开发 Windows 桌面就同时编译 Linux/macOS。需要 Raspberry Pi 等其他目标时使用 `just build-all`，从 `dist/` 选择对应文件；Linux ARMv7 使用 system，其余发行目标包含 mixed。
 
-| 任务 | 用途 |
-| --- | --- |
-| `just benchmark-metadata` | 记录提交、硬件、Go 和负载元数据到 `baseline/` |
-| `just benchmark` | 核心与 GeoIP 三样本基准、启动检查及匹配画像 |
-| `just profile [file] [binary]` | pprof；默认 `baseline/cpu.out` 与 `baseline/kone.test` |
-| `just geoip-convert [参数]` | 转换本地 DB-IP 文件；完整参数见 GeoIP 说明，不会自动下载数据 |
-| `just build-all` | 构建七个发行目标及对应构建身份；ARMv7 使用 system，其余包含 mixed |
-| `just package-local` | 构建并生成本机平台安装包，不发布；会运行原生架构的版本校验 |
-| `just source-bundle` | 根据已生成的构建身份打包对应源码和依赖 |
-| `just docker-build` / `just docker-check` | 构建 `kone:ci` 镜像 / 无特权配置烟雾检查 |
-| `just windows-firewall-check` | Windows 上检查可选 LAN 防火墙规则 |
-| `just windows-firewall-update -Program ./dist/kone.exe` | 在已提权的 Windows 终端显式更新可选 LAN 防火墙规则 |
+```sh
+just package
+# 需要 mixed 的本机安装包时：
+just package mixed
+```
 
-开发机可通过环境变量选择单个交叉目标，例如 `GOOS=linux GOARCH=arm64 just build dist/kone-linux-arm64`；ARMv7 再设置 `GOARCH=arm GOARM=7`。构建成功不代表该架构已通过原生驱动、桌面或设备性能验收。
+本机 `just package` 只构建并在 `release-assets/` 生成匹配当前 OS/架构的归档、安装器和清单；`just package-all` 另外生成七个目标的便携包。两者均不运行生成的程序（包括 `-version`）、不解包临时安装，也不发布 Release。其他平台的原生安装器在对应平台 CI 中完成。
 
-基准不创建 TUN，不修改系统网络；[性能说明](performance.md) 区分核心合成负载与真实 TUN 采样。[GeoIP 说明](geoip.md) 记录数据来源、许可、摘要与转换参数。
+本地清单的 `native_version_checked=false`，保守标为实验、未验收。真实版本、解包和临时安装校验保留在 CI 的 `just ci package` 默认模式；生成本地包不表示已经取得这些验收证据。
 
-## CI 和发布任务
+Windows ZIP 随附按用户安装的 `install.ps1`，打包使用系统 Windows PowerShell 5.1，无需另装 `pwsh`。macOS 的未签名 `.pkg` 安装 CLI 和资源，并不是已签名、公证的 `.app`。菜单、助手和真实 TUN 已有 CI 验收；真实鼠标、权限弹窗、干净机器升级/卸载以及签名/公证仍需目标设备验收。见 [发布说明](releases.md)、[Windows](windows/README.md) 与 [macOS 权限](macos-helper.md)。
 
-原生 `ci-linux-build/tun/dns-tools/dns`、`ci-macos-build/tun/session`、`ci-windows-tun` 和 `ci-ss` 只用于临时 GitHub CI runner。入口检查 CI、平台及临时目录；Windows 另要求显式选择 system/mixed，并核对各自六个真实通过的叶子用例。不要在日常开发机设置 CI 标记来绕过这些边界。
+## CI 与高级维护
 
-`just package`、`just release-plan`、`just release-marker`、`just release-publish` 和 `just release-withdraw` 由发布工作流提供精确 SHA、版本、工件和权限。它们不会因为普通开发构建而自动发布；正式安装/升级与发布操作见 [发布说明](releases.md)。
+细分任务移入 `ci` 模块，不再作为日常顶层入口。需要重现某个明确的检查或维护操作时使用 `just ci <task>`，例如：
 
-PR 使用根 justfile。历史 `workflow_call` 将 `github.workflow_sha` 的任务工具检出到 `.ci-tools`，由 `JUST_JUSTFILE` 定位该根文件，`JUST_WORKING_DIRECTORY` 定位被测源目录；测试和应用发布脚本仍来自目标 SHA。11 个执行检查、覆盖率及原生恢复断言保持不变，见 [CI 分组](ci.md)。
+```sh
+just ci test-coverage
+just ci test-coverage .coverage-base ../coverage-base.out
+just ci coverage-check
+```
+
+第二条要求精确目标 SHA 已检出到 `.coverage-base`，输出路径相对于该被测模块；旧 base 不需要自带 justfile。测试与覆盖率不以缓存结果代替实际测量，KONE 全包语句覆盖率不得低于 PR base。
+
+前端浏览器、数据转换、画像分析、Windows 防火墙维护及发布编排的细分入口也通过 `just ci` 调用；这些高级命令不应成为每次构建的前置步骤。浏览器验收使用回环临时配置并保持接管暂停；涉及系统 TUN/DNS 的原生任务只允许临时 GitHub CI runner，不能在个人开发机伪造 CI 标记绕过检查。Windows 原生 system/mixed 各核对六个真实通过的叶子用例。
+
+历史 `workflow_call` 将 `github.workflow_sha` 的任务定义检出到 `.ci-tools`，由 `JUST_JUSTFILE` 定位该根文件，`JUST_WORKING_DIRECTORY` 定位被测源目录；应用源码、测试和发布脚本仍绑定目标 SHA。11 个 CI 执行检查及此前测量样本见 [CI 说明](ci.md)，发布操作见 [发行说明](releases.md)。
+
+产品安装后的 `kone` 启动、安装器、HTTP API、Docker Compose 与操作系统网络命令仍直接使用，不依赖开发 justfile。[架构](architecture.md) 解释核心链路，[验收索引](acceptance.md) 区分自动化证据与仍需真机验证的范围。

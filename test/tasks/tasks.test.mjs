@@ -80,35 +80,19 @@ test("the default task only lists help and does not build or enable capture", as
   const result = f.run([]);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Available recipes/);
-  assert.match(result.stdout, /test-coverage/);
-  assert.match(result.stdout, /release-plan/);
+  for (const name of ["init", "dev", "quality", "build", "build-all", "package", "package-all"])
+    assert.match(result.stdout, new RegExp(`^\\s+${name}(?:\\s|$)`, "m"));
+  assert.doesNotMatch(result.stdout, /test-coverage|release-plan|test-windows-package/);
   assert.deepEqual(await f.calls(), []);
 });
 
-test("build derives its development version from the selected source and uses the native executable name", async (t) => {
+test("the CI module lists its own tasks without running checks or enabling capture", async (t) => {
   const f = await fixture(t);
-  const result = f.run(["build"]);
+  const result = f.run(["ci"]);
   assert.equal(result.status, 0, result.stderr);
-  const calls = await f.calls();
-  assert.deepEqual(calls.map(call => call.argv), [[
-    "build", "-trimpath", "-ldflags=-X main.VERSION=0.4.0-dev.1234567890abcdef1234567890abcdef12345678",
-    "-o", process.platform === "win32" ? "dist/kone.exe" : "dist/kone", "./cmd/kone",
-  ]]);
-  assert.equal(resolve(calls[0].cwd), resolve(f.source));
-});
-
-test("mixed build preserves explicit version and an output path with spaces, and propagates compiler failure", async (t) => {
-  const f = await fixture(t);
-  const output = "artifacts with spaces/kone custom.exe";
-  const result = f.run(["build-mixed", output], { KONE_VERSION: "1.2.3+custom", KONE_FAKE_FAIL: "build" });
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /37/);
-  const calls = await f.calls();
-  assert.deepEqual(calls.map(call => call.argv), [[
-    "build", "-tags", "with_gvisor", "-trimpath", "-ldflags=-X main.VERSION=1.2.3+custom",
-    "-o", output, "./cmd/kone",
-  ]]);
-  assert.equal(resolve(calls[0].cwd), resolve(f.source));
+  assert.match(result.stdout, /test-coverage/);
+  assert.match(result.stdout, /release-plan/);
+  assert.deepEqual(await f.calls(), []);
 });
 
 test("coverage follows the selected source and preserves directory and output arguments containing spaces", async (t) => {
@@ -116,7 +100,7 @@ test("coverage follows the selected source and preserves directory and output ar
   const module = join(f.source, "module with spaces");
   const profile = join(f.directory, "coverage with spaces.out");
   await mkdir(module);
-  const result = f.run(["test-coverage", "module with spaces", profile]);
+  const result = f.run(["ci", "test-coverage", "module with spaces", profile]);
   assert.equal(result.status, 0, result.stderr);
   const calls = await f.calls();
   assert.equal(calls.length, 2);
@@ -133,7 +117,7 @@ test("coverage propagates go list and go test failures and rejects an empty pack
   for (const failure of ["list", "test", "empty"]) {
     await t.test(failure, async (t) => {
       const f = await fixture(t);
-      const result = f.run(["test-coverage"], failure === "empty"
+      const result = f.run(["ci", "test-coverage"], failure === "empty"
         ? { KONE_FAKE_EMPTY_LIST: "1" }
         : { KONE_FAKE_FAIL: failure });
       assert.notEqual(result.status, 0, result.stdout);
@@ -149,7 +133,7 @@ test("coverage comparison forwards paths as individual arguments and propagates 
   const f = await fixture(t);
   const base = "baseline with spaces.out";
   const head = "head with spaces.out";
-  const result = f.run(["coverage-check", base, head], { KONE_FAKE_FAIL: "run" });
+  const result = f.run(["ci", "coverage-check", base, head], { KONE_FAKE_FAIL: "run" });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /37/);
   const calls = await f.calls();
@@ -163,7 +147,7 @@ test("native CI tasks refuse local execution before invoking Go or system-networ
   for (const recipe of recipes) {
     await t.test(recipe, async (t) => {
       const f = await fixture(t);
-      const result = f.run([recipe]);
+      const result = f.run(["ci", recipe]);
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, /restricted to disposable GitHub Actions|only in disposable CI/);
       assert.deepEqual(await f.calls(), []);

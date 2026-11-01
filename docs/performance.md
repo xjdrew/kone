@@ -9,7 +9,7 @@ CI 的质量任务保留可复现性能基线，不设置未经校准的“最�
 - `environment.json`：精确提交、时间、OS/内核、CPU 型号、逻辑核数、内存、并发和数据来源。
 - `toolchain.txt`：Go 版本、GOOS、GOARCH、CGO 状态。
 - `core.txt`、`geoip.txt`：`ns/op`、`B/op`、`allocs/op` 与各基准声明的附加计数；并发固定为 1、2，`-benchtime=500ms -count=3`。
-- `profile.txt`、`cpu.out`、`memory.out`、`kone.test`：观察查询负载的输出、画像及匹配测试程序，可用 `just profile` 进入 pprof 分析。
+- `profile.txt`、`cpu.out`、`memory.out`、`kone.test`：观察查询负载的输出、画像及匹配测试程序，可用 `just ci profile` 进入 pprof 分析。
 - `geoip-startup.txt`：内置数据初始化的实际内存及一致性检查结果。
 
 ## 测量对象
@@ -41,9 +41,8 @@ Linux 原生生命周期任务还在独立网络命名空间中运行 `TestSyste
 在隔离开发/性能环境中运行，不需要创建 TUN 或修改系统网络：
 
 ```sh
-just benchmark-metadata
-just benchmark
-just profile baseline/cpu.out baseline/kone.test
+just quality benchmark
+just ci profile baseline/cpu.out baseline/kone.test
 ```
 
 任务从仓库根目录执行，依赖与完整入口见 [开发说明](development.md)。比较时保留原始样本、SHA、工具链和硬件信息，区分共享 runner 波动与稳定变化。容量满额时整体计数仍须正确，查询不能改变转发策略；这些是正确性约束，由回归测试验证，不能用较快的平均耗时替代。

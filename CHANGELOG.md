@@ -38,7 +38,8 @@
 ## Changes
 
 - Speed up CI while preserving platform and release validation.
-- Unify development, testing and build commands through just.
+- Simplify setup, development, checks, builds and packaging into a few just commands.
+- Keep local packaging limited to creating files without running or installing the program.
 
 # 2026/10/31
 

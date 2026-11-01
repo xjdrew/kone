@@ -15,11 +15,11 @@ WORKDIR /src
 COPY go.mod go.sum ./
 COPY justfile ./
 COPY scripts/ci/ ./scripts/ci/
-RUN just go-deps
+RUN just ci go-deps
 COPY . .
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
-RUN just build-container
+RUN just ci build-container
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates iproute2 \

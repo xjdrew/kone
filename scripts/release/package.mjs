@@ -16,21 +16,18 @@ import {
   assertVersion,
   safeName,
   validSHA,
-  targets,
 } from "./model.mjs";
 import { runWindowsScript } from "./windows-powershell.mjs";
+import { packagePlan } from "./targets.mjs";
+import { createPortableArchive } from "./portable.mjs";
 
 const input = resolve(process.env.RELEASE_INPUT || "release-input");
 const output = resolve(process.env.RELEASE_OUTPUT || "release-assets");
 const sha = validSHA(process.env.RELEASE_SHA);
 const version = safeName(process.env.RELEASE_VERSION);
 const platform = process.platform;
-const architecture = { x64: "amd64", arm64: "arm64" }[process.arch];
-const selected = targets.filter((target) =>
-  target.startsWith(`${platform === "win32" ? "windows" : platform}-`),
-);
-if (!selected.length || !architecture)
-  throw new Error("Unsupported packaging runner");
+const plan = packagePlan(process.argv.slice(2));
+const selected = plan.targets;
 const build = JSON.parse(
   await readFile(join(input, "build-info.json"), "utf8"),
 );
@@ -43,6 +40,7 @@ const scratch = await mkdtemp(join(tmpdir(), "kone-package-"));
 const assets = [];
 try {
   for (const target of selected) {
+    const targetOS = target.split("-")[0];
     const metadata = build.binaries.find((binary) => binary.target === target);
     if (
       !metadata ||
@@ -52,9 +50,11 @@ try {
     )
       throw new Error(`Binary integrity failed: ${target}`);
     const binary = join(input, metadata.name);
-    if (platform !== "win32") await chmod(binary, 0o755);
-    const native = target.endsWith(`-${architecture}`);
-    if (native)
+    const native = target === plan.native;
+    const nativeChecked = native && plan.mode === "ci";
+    const installer = plan.installers.includes(target);
+    if (nativeChecked && platform !== "win32") await chmod(binary, 0o755);
+    if (nativeChecked)
       assertVersion(
         execFileSync(binary, ["-version"], {
           encoding: "utf8",
@@ -65,7 +65,7 @@ try {
     const base = `kone-${version}-${target}`;
     const stage = join(scratch, base);
     await mkdir(stage);
-    await cp(binary, join(stage, platform === "win32" ? "kone.exe" : "kone"));
+    await cp(binary, join(stage, targetOS === "windows" ? "kone.exe" : "kone"));
     for (const filename of [
       "LICENSE",
       "LICENSE-MIT",
@@ -76,37 +76,28 @@ try {
         recursive: true,
       });
     await cp(
-      platform === "win32"
+      targetOS === "windows"
         ? "scripts/release/install.ps1"
         : "scripts/release/install.sh",
-      join(stage, platform === "win32" ? "install.ps1" : "install.sh"),
+      join(stage, targetOS === "windows" ? "install.ps1" : "install.sh"),
     );
     await writeFile(
       join(stage, "README.txt"),
-      `KONE ${version}\nCommit: ${sha}\n\nRun kone${platform === "win32" ? ".exe" : ""} without arguments to open local management with capture paused.\nPortable installer copies files only; no autostart, firewall, routes, DNS or certificate trust changes.\nTUN capture requires host privileges and explicit enablement after preflight.\nSettings live separately in the user configuration directory; back them up before upgrading or rolling back.\nThis package is unsigned${platform === "darwin" ? " and not notarized" : ""}. Verify SHA256SUMS before use.\n${native ? "The packaged executable passed -version on this architecture; required CI validates driver/lifecycle separately." : "Cross-compiled architecture: runtime and driver behavior require hardware acceptance; treat as experimental."}\nLinux ARMv7 uses only the system stack. Other targets include optional mixed-stack support.\nCorresponding source, vendored dependencies and licenses are included in this release.\n`,
+      `KONE ${version}\nCommit: ${sha}\n\nRun kone${targetOS === "windows" ? ".exe" : ""} without arguments to open local management with capture paused.\nPortable installer copies files only; no autostart, firewall, routes, DNS or certificate trust changes.\nTUN capture requires host privileges and explicit enablement after preflight.\nSettings live separately in the user configuration directory; back them up before upgrading or rolling back.\nThis package is unsigned${targetOS === "darwin" ? " and not notarized" : ""}. Verify SHA256SUMS before use.\n${nativeChecked ? "The packaged executable passed -version on this architecture; required CI validates driver/lifecycle separately." : "This package was built without executing or installing its executable. Runtime and driver behavior require separate acceptance; treat as experimental."}\nIncluded stacks: ${metadata.stack}.\nCorresponding source, vendored dependencies and licenses are included in this release.\n`,
     );
     const record = async (filename) =>
       assets.push({
         name: filename,
         sha256: await hashFile(join(output, filename)),
         target,
-        native_version_checked: native,
+        native_version_checked: nativeChecked,
         signed: false,
-        experimental: !native,
+        experimental: !nativeChecked,
       });
-    if (platform === "win32") {
+    if (targetOS === "windows") {
       const archive = `${base}.zip`;
-      runWindowsScript(
-        "scripts/release/zip.ps1",
-        [
-          "-Source",
-          stage,
-          "-Destination",
-          join(output, archive),
-        ],
-        { stdio: "inherit" },
-      );
-      if (native) {
+      await createPortableArchive({ stage, base, destination: join(output, archive), unix: false });
+      if (nativeChecked) {
         const extracted = join(scratch, `${base}-extracted`);
         const installed = join(scratch, `${base}-installed`);
         runWindowsScript(
@@ -140,13 +131,9 @@ try {
       await chmod(join(stage, "kone"), 0o755);
       await chmod(join(stage, "install.sh"), 0o755);
       const archive = `${base}.tar.gz`;
-      execFileSync(
-        "tar",
-        ["-czf", join(output, archive), "-C", scratch, base],
-        { stdio: "inherit" },
-      );
+      await createPortableArchive({ stage, base, destination: join(output, archive), unix: true });
       await record(archive);
-      if (native) {
+      if (nativeChecked) {
         const extracted = join(scratch, `${base}-extracted`);
         const installed = join(scratch, `${base}-installed`);
         await mkdir(extracted);
@@ -164,17 +151,18 @@ try {
           version,
         );
       }
+      if (!installer) continue;
       const packageRoot = join(scratch, `${base}-root`);
       const executableDir = join(
         packageRoot,
-        platform === "linux" ? "usr/bin" : "usr/local/bin",
+        targetOS === "linux" ? "usr/bin" : "usr/local/bin",
       );
       await mkdir(executableDir, { recursive: true });
       await cp(join(stage, "kone"), join(executableDir, "kone"));
       await chmod(join(executableDir, "kone"), 0o755);
       const docs = join(
         packageRoot,
-        platform === "linux" ? "usr/share/doc/kone" : "usr/local/share/kone",
+        targetOS === "linux" ? "usr/share/doc/kone" : "usr/local/share/kone",
       );
       await mkdir(docs, { recursive: true });
       for (const name of [
@@ -185,7 +173,7 @@ try {
         "README.txt",
       ])
         await cp(join(stage, name), join(docs, name), { recursive: true });
-      if (platform === "linux") {
+      if (targetOS === "linux") {
         const deb = `${base}.deb`;
         await mkdir(join(packageRoot, "DEBIAN"));
         await writeFile(
@@ -198,7 +186,7 @@ try {
           { stdio: "inherit" },
         );
         await record(deb);
-        if (native) {
+        if (nativeChecked) {
           const extracted = join(scratch, `${base}-deb-extracted`);
           execFileSync(
             "dpkg-deb",
@@ -231,7 +219,7 @@ try {
           { stdio: "inherit" },
         );
         await record(pkg);
-        if (native) {
+        if (nativeChecked) {
           const extracted = join(scratch, `${base}-pkg-extracted`);
           execFileSync(
             "pkgutil",

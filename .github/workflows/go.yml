@@ -60,21 +60,21 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: just web-deps
-      - run: just test-web
+      - run: just ci web-deps
+      - run: just ci test-web
       - name: Test release identity, batched commits and safety guards
-        run: just test-release
+        run: just ci test-release
       - name: Verify GeoIP conversion boundaries and provenance
-        run: just test-data
-      - run: just web-build
+        run: just ci test-data
+      - run: just ci web-build
       - name: Verify embedded assets match frontend sources
-        run: just web-check
+        run: just ci web-check
       - name: Build genuine management browser fixture
         working-directory: .
-        run: just ci-web-fixture
-      - run: just web-browsers
+        run: just ci ci-web-fixture
+      - run: just ci web-browsers
       - name: Test browser journeys with real management and enforce execution
-        run: just test-web-e2e
+        run: just ci test-web-e2e
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -113,22 +113,22 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Verify module checksums
-        run: just go-verify
+        run: just ci go-verify
       - name: Vet
-        run: just vet
+        run: just ci vet
       - name: Test with race detector
-        run: just test-coverage
+        run: just ci test-coverage
       - name: Test optional mixed stack
-        run: just test-mixed
+        run: just ci test-mixed
       - name: Regress upstream PE loader pointer bounds
         if: ${{ matrix.os == 'windows-latest' }}
-        run: just test-pe
+        run: just ci test-pe
       - name: Regress Windows packaging without PowerShell 7
         if: ${{ matrix.os == 'windows-latest' }}
-        run: just test-windows-package
+        run: just ci test-windows-package
       - name: Validate macOS AppKit and private helper boundaries
         if: matrix.os == 'macos-latest'
-        run: just test-macos-desktop
+        run: just ci test-macos-desktop
       - name: Check out exact PR base for coverage
         if: ${{ matrix.os == 'windows-latest' && github.event_name == 'pull_request' }}
         uses: actions/checkout@v7.0.1
@@ -139,10 +139,10 @@ jobs:
           persist-credentials: false
       - name: Measure fresh base with the same toolchain and flags
         if: ${{ matrix.os == 'windows-latest' && github.event_name == 'pull_request' }}
-        run: just test-coverage .coverage-base ../coverage-base.out
+        run: just ci test-coverage .coverage-base ../coverage-base.out
       - name: Reject coverage regression
         if: ${{ matrix.os == 'windows-latest' && github.event_name == 'pull_request' }}
-        run: just coverage-check
+        run: just ci coverage-check
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() && matrix.os == 'windows-latest' && github.event_name == 'pull_request' }}
         with:
@@ -153,13 +153,13 @@ jobs:
             coverage.out
       - name: Build native utun acceptance binary
         if: ${{ !cancelled() && matrix.os == 'macos-latest' }}
-        run: just ci-macos-build
+        run: just ci ci-macos-build
       - name: Exercise owned utun and temporary system DNS lifecycle
         if: ${{ !cancelled() && matrix.os == 'macos-latest' }}
-        run: just ci-macos-tun
+        run: just ci ci-macos-tun
       - name: Verify configd removes a dead owned DNS session automatically
         if: ${{ !cancelled() && matrix.os == 'macos-latest' }}
-        run: just ci-macos-session
+        run: just ci ci-macos-session
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -194,20 +194,21 @@ jobs:
             .github/workflows/go.yml
             scripts/release/build-info.mjs
             justfile
+            scripts/ci/justfile
             scripts/ci/build-all.sh
       - name: Cross compile
         env:
           CGO_ENABLED: '0'
           KONE_VERSION: ${{ inputs.version || format('0.4.0-dev.{0}', github.sha) }}
-        run: just build-all
+        run: just ci build-all
       - name: Bundle corresponding source and dependency notices
-        run: just source-bundle
+        run: just ci source-bundle
       - name: Package and validate Linux installation in a temporary prefix
         env:
           RELEASE_INPUT: dist
           RELEASE_SHA: ${{ inputs.ref || github.sha }}
           RELEASE_VERSION: ${{ inputs.version || format('0.4.0-dev.{0}', github.sha) }}
-        run: just package
+        run: just ci package
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}install-packages-ubuntu-latest
@@ -250,7 +251,7 @@ jobs:
         env:
           RELEASE_SHA: ${{ inputs.ref || github.sha }}
           RELEASE_VERSION: ${{ inputs.version || format('0.4.0-dev.{0}', github.sha) }}
-        run: just package
+        run: just ci package
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}install-packages-${{ matrix.os }}
@@ -284,19 +285,20 @@ jobs:
             .github/workflows/go.yml
             pkg/kone/core_benchmark_test.go
             justfile
+            scripts/ci/justfile
             scripts/ci/benchmark.sh
       - name: Check formatting and module files
-        run: just quality-check
-      - run: just fuzz
+        run: just ci quality-check
+      - run: just ci fuzz
       - name: Check reachable dependency vulnerabilities
         if: ${{ !cancelled() }}
-        run: just vuln
+        run: just ci vuln
       - name: Record hardware, toolchain and benchmark inputs
         if: ${{ !cancelled() }}
-        run: just benchmark-metadata
+        run: just ci benchmark-metadata
       - name: Measure stack-independent algorithms and retain matching profiles
         if: ${{ !cancelled() }}
-        run: just benchmark
+        run: just ci benchmark
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -326,9 +328,9 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build system tests and CLI
-        run: just ci-linux-build
+        run: just ci ci-linux-build
       - name: Test real TUN in isolated network namespace
-        run: just ci-linux-tun
+        run: just ci ci-linux-tun
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
@@ -339,13 +341,13 @@ jobs:
 
       - name: Verify isolated resolver tools are available
         if: ${{ !cancelled() }}
-        run: just ci-linux-dns-tools
+        run: just ci ci-linux-dns-tools
       - name: Exercise OS DNS in private mount, network and D-Bus contexts
         if: ${{ !cancelled() }}
-        run: just ci-linux-dns
+        run: just ci ci-linux-dns
       - name: Test digest-pinned shadowsocks-rust over isolated loopback
         if: ${{ !cancelled() }}
-        run: just ci-ss
+        run: just ci ci-ss
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -360,10 +362,10 @@ jobs:
       - name: Build container from source
         id: container-build
         if: ${{ !cancelled() }}
-        run: just docker-build
+        run: just ci docker-build
       - name: Validate container configuration without privileges
         if: ${{ !cancelled() && steps.container-build.outcome == 'success' }}
-        run: just docker-check
+        run: just ci docker-check
   windows-system:
     name: Windows Wintun (${{ matrix.stack }})
     strategy:
@@ -395,7 +397,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Exercise the selected stack and require all six native cases
-        run: just ci-windows-tun
+        run: just ci ci-windows-tun
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -426,7 +428,7 @@ jobs:
         env:
           RELEASE_SHA: ${{ inputs.ref }}
           RELEASE_VERSION: ${{ inputs.version }}
-        run: just release-marker
+        run: just ci release-marker
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}verification
