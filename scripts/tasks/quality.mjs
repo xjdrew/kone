@@ -15,7 +15,7 @@ export async function quality(ctx, mode = "quick") {
         throw new Error("Run just quality fmt to format Go sources");
       ci("vet");
       ctx.log("[2/3] Running cached Go unit tests (without race)…");
-      ctx.run("go", ["test", "-vet=off", "./cmd/...", "./pkg/...", "./web/..."]);
+      ctx.run("go", ["test", "-tags", "with_gvisor", "-vet=off", "./cmd/...", "./pkg/...", "./web/..."]);
       ctx.log("[3/3] Running Web unit tests…");
       ci("test-web");
       break;
@@ -23,7 +23,7 @@ export async function quality(ctx, mode = "quick") {
       ctx.log("Running the full portable suite; privileged network acceptance runs in CI only.");
       await ensureWebDependencies(ctx);
       await ensureFrontend(ctx);
-      ci("quality-check", "go-verify", "vet", "test-coverage", "test-mixed", "test-web", "test-release", "test-data", "fuzz", "vuln");
+      ci("quality-check", "go-verify", "vet", "test-coverage", "test-web", "test-release", "test-data", "fuzz", "vuln");
       ci("web-browsers", "test-web-e2e");
       break;
     case "fmt":

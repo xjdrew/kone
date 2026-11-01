@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+node "$KONE_TASK_ROOT/scripts/release/pr-title.mjs"
 just --fmt --check
 just --justfile "$KONE_TASK_ROOT/scripts/ci/justfile" --fmt --check
 unformatted="$(gofmt -l cmd pkg test web/embed.go)"

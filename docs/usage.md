@@ -8,11 +8,13 @@ Download a platform package from [Releases](https://github.com/xjdrew/kone/relea
 
 | Platform | Available packages |
 | --- | --- |
-| Linux amd64, arm64, ARMv7 | Portable archive and `.deb` |
-| macOS amd64, arm64 | Portable archive and unsigned `.pkg` |
+| Linux amd64, arm64 | `.deb` |
+| macOS amd64, arm64 | Unsigned `.pkg` |
 | Windows amd64, arm64 | Portable ZIP with a per-user `install.ps1` |
 
 Packages are unsigned, and macOS packages are not notarized. The macOS package includes `Kone.app` and the `kone-cli` console entrypoint. Platform security and application-control policies still apply. An architecture being cross-compiled does not prove its driver, desktop or installation behavior on real hardware. See [release verification and native coverage](releases.md).
+
+Published releases contain these six platform/architecture targets. A 64-bit Raspberry Pi can use Linux arm64; 32-bit gateways remain supported through an explicit source build with `just build-all --include-armv7` or local packaging with `just package-all --include-armv7`. Local `package-all` also retains portable archives for review; those extra archives are not the published package set.
 
 Locally generated packages are experimental and unverified: packaging only creates files and does not run or temporarily install the executable. Published release evidence separately records the checks actually performed in CI.
 
@@ -73,7 +75,7 @@ Existing managed profiles automatically retire this obsolete option while preser
 - Full capture follows routing rules and existing more-specific system routes. Set `core.outbound-interface` to the real physical exit so proxy transports, direct traffic and upstream DNS avoid recapture. Network changes pause capture for a new preflight.
 - IPv6 is optional and disabled by default. Linux and Windows support explicit ULA virtual addresses, AAAA, IPv6 rules and capture; macOS activation is rejected. See [IPv6 configuration](ipv6.md). Gateway IPv4 support does not imply LAN IPv6 is automatically configured.
 - HTTP/HTTPS CONNECT support TCP. SOCKS5 and supported Shadowsocks AEAD2017 outbounds support TCP and native UDP. UDP follows direct/reject rules; unsupported proxy UDP is denied unless an explicit fallback is configured. Shadowsocks plugins, legacy stream ciphers and AEAD-2022 are outside the supported range.
-- `core.stack` selects `system` or `mixed`. Mixed requires a build that includes `with_gvisor`; changing the stack does not add proxy protocol capabilities. Arbitrary fragmentation is not a compatibility guarantee. See [stack selection](configuration.md#tun-backend-and-stack).
+- Every package includes `system`, `gvisor` and `mixed`; `core.stack` selects the mode at runtime and defaults to `system`. Changing the stack requires pausing and restarting capture and does not add proxy protocol capabilities. Arbitrary fragmentation is not a compatibility guarantee. See [stack selection](configuration.md#tun-backend-and-stack).
 - Built-in country data is DB-IP Country Lite October 2026 IPv4, with verified local imports and previous-version recovery. IPv6 country lookup is outside this dataset. See [GeoIP data and attribution](geoip.md).
 - Optional system DNS guidance uses a Linux systemd-resolved link or a macOS temporary resolver. Windows system DNS guidance is not enabled by this option. See [system DNS setup](system-dns.md) and [private resolver context](dns-context.md).
 

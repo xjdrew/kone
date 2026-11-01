@@ -20,6 +20,7 @@ writeFileSync(
       concurrency: [1, 2],
       samples: 3,
       benchtime: "500ms",
+      build_tags: ["with_gvisor"],
       datasets: "deterministic fixtures in benchmark source at this SHA",
       network: "stack-independent core fixtures; actual TUN is sampled separately",
     },

@@ -23,8 +23,8 @@
 
 ## sing-tun 边界
 
-生产数据面只使用 sing-tun 的 system 或 mixed 栈；KONE 负责设备/配置/路由所有权、出站连接和生命周期。使用外部配置模式，避免 sing-tun 自动路由与 KONE 的逆操作相互覆盖。旧报文分发、NAT、relay API 与兼容端口配置已移除。
-所有 stack 读包经过故障上报适配器，终止性读写错误会交给 Run 退出；正常关闭的读错误不会重复报告。清理会停止接收新流、取消拨号、关闭活动 TCP/UDP、关闭 stack、逆序恢复网络并关闭设备，最后等待已进入的 I/O 和处理任务。
+生产数据面使用固定 sing-tun 的 system、gvisor 或 mixed 栈，同一程序同时包含三种模式，`core.stack` 默认 system；切换需要暂停后重新启用接管。KONE 负责设备/配置/路由所有权、出站连接和生命周期。使用外部配置模式，避免 sing-tun 自动路由与 KONE 的逆操作相互覆盖。旧报文分发、NAT、relay API 与兼容端口配置已移除。
+所有 stack 读包经过故障上报适配器，完整 gvisor 使用有界 channel endpoint 保留同一监督路径；终止性读写错误会交给 Run 退出，正常关闭的读错误不会重复报告。清理会停止接收新流、取消拨号、关闭活动 TCP/UDP、关闭 stack、逆序恢复网络并关闭设备，最后等待已进入的 I/O 和处理任务。
 打开失败时检查普通 nil 和接口中携带的 typed nil，保留原始驱动错误；有效的部分资源仍被清理。system forwarder 的保留地址不参与 Fake-IP 分配。
 full capture 添加两条半网 IPv4 路由；真实出口接口绑定应用到代理、直连和 DNS，并跨规则热更新保持不变。Windows 使用 on-link 路由，而不是旧 TAP 的虚拟下一跳。
 
@@ -47,7 +47,7 @@ Windows 托盘和 macOS 原生菜单复用控制层状态与动作，关闭浏�
 - 普通单元测试：端口占用、部分配置/路由失败、启动中取消、组件读失败、并发关闭、清理错误、快照一致性、DNS/HTTP/HTTPS/SOCKS5 挂起请求的取消。
 - 三平台 race：并发 reload、DNS、管理统计/页面与生命周期。
 - `test/integration/lifecycle_linux_test.go`：通过隔离网络命名空间测试真实 TUN、已有路由保护、路由部分成功后的回滚、DNS→TUN→代理 HTTP 流量、代理热更新和 CLI SIGTERM。
-- 网关验收使用独立 LAN 客户端和上游命名空间，覆盖 Fake-IP/literal TCP、UDP、REJECT、全局捕获、物理出口绕过和默认路由恢复；system/mixed 分别运行。
-- Windows 配置恢复与防火墙所有权使用注入命令的测试覆盖，并在 CI 执行真实 Wintun 启动、端口占用回滚和退出验收；macOS 特权验收仍需另行执行。
+- 网关验收使用独立 LAN 客户端和上游命名空间，覆盖 Fake-IP/literal TCP、UDP、REJECT、全局捕获、物理出口绕过和默认路由恢复；system/gvisor/mixed 分别运行。
+- Windows 配置恢复与防火墙所有权使用注入命令的测试覆盖，并在 CI 执行真实 Wintun 启动、端口占用回滚和退出验收；完整 gvisor 不创建系统 TCP 监听的防火墙例外。macOS CI 验证真实 UTUN 和临时系统 DNS 生命周期，真实桌面授权窗口与部署环境仍需单独验收。
 
 `WithNetwork` 与 `WithSockets` 提供可注入的系统边界，供嵌入使用和无特权故障测试；生产 CLI 没有测试专用开关。

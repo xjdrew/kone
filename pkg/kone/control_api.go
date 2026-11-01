@@ -6,17 +6,7 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
-
-	singtun "github.com/sagernet/sing-tun"
 )
-
-// SupportedStacks reports compile-time capabilities without opening a device.
-func SupportedStacks() []string {
-	if singtun.WithGVisor {
-		return []string{"system", "mixed"}
-	}
-	return []string{"system"}
-}
 
 // DialDiagnostic uses exactly the engine's outbound binding and DNS policy.
 // It creates no TUN, route or adapter changes and never replays an application request.

@@ -8,20 +8,26 @@ import {
   latestVerificationAttempt,
   validSHA,
   verifyMarker,
+  targets,
 } from "./model.mjs";
 import { entryDefinitions } from "./targets.mjs";
+import { versionContext, assertVersionContext } from "./version-policy.mjs";
+import { assertExistingRelease, historicalPackages, historicalTargets } from "./integrity.mjs";
+
+const stable = process.env.RELEASE_STABLE === "true";
+const tag = process.env.RELEASE_TAG;
 
 if (
   process.env.GITHUB_ACTIONS !== "true" ||
-  process.env.GITHUB_REF !== "refs/heads/master" ||
+  (process.env.GITHUB_REF !== "refs/heads/master" && !(stable && process.env.GITHUB_REF === `refs/tags/${tag}`)) ||
   process.env.GITHUB_EVENT_NAME === "pull_request"
 )
-  throw new Error("Publishing is allowed only in the master release workflow");
+  throw new Error("Publishing is allowed only in the verified master/stable-tag release workflow");
 const sha = validSHA(process.env.RELEASE_SHA);
 const version = process.env.RELEASE_VERSION;
-const tag = process.env.RELEASE_TAG;
-const stable = process.env.RELEASE_STABLE === "true";
-if (releaseTag(sha, stable ? tag : "") !== tag)
+const context = process.env.RELEASE_CONTEXT ? JSON.parse(process.env.RELEASE_CONTEXT) : versionContext({ sha });
+assertVersionContext(context, { sha, version, tag, stable });
+if (releaseTag(sha, stable ? tag : "", context) !== tag)
   throw new Error("Release tag does not match the verified commit/channel");
 const input = resolve("release-input");
 const output = resolve("release-assets");
@@ -98,29 +104,9 @@ if (existing && !existing.isDraft) {
   const asset = existing.assets.find((asset) => asset.name === "release.json");
   if (!asset)
     throw new Error("Existing public release has no verifiable manifest");
-  const prior = JSON.parse(
-    gh("api", asset.apiUrl, "-H", "Accept: application/octet-stream"),
-  );
-  if (
-    prior.sha !== sha ||
-    prior.version !== version ||
-    prior.tag !== tag ||
-    prior.verified !== true ||
-    !existing.assets.some((asset) => asset.name === "SHA256SUMS")
-  )
-    throw new Error(
-      "Existing public release does not match the verified build",
-    );
-  for (const item of prior.assets || [])
-    if (
-      !existing.assets.some(
-        (asset) =>
-          asset.name === item.name && asset.digest === `sha256:${item.sha256}`,
-      )
-    )
-      throw new Error(
-        "Published asset integrity no longer matches its manifest",
-      );
+  const manifestText = execFileSync("gh", ["api", asset.apiUrl, "-H", "Accept: application/octet-stream"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  const prior = JSON.parse(manifestText);
+  assertExistingRelease(existing, prior, { sha, version, tag, manifestText });
   console.log(`Already published and unchanged: ${existing.url}`);
   process.exit(0);
 }
@@ -141,11 +127,23 @@ if (build.sha !== sha || build.version !== version)
     "Binary/source build identity does not match CI verification",
   );
 const records = [];
+let historical = false;
+try { execFileSync("git", ["cat-file", "-e", `${sha}:scripts/release/version-policy.mjs`], { stdio: "pipe" }); }
+catch { historical = true; }
+const releaseTargets = historical ? historicalTargets : targets;
+if (!Array.isArray(build.binaries) || build.binaries.length !== releaseTargets.length || new Set(build.binaries.map(binary => binary.target)).size !== releaseTargets.length || releaseTargets.some(target => !build.binaries.some(binary => binary.target === target)))
+  throw new Error("Build metadata target set does not match this source release contract");
+let desktopSource = false;
+try { execFileSync("git", ["cat-file", "-e", `${sha}:cmd/kone-cli/main.go`], { stdio: "pipe" }); desktopSource = true; } catch { /* Older sources have one console entry. */ }
 for (const binary of build.binaries || []) {
-  const expected = entryDefinitions(binary.target);
+  if (await hashFile(join(input, binary.name)) !== binary.sha256) throw new Error("Primary binary checksum mismatch");
+  if (historical && !desktopSource) continue;
+  const expected = binary.target === "linux-armv7" ? [{ role: "cli", name: "kone-linux-armv7" }] : entryDefinitions(binary.target);
   if (!Array.isArray(binary.entries) || binary.entries.length !== expected.length || expected.some(entry =>
     !binary.entries.some(value => value.role === entry.role && value.name === entry.name && /^[a-f0-9]{64}$/.test(value.sha256))))
     throw new Error("Build metadata is missing executable roles");
+  for (const entry of binary.entries)
+    if (await hashFile(join(input, entry.name)) !== entry.sha256) throw new Error("Executable role checksum mismatch");
 }
 for (const platform of ["linux", "darwin", "win32"]) {
   const value = JSON.parse(
@@ -164,7 +162,7 @@ for (const record of records) {
   if (!binary || !record.name.startsWith(`kone-${version}-${record.target}.`) || JSON.stringify(record.entries) !== JSON.stringify(binary.entries))
     throw new Error("Package executable roles do not match verified build metadata");
 }
-const expected = expectedPackages(version);
+const expected = historical ? historicalPackages(version) : expectedPackages(version);
 if (
   records.length !== expected.length ||
   new Set(records.map((record) => record.name)).size !== expected.length ||
@@ -176,7 +174,7 @@ if (
 for (const record of records)
   if ((await hashFile(join(output, record.name))) !== record.sha256)
     throw new Error(`Package checksum mismatch: ${record.name}`);
-for (const filename of ["kone-source.tar.gz", "build-info.json"]) {
+for (const filename of historical ? ["kone-source.tar.gz", "build-info.json"] : ["kone-source.tar.gz"]) {
   await cp(join(input, filename), join(output, filename));
   records.push({
     name: filename,
@@ -198,6 +196,8 @@ const manifest = {
   ci_run_attempt: String(marker.run_attempt),
   ci_url: marker.ci_url,
   verification: marker,
+  version_context: context,
+  build,
   assets: records,
 };
 await writeFile(
@@ -216,7 +216,10 @@ await writeFile(
   checksums.map((record) => `${record.sha256}  ${record.name}`).join("\n") +
     "\n",
 );
-const notes = `Automated KONE release\nSHA: ${sha}\nVersion: ${version}\n\n${stable ? "Stable promotion of a previously verified master SHA; this exact version was rebuilt and passed all required gates." : "Development prerelease. This exact master commit passed the required CI gates independently."}\n\nCI evidence: ${marker.ci_url}\n\nVerify SHA256SUMS and read release.json before installation. Linux archives/.deb, macOS archives/unsigned .pkg, and Windows portable .zip with a per-user install script are included. Packages never enable capture or change firewall/certificate trust during installation. All packages are unsigned; macOS packages are not notarized. Cross-compiled architectures without native version checks are experimental (see release.json); real Raspberry Pi and ARM64 driver acceptance remains deployment-specific.\n\nThe matching source archive includes vendored Go dependencies, frontend sources/assets and component licenses. Back up your user profile before upgrade or rollback; pause capture, replace the executable with a verified older release, then explicitly restart management. Never run two versions against one profile simultaneously. Configuration import/default restoration is explicit and does not silently enable capture.\n`;
+const packageDescription = historical
+  ? "Linux archives/.deb, macOS archives/unsigned .pkg, and Windows portable .zip with a per-user install script are included."
+  : "Six application packages are included: Linux .deb, unsigned macOS .pkg, and Windows portable .zip, each for amd64 and arm64.";
+const notes = `Automated KONE release\nSHA: ${sha}\nVersion: ${version}\n\n${stable ? "Stable promotion of a previously verified master SHA; this exact version was rebuilt and passed all required gates." : "Development prerelease. This exact master commit passed the required CI gates independently."}\n\nCI evidence: ${marker.ci_url}\n\nVerify SHA256SUMS and read release.json before installation. ${packageDescription} Packages never enable capture or change firewall/certificate trust during installation. All packages are unsigned; macOS packages are not notarized. Cross-compiled architectures without native version checks are experimental (see release.json); real Raspberry Pi and ARM64 driver acceptance remains deployment-specific.\n\nThe matching source archive includes vendored Go dependencies, frontend sources/assets and component licenses. Back up your user profile before upgrade or rollback; pause capture, replace the executable with a verified older release, then explicitly restart management. Never run two versions against one profile simultaneously. Configuration import/default restoration is explicit and does not silently enable capture.\n`;
 await mkdir("release-notes", { recursive: true });
 await writeFile("release-notes/body.md", notes);
 if (!existing) {

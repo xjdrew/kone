@@ -25,13 +25,13 @@ import { createMacApplication, verifyMacApplication, verifyWindowsRole } from ".
 const input = resolve(process.env.RELEASE_INPUT || "release-input");
 const output = resolve(process.env.RELEASE_OUTPUT || "release-assets");
 const sha = validSHA(process.env.RELEASE_SHA);
-const version = safeName(process.env.RELEASE_VERSION);
 const platform = process.platform;
 const plan = packagePlan(process.argv.slice(2));
 const selected = plan.targets;
 const build = JSON.parse(
   await readFile(join(input, "build-info.json"), "utf8"),
 );
+const version = safeName(process.env.RELEASE_VERSION || build.version);
 if (build.sha !== sha || build.version !== version)
   throw new Error(
     "Build manifest does not match exact verified source/version",
@@ -155,27 +155,29 @@ try {
       await chmod(join(stage, targetOS === "darwin" ? "Kone.app/Contents/MacOS/kone" : "kone"), 0o755);
       if (targetOS === "darwin") await chmod(join(stage, "bin/kone-cli"), 0o755);
       await chmod(join(stage, "install.sh"), 0o755);
-      const archive = `${base}.tar.gz`;
-      await createPortableArchive({ stage, base, destination: join(output, archive), unix: true });
-      await record(archive);
-      if (nativeChecked) {
-        const extracted = join(scratch, `${base}-extracted`);
-        const installed = join(scratch, `${base}-installed`);
-        await mkdir(extracted);
-        execFileSync("tar", ["-xzf", join(output, archive), "-C", extracted], {
-          stdio: "inherit",
-        });
-        execFileSync("sh", [join(extracted, base, "install.sh"), installed], {
-          stdio: "inherit",
-        });
-        assertVersion(
-          execFileSync(join(installed, targetOS === "darwin" ? "bin/kone-cli" : "bin/kone"), ["-version"], {
-            encoding: "utf8",
-            timeout: 15000,
-          }),
-          version,
-        );
-        if (targetOS === "darwin") await verifyMacApplication(join(installed, "Applications/Kone.app"), { version, sha, binarySHA: metadata.sha256, iconSHA: metadata.icon.sha256 });
+      if (plan.portables.includes(target)) {
+        const archive = `${base}.tar.gz`;
+        await createPortableArchive({ stage, base, destination: join(output, archive), unix: true });
+        await record(archive);
+        if (nativeChecked) {
+          const extracted = join(scratch, `${base}-extracted`);
+          const installed = join(scratch, `${base}-installed`);
+          await mkdir(extracted);
+          execFileSync("tar", ["-xzf", join(output, archive), "-C", extracted], {
+            stdio: "inherit",
+          });
+          execFileSync("sh", [join(extracted, base, "install.sh"), installed], {
+            stdio: "inherit",
+          });
+          assertVersion(
+            execFileSync(join(installed, targetOS === "darwin" ? "bin/kone-cli" : "bin/kone"), ["-version"], {
+              encoding: "utf8",
+              timeout: 15000,
+            }),
+            version,
+          );
+          if (targetOS === "darwin") await verifyMacApplication(join(installed, "Applications/Kone.app"), { version, sha, binarySHA: metadata.sha256, iconSHA: metadata.icon.sha256 });
+        }
       }
       if (!installer) continue;
       const packageRoot = join(scratch, `${base}-root`);

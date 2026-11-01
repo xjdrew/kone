@@ -13,7 +13,7 @@ just build
 cp configs/kone.example.toml config.toml
 ```
 
-也可以在开发机执行 `just build-all`，选择生成的 `dist/kone-linux-arm64` 或 `dist/kone-linux-armv7`。ARMv7 使用默认 system 栈，arm64 发行目标包含 mixed 支持；本机 `just build` 只编译本机 OS/架构。使用发行包时无需安装开发工具，下面的配置和运行命令直接操作 KONE。
+64 位 Raspberry Pi 系统使用 Linux arm64 发布包，或在开发机执行 `just build-all` 后选择 `dist/kone-linux-arm64`。32 位系统使用 `just build-all --include-armv7` 显式追加 `dist/kone-linux-armv7`；需要本地便携包时使用 `just package-all --include-armv7`，ARMv7 不在默认公开发布目标中。两个架构均包含 system/gvisor/mixed，运行时 `core.stack` 默认 system；本机 `just build` 只编译本机 OS/架构。使用发行包时无需安装开发工具，下面的配置和运行命令直接操作 KONE。
 
 编辑上游代理与规则，确认 `core.network` 不与现有 LAN/VPN 冲突。
 显式设置可达的上游 DNS，避免把已转到 KONE 的路由器 DNS 再作为它自己的上游。
@@ -78,5 +78,5 @@ UDP 命中 `direct` 时直连，命中 `reject` 时拒绝；SOCKS5 和支持的 
 
 ## 验收
 
-先从一台 LAN 客户端验证 DNS 返回 Fake-IP、域名 TCP、直接 IP TCP、UDP 和 REJECT 规则，再扩展到全网。CI 使用独立 LAN、网关、上游网络命名空间验收这些路径，分别运行 system 和 mixed 栈，同时验证代理/DNS 不被全局路由再次捕获、停止后默认路由保留。
+先从一台 LAN 客户端验证 DNS 返回 Fake-IP、域名 TCP、直接 IP TCP、UDP 和 REJECT 规则，再扩展到全网。CI 使用独立 LAN、网关、上游网络命名空间逐栈验收 system/gvisor/mixed，同时验证代理/DNS 不被全局路由再次捕获、停止后默认路由保留；实际结果以对应 SHA 为准，不能替代 Raspberry Pi 真机吞吐和长期部署验收。
 真实 Raspberry Pi 吞吐、长时间负载、接口切换和其他 VPN 共存仍需在目标设备验收。

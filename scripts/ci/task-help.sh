@@ -28,9 +28,8 @@ task_arguments() {
     vet) description='Run go vet across all application packages.' ;;
     test) description='Run all Go tests with the race detector and no result cache.' ;;
     test-coverage) description='Measure all-package statement coverage with the race detector.'; example='just ci test-coverage .coverage-base ../coverage-base.out' ;;
-    test-mixed) description='Run Go race tests with optional gVisor mixed-stack support.' ;;
     test-pe) description='Run Windows PE-loader pointer-boundary regressions.' ;;
-    test-windows-package) description='Windows only: zip, extract and copy inert fixtures using system PowerShell; never run KONE.' ;;
+    test-windows-package) description='Windows only: verify inert package fixtures and native-test argument handoff through PowerShell; never run KONE.' ;;
     test-macos-desktop) description='Run macOS menu and private-helper boundary regressions.' ;;
     coverage-check) description='Reject a full-module coverage percentage below the measured base.'; example='just ci coverage-check coverage-base.out coverage.out' ;;
     quality-check) description='Check Go formatting and module-file consistency without applying source formatting.' ;;
@@ -41,21 +40,23 @@ task_arguments() {
     profile) description='Open a captured Go performance profile with its matching test binary.'; example='just ci profile baseline/cpu.out baseline/kone.test' ;;
     build-all) description='Cross-compile the complete release matrix and record binary roles and hashes.' ;;
     source-bundle) description='Bundle the exact source, vendored dependencies and build identity for distribution.' ;;
+    wait-build) description='CI only: wait for this source and exact run attempt before consuming shared package binaries.' ;;
     package) description='CI only: package host-platform targets and validate CLI versions and temporary installation.' ;;
     build-container) description='Container-builder stage only: compile the Linux CLI into /out/kone.' ;;
     ci-macos-build) description='CI only: compile native macOS acceptance binaries in RUNNER_TEMP.' ;;
     ci-macos-tun) description='Privileged disposable macOS CI only: exercise owned utun and system DNS lifecycle.' ;;
     ci-macos-session) description='Privileged disposable macOS CI only: verify cleanup after an owned DNS session dies.' ;;
     ci-linux-build) description='CI only: compile Linux system acceptance binaries in RUNNER_TEMP.' ;;
-    ci-linux-tun) description='Disposable Linux CI with sudo/unshare only: test both stacks in isolated network namespaces.' ;;
+    ci-linux-tun) description='Disposable Linux CI with sudo/unshare only: test every source-supported stack in isolated network namespaces.' ;;
     ci-linux-dns-tools) description='CI only: verify tools needed by the private system-DNS acceptance harness.' ;;
     ci-linux-dns) description='Disposable Linux CI with sudo/unshare only: test DNS in private mount/network/D-Bus contexts.' ;;
     ci-ss) description='Disposable CI only: test Shadowsocks against a digest-pinned isolated official server container.' ;;
-    ci-windows-tun) description='Administrator Windows CI only: require KONE_WINDOWS_SYSTEM_TEST=1 and a system/mixed KONE_TEST_STACK.' ;;
+    ci-windows-tun) description='Administrator Windows CI only: test KONE_TEST_STACK on its own disposable runner; requires KONE_WINDOWS_SYSTEM_TEST=1.' ;;
     docker-build) description='Build the container image from source; requires a running Docker daemon.' ;;
     docker-check) description='Validate the container configuration without enabling capture; requires the built image and Docker.' ;;
     windows-firewall-check) description='Windows only: inspect existing KONE firewall entries without changing them.' ;;
     windows-firewall-update) description='Administrator Windows only: explicitly update optional LAN firewall rules for the chosen executable.'; example='just ci windows-firewall-update -Program ./dist/kone.exe' ;;
+    release-version) description='Inspect the source version context from local Git history without fetching refs, building or publishing.'; example='just ci release-version next-tag HEAD' ;;
     release-plan) description='Master release CI only: enumerate exact source SHAs using the GitHub event and repository context.' ;;
     release-marker) description='Release CI only: record successful exact RELEASE_SHA/VERSION and GitHub run/attempt evidence.' ;;
     release-publish) description='Master release CI only: verify evidence/checksums before publishing; never use for local packaging.' ;;
@@ -75,6 +76,7 @@ task_arguments() {
     geoip-convert) usage+=' <converter arguments>'; defaults='No conversion without explicit inputs; see docs/geoip.md.'; options+='; --input, --sha256, --release, --retrieved-at, --output-dir, --json'; minimum=1; maximum=100 ;;
     windows-firewall-update) usage+=' <PowerShell script arguments>'; defaults='Explicit administrator action; see docs/windows/README.md.'; options+='; -Program <path>'; minimum=1; maximum=100 ;;
     icons) usage+=' [mode]'; defaults='check'; options+='; generate | check'; maximum=1; TASK_ARGS=("${1-check}"); TASK_ARG_COUNT=1 ;;
+    release-version) usage+=' [format] [sha]'; defaults='json HEAD'; options+='; json | version | next-tag; HEAD or complete lowercase commit SHA'; maximum=2; TASK_ARGS=("${1-json}" "${2-HEAD}"); TASK_ARG_COUNT=2 ;;
   esac
   if [[ $# == 1 && ( "$1" == -h || "$1" == --help ) ]]; then
     printf 'Usage: %s\n%s\nDefault: %s\nOptions: %s\nExamples:\n  %s\n  just ci %s --help\n' "$usage" "$description" "$defaults" "$options" "$example" "$task"
@@ -95,6 +97,13 @@ task_arguments() {
   if [[ "$task" == icons && "${1-check}" != check && "${1-check}" != generate ]]; then
     printf 'Icon mode must be generate or check. Run just ci icons --help.\n' >&2
     exit 2
+  fi
+  if [[ "$task" == release-version ]]; then
+    case "${TASK_ARGS[0]}" in json|version|next-tag) ;; *) echo 'Version format must be json, version or next-tag.' >&2; exit 2 ;; esac
+    if [[ "${TASK_ARGS[1]}" != HEAD && ! "${TASK_ARGS[1]}" =~ ^[a-f0-9]{40}$ ]]; then
+      echo 'Version source must be HEAD or a complete lowercase commit SHA.' >&2
+      exit 2
+    fi
   fi
   case "$task" in
     windows-firewall-*|test-windows-package)

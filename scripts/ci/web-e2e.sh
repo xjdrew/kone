@@ -8,7 +8,7 @@ if [[ -z "${KONE_MANAGEMENT_TEST_BINARY:-}" ]]; then
   mkdir -p dist
   entry=./cmd/kone
   if [[ -d cmd/kone-cli ]]; then entry=./cmd/kone-cli; fi
-  go build -o "$KONE_MANAGEMENT_TEST_BINARY" "$entry"
+  go build -tags with_gvisor -o "$KONE_MANAGEMENT_TEST_BINARY" "$entry"
 fi
 cd web
 npx playwright test --project=chromium-1440x900 --grep '@real' --list

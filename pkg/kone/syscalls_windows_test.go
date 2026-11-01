@@ -31,6 +31,13 @@ func decodePowerShell(t *testing.T, args []string) string {
 }
 
 func TestWindowsStackFirewallOwnership(t *testing.T) {
+	full := systemNetwork{run: func(context.Context, string, ...string) ([]byte, error) {
+		t.Fatal("full gvisor must not change Windows TCP firewall rules")
+		return nil, nil
+	}}
+	undo, err := full.PrepareStack(context.Background(), CoreConfig{Stack: StackGVisor})
+	require.NoError(t, err)
+	require.Nil(t, undo)
 	for _, existing := range []bool{false, true} {
 		calls := 0
 		n := systemNetwork{run: func(_ context.Context, _ string, args ...string) ([]byte, error) {

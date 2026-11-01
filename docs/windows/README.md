@@ -57,5 +57,5 @@ KONE 自动维护限定于当前程序和自有 TUN 地址的 TCP 防火墙例�
 配置迁移见 [TOML 配置说明](../configuration.md)。管理接口默认仅绑定回环地址。
 
 全局 IPv4 接管需要设置 `core.auto-route = true` 和真实的 `core.outbound-interface`（例如 `Ethernet`）。接口名可用 `Get-NetAdapter` 查看，名称允许空格。上游代理传输和 DNS 查询绑定该接口，避免进入 TUN 循环。
-`stack = "system"` 使用 `just build`；`mixed` 使用 `just build mixed`，后者启用 `with_gvisor`。
+`just build` 同时包含 `system`、`gvisor`、`mixed`，通过 `core.stack` 选择，默认 `system`；修改后暂停并重新启用接管，无需重新编译。Windows 公开发布提供 amd64/arm64 ZIP，均包含桌面与控制台入口。
 现有 TAP 名称不能直接复用；旧版本启动时被 panic 掩盖的驱动错误现在会正常返回。

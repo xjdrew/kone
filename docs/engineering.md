@@ -6,8 +6,8 @@
 
 维护者已接受 GPL-3.0-or-later。当前采用 SagerNet/sing-tun `v0.9.7-0.20261023115432-040db71fcd33`，对应 sing-box v1.14.4 使用的固定版本；移除 water。下文第一轮保留 water、维持 MIT 的决定为历史记录，不再代表现状。
 真实 Windows race 验收复现 DLL 加载器的越界巨型数组转换。修补已通过 xjdrew/sing-tun 的 [独立 PR #1](https://github.com/xjdrew/sing-tun/pull/1) 审查并合并，包含精确切片、session 失败清理、独占创建及 HRESULT 错误规范化；KONE 通过远程 replace 固定引用合并提交 `fc4685fee0a3`，不再复制源码。详见 [依赖与修补](sing-tun.md)。指针检查和真实 Wintun/race 验收继续启用。
-设备、system/mixed 数据面由 sing-tun 提供；网络变更仍通过 KONE 的 Network 边界执行可回滚操作，使用 external configuration 模式避免双重配置。旧报文/NAT/relay API、兼容端口配置和 pkg/tcpip 已移除；Fake-IP 地址池与 CIDR 使用 net/netip。代理 UDP 按能力默认拒绝，只允许显式的 direct/reject 回退。
-普通构建默认 system，`with_gvisor` 构建可显式选择 mixed；CI 测试两种构建。网关保留 LAN 转发能力，新增全局 IPv4 捕获与代理/DNS 真实出口绑定，同时补 ARMv7 构建和独立 LAN 客户端验收。IPv6、UDP 代理出站、网络切换和崩溃恢复继续独立迭代。
+设备、system/gvisor/mixed 数据面由固定版本的 sing-tun 提供；网络变更仍通过 KONE 的 Network 边界执行可回滚操作，使用 external configuration 模式避免双重配置。旧报文/NAT/relay API、兼容端口配置和 pkg/tcpip 已移除；Fake-IP 地址池与 CIDR 使用 net/netip。代理 UDP 按能力默认拒绝，只允许显式的 direct/reject 回退。
+当前构建同时包含三种协议栈，统一提供依赖需要的 `with_gvisor` 标签；运行时 `core.stack` 默认 system，CI 按三种模式验收同一产物。默认构建和发布目标为 Linux/macOS/Windows 的 amd64/arm64；32 位网关通过 `just build-all --include-armv7` 或 `just package-all --include-armv7` 显式保留，亦包含三栈。网关 LAN 转发、全局 IPv4 捕获和代理/DNS 真实出口绑定不变。sing-box 1.15 的新自有 TCP/IP 栈不属于当前固定基线，不能沿用其 API 或性能结论。
 
 依赖检查日期：2026-10-31。版本通过 Go 模块查询核对，实际版本固定在 `go.mod` / `go.sum`。
 

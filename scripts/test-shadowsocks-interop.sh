@@ -20,7 +20,7 @@ trap cleanup EXIT
 
 docker pull --platform linux/amd64 "$image"
 docker image inspect "$image" > "$directory/image.json"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -o "$directory/interop.test" ./test/integration
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -tags with_gvisor -c -o "$directory/interop.test" ./test/integration
 docker run -d --name "$container" --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges --pids-limit 128 --memory 256m --cpus 1 \
   --tmpfs /tmp:rw,noexec,nosuid,size=16m \

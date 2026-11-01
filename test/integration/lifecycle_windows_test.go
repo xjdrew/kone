@@ -79,7 +79,7 @@ func TestSystemWindowsWintun(t *testing.T) {
 		io.WriteString(conn, "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nwintun")
 	}))
 	defer proxy.Close()
-	for _, stack := range []string{"system", "mixed"} {
+	for _, stack := range kone.SupportedStacks() {
 		for _, fail := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/occupied=%t", stack, fail), func(t *testing.T) {
 				dnsPort := availableWindowsDNSFixturePort(t, false)

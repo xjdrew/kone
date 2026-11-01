@@ -3,12 +3,12 @@ import { build } from "./build.mjs";
 import { main } from "./common.mjs";
 import { showHelp } from "./help.mjs";
 
-export async function packageBuild(ctx, mode = "native", stack = "system") {
-  const result = await build(ctx, mode, stack);
+export async function packageBuild(ctx, mode = "native", option = "") {
+  const result = await build(ctx, mode, option);
   ctx.log(mode === "all" ? "Packaging all portable targets and the native installer…" : `Packaging ${result.target}…`);
   ctx.run(process.execPath, [
     join(ctx.taskRoot, "scripts/release/package.mjs"),
-    ...(mode === "all" ? ["--all-portable"] : ["--target", result.target]),
+    ...(mode === "all" ? ["--all-portable", ...(option ? [option] : [])] : ["--target", result.target]),
   ], { env: {
     ...result.env,
     RELEASE_INPUT: "dist",

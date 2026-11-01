@@ -4,14 +4,14 @@
 
 [![Master CI](https://github.com/xjdrew/kone/actions/workflows/release.yml/badge.svg?branch=master&event=push)](https://github.com/xjdrew/kone/actions/workflows/release.yml)
 
-KONE is a TUN proxy with desktop management and Linux gateway support.
+KONE is a TUN proxy with desktop management and Linux/Raspberry Pi gateway support.
 Its original [K1 dial mark](docs/branding.md) represents reliable guidance for network traffic.
 
 ## Features
 
 - Route application and LAN traffic through proxies without configuring every application.
 - Use HTTP/HTTPS, SOCKS5 and Shadowsocks outbounds, with direct and reject policies.
-- Run on Linux, macOS and Windows, including Raspberry Pi home and small-business gateways.
+- Select system, gVisor or mixed networking at runtime; every package includes all three.
 - Inspect traffic, DNS history, routing decisions and recent runtime logs.
 - Use a password-protected Web console, desktop tray/menu, or paired phone and tablet.
 - Preserve established connections during rule updates, roll back failed startup,
@@ -22,6 +22,7 @@ Its original [K1 dial mark](docs/branding.md) represents reliable guidance for n
 **Prebuilt packages**
 
 Download the package for your platform from [Releases](https://github.com/xjdrew/kone/releases).
+Windows uses ZIP, macOS PKG and Linux DEB, for amd64 and arm64.
 See [installation and platform notes](docs/usage.md) for checksums, permissions and package trust.
 On Windows, double-click `kone.exe`; on macOS, open `Kone.app`.
 They start in the tray/menu bar **without a terminal or automatic browser window**.

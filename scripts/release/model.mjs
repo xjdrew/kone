@@ -4,20 +4,19 @@ import { readFile } from "node:fs/promises";
 export const targets = [
   "linux-amd64",
   "linux-arm64",
-  "linux-armv7",
   "darwin-amd64",
   "darwin-arm64",
   "windows-amd64",
   "windows-arm64",
 ];
+// ARMv7 remains available for explicit Raspberry Pi builds, outside releases.
+export const supportedTargets = [...targets, "linux-armv7"];
 export const requiredJobs = [
   "web",
   "test",
   "build",
-  "packages",
   "quality",
-  "linux-system",
-  "windows-system",
+  "windows-native",
 ];
 // Published development releases retain their original complete gate set.
 // New markers use requiredJobs; compatibility never fills missing current
@@ -36,6 +35,7 @@ const legacyRequiredJobs = [
   "windows-system",
   "mac-system",
 ];
+const groupedLegacyRequiredJobs = ["web", "test", "build", "packages", "quality", "linux-system", "windows-system"];
 export function validSHA(value) {
   if (!/^[a-f0-9]{40}$/.test(value || ""))
     throw new Error("Use a complete, lowercase 40-character commit SHA");
@@ -46,14 +46,17 @@ export function stableVersion(tag) {
     throw new Error("Stable tag must be vMAJOR.MINOR.PATCH");
   return tag.slice(1);
 }
-export function versionFor(sha, stableTag = "") {
+export function versionFor(sha, stableTag = "", context) {
   validSHA(sha);
+  if (context && (context.sha !== sha || !context.version)) throw new Error("Version context does not match source SHA");
+  if (!stableTag && context) return context.version;
   return stableTag ? stableVersion(stableTag) : `0.4.0-dev.${sha.slice(0, 12)}`;
 }
-export function releaseTag(sha, stableTag = "") {
+export function releaseTag(sha, stableTag = "", context) {
   validSHA(sha);
   if (stableTag) stableVersion(stableTag);
-  return stableTag || `dev-${sha.slice(0, 12)}`;
+  if (context && (context.sha !== sha || !context.tag)) throw new Error("Tag context does not match source SHA");
+  return stableTag || context?.tag || `dev-${sha.slice(0, 12)}`;
 }
 export function safeName(value) {
   if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(value))
@@ -87,7 +90,7 @@ export function latestVerificationAttempt(jobs, sha) {
 export function verifyMarker(marker, { sha, version, runID, runAttempt }) {
   validSHA(sha);
   if (
-    marker.schema !== 1 ||
+    ![1, 2].includes(marker.schema) ||
     marker.sha !== sha ||
     marker.version !== version ||
     String(marker.run_id) !== String(runID) ||
@@ -100,20 +103,16 @@ export function verifyMarker(marker, { sha, version, runID, runAttempt }) {
     );
   if (
     !Array.isArray(marker.required_jobs) ||
-    ![requiredJobs, legacyRequiredJobs].some((jobs) =>
-      jobs.every((job) => marker.required_jobs.includes(job)),
+    !(marker.schema === 2 ? [requiredJobs] : [groupedLegacyRequiredJobs, legacyRequiredJobs]).some((jobs) =>
+      marker.required_jobs.length === jobs.length && new Set(marker.required_jobs).size === jobs.length && jobs.every((job) => marker.required_jobs.includes(job)),
     )
   )
     throw new Error("CI verification marker is missing required gates");
 }
 export function expectedPackages(version) {
-  return targets.flatMap((target) => {
+  return targets.map((target) => {
     const base = `kone-${safeName(version)}-${target}`;
-    if (target.startsWith("windows-")) return [`${base}.zip`];
-    return [
-      `${base}.tar.gz`,
-      `${base}.${target.startsWith("linux-") ? "deb" : "pkg"}`,
-    ];
+    return `${base}.${target.startsWith("windows-") ? "zip" : target.startsWith("linux-") ? "deb" : "pkg"}`;
   });
 }
 export function assertVersion(output, version) {

@@ -23,7 +23,16 @@ test("task help defines defaults, options and examples and rejects surplus or in
     for (const args of [["bogus"], ["--help", "extra"], ["system", "ignored"]])
       assert.throws(() => showHelp(command, args), /Invalid arguments.*\nUsage:/);
   }
-  assert.equal(showHelp("build", ["mixed"]), false);
+  for (const command of ["build", "package"])
+    for (const stack of ["system", "gvisor", "mixed", "--include-armv7"])
+      assert.throws(() => showHelp(command, [stack]), /Invalid arguments/);
+  for (const command of ["build-all", "package-all"]) {
+    assert.equal(showHelp(command, ["--include-armv7"]), false);
+    for (const stack of ["system", "gvisor", "mixed"])
+      assert.throws(() => showHelp(command, [stack]), /Invalid arguments/);
+  }
+  assert.match(taskHelp("build"), /system, gvisor and mixed included/);
+  assert.match(taskHelp("build"), /core\.stack selects at runtime/);
   assert.equal(showHelp("quality", ["vet"]), false);
   assert.throws(() => taskHelp("unknown"), /Unknown task/);
 });

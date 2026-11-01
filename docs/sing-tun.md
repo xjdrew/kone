@@ -18,11 +18,19 @@ KONE 使用 [xjdrew/sing-tun](https://github.com/xjdrew/sing-tun) 的固定提�
 
 fork 保留原有平台/ping CI，只补 Linux 持久 TUN 步骤和一个 Go 1.27.3 Windows
 race 回归任务，包括真实 Wintun、默认复用、注入 session 失败和 PE 堆内存边界。
-独立用例和原始基线的失败证据见 fork 的 [复现说明](https://github.com/xjdrew/sing-tun/blob/fc4685fee0a37e59f174ad964e7b0b4b7894a251/docs/tun-creation.md)。KONE CI 另外验证 system/mixed
+独立用例和原始基线的失败证据见 fork 的 [复现说明](https://github.com/xjdrew/sing-tun/blob/fc4685fee0a37e59f174ad964e7b0b4b7894a251/docs/tun-creation.md)。KONE CI 另外验证 system/gvisor/mixed
 的真实网关、DNS/TCP/UDP 和启动/退出回滚，并对已固定的 fork 模块执行 Windows 回归。
 
 升级时同步检查 fork 的修补是否已被上游吸收；更新固定提交后重新执行这两组 CI。
 仅修改 require 的上游版本不会覆盖 replace；切回上游时必须同时删除远程 replace。
+
+## 运行时协议栈与版本边界
+
+固定提交的 [NewStack 实现](https://github.com/xjdrew/sing-tun/blob/fc4685fee0a37e59f174ad964e7b0b4b7894a251/stack.go) 具名支持 `system`、`gvisor`、`mixed`：分别为系统 TCP/sing-tun UDP、完整 gVisor TCP/UDP、系统 TCP/gVisor UDP。KONE 显式默认 `system`，避免依赖空名称的自动选择；三种模式编入同一产物，在配置中切换后重新启用接管。
+
+上游通过 `with_gvisor` 编译标签启用 [gVisor 实现](https://github.com/xjdrew/sing-tun/blob/fc4685fee0a37e59f174ad964e7b0b4b7894a251/stack_gvisor.go)。KONE 的 just 构建、测试与发布统一提供该依赖标签，不再保留本项目的协议栈编译分支。Linux amd64/arm64/ARMv7、Windows amd64/arm64、macOS amd64/arm64 使用相同模式列表；ARMv7 也可以编译固定的 SagerNet gVisor fork，不能套用其他 gVisor 版本的架构限制。跨编译不等于 Raspberry Pi 真机吞吐或长期稳定性验收。
+
+[sing-box 1.15 的当前文档](https://sing-box.sagernet.org/configuration/inbound/tun/#stack) 已说明改用新版 sing-tun 自有 TCP/IP 栈，并弃用其 `stack` 配置；这是更新的依赖架构，不是当前固定基线的第四种模式。本次保留已验证的设备所有权与平台修补，不顺带升级内核/API，也不将新内核的性能说明作为 KONE 的性能承诺。
 
 Wintun 内嵌 DLL 为官方未修改的 0.14.1 二进制，使用 [预编译二进制许可](../licenses/WINTUN.txt)。
 四个架构的文件均已与 [官方压缩包](https://wintun.net/builds/wintun-0.14.1.zip) 逐字节核对，

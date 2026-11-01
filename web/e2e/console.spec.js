@@ -203,7 +203,7 @@ async function mount(page, options = {}) {
         host: "Gateway · 测试主机",
         role: data.role,
         capabilities: {
-          stacks: ["system", "mixed"],
+          stacks: ["system", "gvisor", "mixed"],
           tcp: true,
           udp_direct: true,
           proxy_udp_schemes: ["socks5", "ss"],
@@ -1331,6 +1331,19 @@ for (const width of [360, 390, 430, 768, 1024])
       });
     }
   });
+
+test("all compiled stacks are runtime choices and saving never starts capture", async ({ page }) => {
+  const data = await mount(page);
+  await page.locator(".nav-link[data-page=inbounds]").click();
+  await page.getByRole("button", { name: "编辑入站", exact: true }).click();
+  const stack = page.locator("#inbound-stack");
+  await expect(stack).toHaveValue("system");
+  await expect(stack.locator("option")).toHaveCount(3);
+  await stack.selectOption("gvisor");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect.poll(() => data.writes.find((write) => write.path === "/config")?.body.config.core.stack).toBe("gvisor");
+  expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
+});
 
 test("IPv6 is an explicit saved opt-in and unavailable platforms cannot enable it", async ({
   page,

@@ -260,7 +260,7 @@ func TestSystemDarwinUTUN(t *testing.T) {
 	t.Cleanup(func() {
 		require.True(t, reflect.DeepEqual(baseline, captureDarwinBaseline(t)), "native acceptance changed the runner's default route or system DNS")
 	})
-	for _, stack := range []string{"system", "mixed"} {
+	for _, stack := range kone.SupportedStacks() {
 		t.Run(stack, func(t *testing.T) {
 			t.Run("fake-ip-tcp-udp", func(t *testing.T) {
 				cfg := darwinSystemConfig(t, stack)

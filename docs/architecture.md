@@ -19,7 +19,9 @@ KONE 的核心链路是：**客户端 → 内核路由 → TUN → sing-tun → 
 
 DNS 服务、sing-tun 协议栈、流处理器和出站执行器属于同一数据面引擎；使用网络助手时，它们在助手进程中。时序图生命线表示职责，不一定表示独立进程。管理页面读取引擎的真实快照；助手失联会显示数据不可用，不用空数据冒充正常运行。
 
-`core.stack = "system"` 使用系统 TCP 和 sing-tun UDP；`mixed` 使用系统 TCP 和 gVisor netstack UDP，需要 `-tags with_gvisor`。这里只使用 gVisor 的 Go 网络栈，不运行容器或沙箱。更换协议栈不会增加代理协议能力或自动启用 IPv6。
+同一安装包通过 `core.stack` 选择三种运行模式：`system`（默认）使用系统 TCP 和 sing-tun UDP；`gvisor` 使用 gVisor netstack 处理 TCP/UDP；`mixed` 使用系统 TCP 和 gVisor UDP。这里只使用 gVisor 的 Go 网络栈，不运行容器或沙箱。更换协议栈不会增加代理协议能力或自动启用 IPv6，需要暂停后重新启用接管。
+
+完整 `gvisor` 模式通过有界 channel endpoint 将 IP 报文交给 netstack，仅在协议栈初始化完成后开始投递报文，TUN 读写仍经过 KONE 的故障监督；断设备会进入同一停止/恢复链路。该桥接增加报文复制和固定容量队列，不代表比其他模式更快。system/mixed 的既有透明 TCP 路径和网关捕获能力保留。当前固定依赖仍是较早的三栈实现，不包含 sing-box 1.15 引入的新自有 TCP/IP 栈，见 [依赖与模式边界](sing-tun.md)。
 
 旧的自建报文分发器、NAT、TCP/UDP relay 和 `pkg/tcpip` 已删除。生产入口只沿 [stack.go](../pkg/kone/stack.go) → [flow.go](../pkg/kone/flow.go) → [outbounds.go](../pkg/kone/outbounds.go) 阅读；Fake-IP 地址池和 CIDR 匹配使用 `net/netip`。
 
@@ -56,7 +58,7 @@ Fake-IP 映射与配置快照独立：热更新保留虚拟地址，新流量按
 
 ### TCP：恢复域名、连接出站、恢复响应地址
 
-以 LAN 客户端 `192.168.10.20:53000` 访问 `10.192.40.8:443` 为例。system/mixed 都由系统 TCP 栈处理握手、确认、重传和流重组；sing-tun 保存原始地址/端口，改写报文到内部监听端口，再把客户端侧 `net.Conn` 和原始元数据交给 KONE。**这个 net.Conn 还没有连接目标服务。**
+以 LAN 客户端 `192.168.10.20:53000` 访问 `10.192.40.8:443` 为例。system/mixed 由系统 TCP 栈处理握手、确认、重传和流重组，sing-tun 保存原始地址/端口并改写到内部监听端口；gvisor 则由用户态 netstack 完成这些 TCP 操作，无需内核 TCP 监听。两条路径都将客户端侧 `net.Conn` 和原始元数据交给 KONE。**这个 net.Conn 还没有连接目标服务。**
 
 ```mermaid
 sequenceDiagram
@@ -70,9 +72,13 @@ sequenceDiagram
     C->>K: TCP 访问 10.192.40.8:443
     K->>T: 路由捕获 IP 报文
     T->>S: Read 取得 IP 报文
-    S->>T: Write 改写到内部 TCP 监听端口
-    T->>K: 回注报文，系统 TCP 栈处理连接
-    K-->>S: 接受客户端侧 TCP 连接
+    alt system 或 mixed
+        S->>T: Write 改写到内部 TCP 监听端口
+        T->>K: 回注报文，系统 TCP 栈处理连接
+        K-->>S: 接受客户端侧 TCP 连接
+    else gvisor
+        S->>S: 用户态 netstack 处理客户端 TCP 连接
+    end
     S->>F: 回调 net.Conn 和原始源/目标地址
     F->>F: Fake-IP 反查 example.com，按快照选 office
     F->>P: 出站执行器 CONNECT example.com:443
@@ -81,15 +87,20 @@ sequenceDiagram
     P->>R: 转发应用字节
     R-->>P: 返回响应字节
     P-->>F: 返回响应字节
-    F->>K: 写入客户端侧 net.Conn
-    K->>T: 生成内部 TCP 响应报文
-    T->>S: Read 内部响应报文
-    S->>T: Write 恢复 Fake-IP 源地址及客户端目标地址
+    alt system 或 mixed
+        F->>K: 写入客户端侧 net.Conn
+        K->>T: 生成内部 TCP 响应报文
+        T->>S: Read 内部响应报文
+        S->>T: Write 恢复 Fake-IP 源地址及客户端目标地址
+    else gvisor
+        F->>S: 写入客户端侧 net.Conn
+        S->>T: netstack 生成 Fake-IP 到客户端的 TCP 响应
+    end
     T->>K: 回注恢复后的 IP 报文
     K-->>C: 本机交付或路由回 LAN 客户端
 ```
 
-正确返回依靠两种不同的映射：**Fake-IP 映射表**关联域名和虚拟 IP；**透明 TCP 会话表**由 sing-tun 维护，关联原始与内部改写的地址/端口。系统 TCP 栈负责客户端侧 TCP 状态；KONE 只在客户端侧连接与出站连接之间双向复制应用字节，并保留 TCP 半关闭。
+正确返回依靠 **Fake-IP 映射表**关联域名和虚拟 IP，以及选中协议栈维护的 TCP 会话状态。system/mixed 的透明 TCP 会话表还会关联原始与内部改写的地址/端口，gvisor 则直接由 netstack 维护原始会话。KONE 在客户端侧连接与出站连接之间双向复制应用字节，并保留 TCP 半关闭。
 
 代理路径通常有三段 TCP：客户端到 KONE、KONE 到代理、代理到目标，各自维护 TCP 状态。HTTPS CONNECT 额外加密代理传输；KONE 无需解密应用自己的 TLS。选择 `direct` 时直接连接真实目标，省去代理段，响应恢复过程相同；选择 `reject` 时不建立出站连接。
 
@@ -169,7 +180,7 @@ TCP 和 UDP 都在流处理器中增量记账，长连接无需结束即可观�
 
 桑基图与连接列表来自同一观察快照。图的宽度是注明采样窗口的载荷速率或累计载荷；Top N 的「其他」保留贡献流标识，以相同筛选、时间与会话锚点钻取。清理明细不等于重置累计或停止网络。DNS 查询数、连接数、UDP 会话数和字节数是不同指标。
 
-CI 在 system/mixed 下使用独立 LAN、网关、上游命名空间，验证全局捕获、Fake-IP/literal TCP、直连 UDP、默认拒绝、显式回退、热更新和路由恢复；另有真实 Windows Wintun、macOS UTUN 验收和三平台 race。Raspberry Pi 长期吞吐、真实桌面授权窗口、网络切换与多 VPN 共存仍需部署验收。
+CI 在三种协议栈下使用独立 LAN、网关、上游命名空间，验证全局捕获、Fake-IP/literal TCP、直连 UDP、默认拒绝、显式回退、热更新和路由恢复；另有真实 Windows Wintun、macOS UTUN 验收和三平台 race。Raspberry Pi 长期吞吐、真实桌面授权窗口、网络切换与多 VPN 共存仍需部署验收。
 
 ## 5. 管理、版本与恢复
 
@@ -197,7 +208,7 @@ TCP 成功不等于应用成功。Shadowsocks AEAD 本身没有目标连接确�
 | TUN 设备 / 回注 | 内核与用户态交换 IP 报文的虚拟接口；向设备写入表示把报文交回内核接收路径 |
 | sing-tun 协议栈 | 把 IP 报文转换为透明 TCP 连接或 UDP 会话回调的组件 |
 | 系统 TCP 栈 | 操作系统维护握手、序列号、确认、重传等 TCP 状态的实现 |
-| gVisor netstack | mixed 模式用于 UDP 的 Go 网络栈，独立于代理协议 |
+| gVisor netstack | gvisor 模式用于 TCP/UDP、mixed 模式用于 UDP 的 Go 网络栈，独立于代理协议 |
 | Fake-IP / Fake-AAAA / 映射表 | 关联域名的虚拟 IPv4 / IPv6 地址及其映射，不等于真实目标地址 |
 | 透明 TCP 会话表 | sing-tun 保存的原始与内部地址/端口关系，与域名映射分离 |
 | 客户端侧连接 / 出站连接 | 客户端到 KONE 的连接 / KONE 创建的到目标或代理的连接 |

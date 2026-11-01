@@ -38,7 +38,9 @@ case "$1" in
       head -n 5 /proc/meminfo
       printf 'build flags: with_gvisor -race; namespaces: isolated per stack\n'
     } > "$baseline/environment.txt"
-    for stack in system mixed; do
+    stacks=(system mixed)
+    if [[ -f pkg/kone/stack_modes.go ]]; then stacks=(system gvisor mixed); fi
+    for stack in "${stacks[@]}"; do
       sudo unshare --net -- bash -c '
         set -e
         ip link set lo up
@@ -46,7 +48,10 @@ case "$1" in
         export KONE_SYSTEM_CLI="$1"
         export KONE_TEST_STACK="$3"
         "$2" -test.run "^TestSystem(Lifecycle|Gateway|DNS|IPv6|Performance)" -test.v -test.timeout 180s
-      ' -- "$RUNNER_TEMP/kone-system-cli" "$RUNNER_TEMP/kone-system.test" "$stack" | tee "$baseline/$stack.log"
+      ' -- "$RUNNER_TEMP/kone-system-cli" "$RUNNER_TEMP/kone-system.test" "$stack" 2>&1 | tee "$baseline/$stack.log"
+      for test in TestSystemLifecyclePortFailure TestSystemLifecycleRouteFailure TestSystemLifecycleExclusiveDevice TestSystemLifecycleConcurrentClose TestSystemLifecycleTrafficAndReload TestSystemLifecycleCLISignal TestSystemGatewayLANFullCapture TestSystemIPv6FakeAAAAProxyTCPAndUDP TestSystemIPv6FakeAAAADirectUsesRealAAAAAndUDP6 TestSystemIPv6ListenerAndRouteFailureRestore TestSystemPerformanceBaseline; do
+        grep -Fq -- "--- PASS: $test (" "$baseline/$stack.log"
+      done
     done
     ;;
   dns-tools)

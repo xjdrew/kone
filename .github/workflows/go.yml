@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || format('{0}-{1}', github.run_id, inputs.ref || github.sha) }}
@@ -94,7 +95,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       CGO_ENABLED: '1'
     steps:
@@ -121,8 +122,6 @@ jobs:
         run: just ci vet
       - name: Test with race detector
         run: just ci test-coverage
-      - name: Test optional mixed stack
-        run: just ci test-mixed
       - name: Regress upstream PE loader pointer bounds
         if: ${{ matrix.os == 'windows-latest' }}
         run: just ci test-pe
@@ -163,21 +162,90 @@ jobs:
       - name: Verify configd removes a dead owned DNS session automatically
         if: ${{ !cancelled() && matrix.os == 'macos-latest' }}
         run: just ci ci-macos-session
+      - name: Build Linux native acceptance binaries once
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: just ci ci-linux-build
+      - name: Exercise every supported stack in isolated Linux network namespaces
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: just ci ci-linux-tun
+      - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        with:
+          name: ${{ inputs.artifact-prefix }}native-data-plane-baseline
+          path: ${{ runner.temp }}/native-data-plane-baseline
+          if-no-files-found: error
+          overwrite: true
+      - name: Verify isolated resolver tools
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: just ci ci-linux-dns-tools
+      - name: Exercise OS DNS in private mount, network and D-Bus contexts
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: just ci ci-linux-dns
+      - name: Test digest-pinned shadowsocks-rust over isolated loopback
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: just ci ci-ss
+      - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        with:
+          name: ${{ inputs.artifact-prefix }}shadowsocks-interoperability
+          overwrite: true
+          path: |
+            ${{ runner.temp }}/kone-shadowsocks-interop/results.json
+            ${{ runner.temp }}/kone-shadowsocks-interop/server.log
+            ${{ runner.temp }}/kone-shadowsocks-interop/test.log
+            ${{ runner.temp }}/kone-shadowsocks-interop/image.json
+      - name: Build container from source
+        id: container-build
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        run: just ci docker-build
+      - name: Validate container configuration without privileges
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' && steps.container-build.outcome == 'success' }}
+        run: just ci docker-check
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: ${{ inputs.artifact-prefix }}coverage-${{ matrix.os }}
           overwrite: true
           path: coverage.out
+      # Unit/native checks start alongside cross-builds. Only packaging waits;
+      # a current-attempt build failure cannot reuse an earlier binary artifact.
+      - name: Wait for this source and attempt's package input
+        id: package-input
+        if: ${{ !cancelled() && matrix.os != 'ubuntu-latest' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KONE_BUILD_SHA: ${{ inputs.ref || github.sha }}
+        run: just ci wait-build
+      - uses: actions/download-artifact@v8.0.2
+        id: package-download
+        if: ${{ !cancelled() && matrix.os != 'ubuntu-latest' && steps.package-input.outcome == 'success' }}
+        with:
+          name: ${{ inputs.artifact-prefix }}binaries
+          path: release-input
+      - name: Package and validate the native installation without rebuilding
+        id: native-package
+        if: ${{ !cancelled() && matrix.os != 'ubuntu-latest' && steps.package-download.outcome == 'success' }}
+        env:
+          RELEASE_SHA: ${{ inputs.ref || github.sha }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: just ci package
+      - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !cancelled() && matrix.os != 'ubuntu-latest' && steps.native-package.outcome == 'success' }}
+        with:
+          name: ${{ inputs.artifact-prefix }}install-packages-${{ matrix.os }}
+          overwrite: true
+          path: release-assets/
 
   build:
-    name: Cross-build and Linux packages
+    name: Cross-build and Linux packages (${{ inputs.ref || github.sha }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
       - name: Check out workflow task definitions
         if: ${{ inputs.ref != '' }}
         uses: actions/checkout@v7.0.1
@@ -202,7 +270,7 @@ jobs:
       - name: Cross compile
         env:
           CGO_ENABLED: '0'
-          KONE_VERSION: ${{ inputs.version || format('0.4.0-dev.{0}', github.sha) }}
+          KONE_VERSION: ${{ inputs.version }}
         run: just ci build-all
       - name: Bundle corresponding source and dependency notices
         run: just ci source-bundle
@@ -210,7 +278,7 @@ jobs:
         env:
           RELEASE_INPUT: dist
           RELEASE_SHA: ${{ inputs.ref || github.sha }}
-          RELEASE_VERSION: ${{ inputs.version || format('0.4.0-dev.{0}', github.sha) }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: just ci package
       - uses: actions/upload-artifact@v7.0.2
         with:
@@ -222,44 +290,6 @@ jobs:
           name: ${{ inputs.artifact-prefix }}binaries
           path: dist/
           overwrite: true
-
-  packages:
-    name: Installable packages (${{ matrix.os }})
-    needs: build
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - name: Check out workflow task definitions
-        if: ${{ inputs.ref != '' }}
-        uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          path: .ci-tools
-          persist-credentials: false
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-        with:
-          just-version: '1.59.0'
-      - uses: actions/download-artifact@v8.0.2
-        with:
-          name: ${{ inputs.artifact-prefix }}binaries
-          path: release-input
-      - name: Package and validate installation in a temporary prefix
-        env:
-          RELEASE_SHA: ${{ inputs.ref || github.sha }}
-          RELEASE_VERSION: ${{ inputs.version || format('0.4.0-dev.{0}', github.sha) }}
-        run: just ci package
-      - uses: actions/upload-artifact@v7.0.2
-        with:
-          name: ${{ inputs.artifact-prefix }}install-packages-${{ matrix.os }}
-          overwrite: true
-          path: release-assets/
 
   quality:
     name: Quality and performance
@@ -309,72 +339,12 @@ jobs:
           overwrite: true
           path: baseline/
 
-  linux-system:
-    name: Linux system and interoperability
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ inputs.ref || github.sha }}
-      - name: Check out workflow task definitions
-        if: ${{ inputs.ref != '' }}
-        uses: actions/checkout@v7.0.1
-        with:
-          ref: ${{ github.workflow_sha }}
-          path: .ci-tools
-          persist-credentials: false
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-        with:
-          just-version: '1.59.0'
-      - uses: actions/setup-go@v7.0.0
-        with:
-          go-version-file: go.mod
-      - name: Build system tests and CLI
-        run: just ci ci-linux-build
-      - name: Test real TUN in isolated network namespace
-        run: just ci ci-linux-tun
-      - uses: actions/upload-artifact@v7.0.2
-        if: always()
-        with:
-          name: ${{ inputs.artifact-prefix }}native-data-plane-baseline
-          path: ${{ runner.temp }}/native-data-plane-baseline
-          if-no-files-found: error
-          overwrite: true
-
-      - name: Verify isolated resolver tools are available
-        if: ${{ !cancelled() }}
-        run: just ci ci-linux-dns-tools
-      - name: Exercise OS DNS in private mount, network and D-Bus contexts
-        if: ${{ !cancelled() }}
-        run: just ci ci-linux-dns
-      - name: Test digest-pinned shadowsocks-rust over isolated loopback
-        if: ${{ !cancelled() }}
-        run: just ci ci-ss
-      - uses: actions/upload-artifact@v7.0.2
-        if: ${{ !cancelled() }}
-        with:
-          name: ${{ inputs.artifact-prefix }}shadowsocks-interoperability
-          overwrite: true
-          path: |
-            ${{ runner.temp }}/kone-shadowsocks-interop/results.json
-            ${{ runner.temp }}/kone-shadowsocks-interop/server.log
-            ${{ runner.temp }}/kone-shadowsocks-interop/test.log
-            ${{ runner.temp }}/kone-shadowsocks-interop/image.json
-
-      - name: Build container from source
-        id: container-build
-        if: ${{ !cancelled() }}
-        run: just ci docker-build
-      - name: Validate container configuration without privileges
-        if: ${{ !cancelled() && steps.container-build.outcome == 'success' }}
-        run: just ci docker-check
-  windows-system:
+  windows-native:
     name: Windows Wintun (${{ matrix.stack }})
     strategy:
       fail-fast: false
       matrix:
-        stack: [system, mixed]
+        stack: [system, gvisor, mixed]
     runs-on: windows-latest
     timeout-minutes: 15
     env:
@@ -399,19 +369,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Exercise the selected stack and require all six native cases
+      - name: Require the selected stack's six real native cases
         run: just ci ci-windows-tun
       - uses: actions/upload-artifact@v7.0.2
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (matrix.stack != 'gvisor' || hashFiles('pkg/kone/stack_modes.go') != '') }}
         with:
           name: ${{ inputs.artifact-prefix }}windows-native-${{ matrix.stack }}
           overwrite: true
-          path: native-windows.jsonl
+          path: native-windows-${{ matrix.stack }}.jsonl
+          if-no-files-found: error
 
   verified:
     name: Required gates verified (${{ inputs.ref || github.sha }})
-    if: ${{ !cancelled() && inputs.ref != '' && needs.web.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success' && needs.packages.result == 'success' && needs.quality.result == 'success' && needs.linux-system.result == 'success' && needs.windows-system.result == 'success' }}
-    needs: [web, test, build, packages, quality, linux-system, windows-system]
+    if: ${{ !cancelled() && inputs.ref != '' && needs.web.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success' && needs.quality.result == 'success' && needs.windows-native.result == 'success' }}
+    needs: [web, test, build, quality, windows-native]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1

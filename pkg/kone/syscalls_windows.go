@@ -163,6 +163,11 @@ func fixTunIP(ip net.IP) net.IP { return ip }
 // helper discards errors and can leave an otherwise ready tunnel unusable.
 // Scope the rule to this program and owned TUN IP, and remove only our rule.
 func (n systemNetwork) PrepareStack(ctx context.Context, cfg CoreConfig) (Cleanup, error) {
+	if cfg.Stack == StackGVisor {
+		// Full gVisor terminates client TCP in userspace; it opens no kernel
+		// forwarder listener and therefore needs no Windows TCP exception.
+		return nil, nil
+	}
 	path, err := filepath.Abs(os.Args[0])
 	if err != nil {
 		return nil, err
