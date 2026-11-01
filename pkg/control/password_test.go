@@ -46,6 +46,10 @@ func TestFirstPasswordRequiresLocalSetupProofAndNeverGrantsCaptureAccess(t *test
 	require.Equal(t, 403, request(t, c, setup, "POST", "/api/v1/lifecycle/start", nil).Code)
 	require.Equal(t, "paused", c.State().DataState)
 	require.Contains(t, request(t, c, setup, "GET", "/api/v1/auth", nil).Body.String(), `"setup_authorized":true`)
+	var resumed map[string]any
+	require.NoError(t, json.Unmarshal(request(t, c, setup, "GET", "/api/v1/auth", nil).Body.Bytes(), &resumed))
+	require.Equal(t, session.csrf, resumed["csrf_token"])
+	require.NotContains(t, info.Body.String(), "csrf_token", "public status cannot recover setup authorization")
 	_, err = c.pair("read")
 	require.Error(t, err)
 	for _, input := range []map[string]any{

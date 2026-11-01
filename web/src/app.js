@@ -6,6 +6,7 @@ import {
   normalizeTraffic,
   request,
   setSession,
+  invalidateSession,
   targetWithPort,
   flowQueryChunks,
   exactRuleTarget,
@@ -60,6 +61,8 @@ const model = {
   authenticated: true,
   auth: null,
   authMode: "password",
+  authEpoch: 0,
+  authBusy: false,
   traffic: normalizeTraffic(),
   trafficError: "",
   graphPaused: false,
@@ -107,6 +110,7 @@ const time = (value) => {
 };
 const role = () => model.state.role || model.state.session?.role || "read";
 const canManage = () =>
+  model.authenticated &&
   ["manage", "admin", "owner", "local"].includes(role()) &&
   model.online &&
   !model.busy;
@@ -282,10 +286,42 @@ function notice(message, kind = "") {
 function isConflict(error) {
   return error.status === 409 || error.status === 412;
 }
+function changeAuthEpoch(clear = false) {
+  model.authEpoch++;
+  invalidateSession({ clear });
+  return model.authEpoch;
+}
+function currentAuth(epoch) {
+  return epoch === model.authEpoch && model.authenticated;
+}
+function revokeAuthentication(clear = true) {
+  const epoch = changeAuthEpoch(clear);
+  Object.assign(model, {
+    authenticated: false, online: false, busy: false, authBusy: false, state: {},
+    config: null, draft: null, inbound: null, editor: null,
+    credentialActions: {}, outboundOrigins: [], outboundHealth: [], dirty: false,
+    versionConflict: false, traffic: normalizeTraffic(), trafficError: "",
+    dns: null, diagnostics: [], logs: [], logPage: null, logCursor: null,
+    logError: "", logLoading: false, lan: {}, sessions: [], geoip: null,
+    recovery: null, geoFile: null, geoExpected: "", geoHash: "",
+    graphSelection: null, graphSnapshot: null, graphFrozen: null, frozen: null,
+    lastSuccess: null, notice: null, pendingTask: null,
+  });
+  model.logGeneration++;
+  if (model.auth) model.auth.setup_authorized = false;
+  for (const id of ["editor-dialog", "detail-dialog"]) {
+    const modal = document.getElementById(id);
+    modal?.close();
+    if (id === "detail-dialog") document.getElementById("detail-content")?.replaceChildren();
+    else modal?.replaceChildren();
+  }
+  document.getElementById("toast-region")?.replaceChildren();
+  return epoch;
+}
 function failure(error) {
+  if (error.details?.session_changed) return;
   if (error.status === 401) {
-    model.authenticated = false;
-    model.online = false;
+    if (model.authenticated) revokeAuthentication();
     render();
     return;
   }
@@ -309,18 +345,22 @@ function failure(error) {
 }
 async function action(work, success) {
   if (!canManage()) return;
+  const epoch = model.authEpoch;
   model.busy = true;
   updateShell();
   try {
     const result = await work();
+    if (!currentAuth(epoch)) return;
     if (success) toast(success);
-    await refreshState();
+    if (!await refreshState()) return;
     return result;
   } catch (error) {
-    failure(error);
+    if (currentAuth(epoch)) failure(error);
   } finally {
-    model.busy = false;
-    renderPreserving();
+    if (epoch === model.authEpoch) {
+      model.busy = false;
+      renderPreserving();
+    }
   }
 }
 function pageHeader(actions = []) {
@@ -583,7 +623,10 @@ async function saveConfig(apply) {
   }, "设置已保存");
 }
 async function loadConfig(force = false) {
+  if (!model.authenticated) return;
+  const epoch = model.authEpoch;
   const document = await endpoints.config();
+  if (!currentAuth(epoch)) return;
   if (!force && model.dirty) {
     if (document.version !== model.config?.version)
       model.versionConflict = true;
@@ -664,10 +707,14 @@ function updateShell() {
   });
 }
 async function refreshState() {
+  if (!model.authenticated) return false;
+  const epoch = model.authEpoch;
   const wasOnline = model.online;
   const wasLocked = captureLocked();
   try {
-    model.state = await endpoints.state();
+    const state = await endpoints.state();
+    if (!currentAuth(epoch)) return false;
+    model.state = state;
     setSession(model.state);
     model.online = true;
     model.authenticated = true;
@@ -675,9 +722,11 @@ async function refreshState() {
     updateShell();
     if (model.editor && wasLocked !== captureLocked()) renderEditor();
     if (!wasOnline) renderPreserving();
+    return true;
   } catch (error) {
+    if (epoch !== model.authEpoch || error.details?.session_changed) return false;
     model.online = false;
-    if (error.status === 401) model.authenticated = false;
+    if (error.status === 401) revokeAuthentication();
     updateShell();
     if (wasOnline) renderPreserving();
     throw error;
@@ -743,6 +792,8 @@ function showReadiness(report) {
   }, "primary", !canManage(), { id: "confirm-direct-only" }) : report.ready && button("继续启用接管", () => { closeDialog(); startReadyCapture(); }, "primary", !canManage())].filter(Boolean));
 }
 async function watchOperation(operation) {
+  const epoch = model.authEpoch;
+  if (!currentAuth(epoch)) throw new ApiError("管理会话已变更。", 0, { session_changed: true });
   const completed = (operation) => {
     if (
       operation.error ||
@@ -761,8 +812,9 @@ async function watchOperation(operation) {
   const deadline = Date.now() + 45000;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 700));
+    if (!currentAuth(epoch)) throw new ApiError("管理会话已变更。", 0, { session_changed: true });
     operation = await endpoints.operation(operation.id);
-    await refreshState();
+    if (!currentAuth(epoch) || !await refreshState()) throw new ApiError("管理会话已变更。", 0, { session_changed: true });
     if (!["running", "queued"].includes(operation.status)) {
       completed(operation);
       notice("主机操作已完成，运行状态已刷新。", "success");
@@ -782,14 +834,20 @@ function trafficQuery() {
 }
 
 async function refreshTraffic() {
+  if (!model.authenticated) return false;
+  const epoch = model.authEpoch;
   try {
-    model.traffic = normalizeTraffic(await endpoints.traffic(trafficQuery()));
+    const traffic = await endpoints.traffic(trafficQuery());
+    if (!currentAuth(epoch)) return false;
+    model.traffic = normalizeTraffic(traffic);
     model.trafficError = "";
   } catch (error) {
+    if (!currentAuth(epoch) || error.details?.session_changed) return false;
     if (error.status === 401) throw error;
     model.trafficError = "管理连接正常，流量数据暂不可用；当前显示上次快照。可在诊断页查看启动结果与运行日志。";
   }
   updateShell();
+  return true;
 }
 function changeGraph(key, value) {
   model[key] = value;
@@ -907,6 +965,7 @@ function closeDialog() {
   document.querySelector("#detail-dialog").close();
 }
 function dialog(title, subtitle, content, actions = []) {
+  if (!model.authenticated) return;
   const node = document.querySelector("#detail-content");
   node.replaceChildren(
     h(
@@ -2593,7 +2652,8 @@ function renderDNSEditor() {
 }
 
 async function loadLogs(force = false) {
-  if (model.logLoading || (model.logPaused && !force)) return;
+  if (!model.authenticated || model.logLoading || (model.logPaused && !force)) return;
+  const epoch = model.authEpoch;
   model.logLoading = true;
   const generation = model.logGeneration;
   try {
@@ -2601,16 +2661,21 @@ async function loadLogs(force = false) {
     if (model.logSource) query.source = model.logSource;
     if (model.logCursor !== null) query.after = model.logCursor;
     const page = await endpoints.logs(query);
-    if (generation !== model.logGeneration) return;
+    if (!currentAuth(epoch) || generation !== model.logGeneration) return;
     model.logs = mergeLogs(model.logs, page, model.logCursor === null);
     model.logCursor = page.next_cursor;
     model.logPage = { ...page, gap: Boolean(page.gap || model.logPage?.gap) };
     model.logError = "";
   } catch (error) {
-    if (generation === model.logGeneration) model.logError = error.message;
+    if (currentAuth(epoch) && generation === model.logGeneration) {
+      if (error.status === 401) failure(error);
+      else model.logError = error.message;
+    }
   } finally {
-    model.logLoading = false;
-    if (generation !== model.logGeneration) await loadLogs(true);
+    if (currentAuth(epoch)) {
+      model.logLoading = false;
+      if (generation !== model.logGeneration) await loadLogs(true);
+    }
   }
 }
 
@@ -3697,6 +3762,29 @@ async function exportData() {
   }
 }
 
+async function logout() {
+  if (!model.authenticated || model.authBusy) return;
+  // Keep the current CSRF token only long enough to revoke this cookie. Old
+  // requests become stale immediately, before the logout network round trip.
+  const epoch = revokeAuthentication(false);
+  model.authBusy = true;
+  render();
+  try {
+    await endpoints.logout();
+  } catch (error) {
+    if (epoch === model.authEpoch)
+      model.notice = { message: `本页已退出；主机尚未确认会话注销：${error.message}`, kind: "warning" };
+  } finally {
+    if (epoch === model.authEpoch) {
+      invalidateSession({ clear: true });
+      try {
+        const auth = await endpoints.auth();
+        if (epoch === model.authEpoch) model.auth = auth;
+      } catch {}
+      if (epoch === model.authEpoch) { model.authBusy = false; render(); }
+    }
+  }
+}
 function renderAuth() {
   const setup = Boolean(model.auth?.setup_required ?? model.state.setup_required);
   const authorized = Boolean(model.auth?.setup_authorized ?? model.state.role === "setup");
@@ -3706,6 +3794,11 @@ function renderAuth() {
     h("img", { src: "/icon.svg", alt: "", width: 52, height: 52 }), h("h1", {}, title),
     h("p", {}, setup ? "首次使用需设置管理密码；设置完成后，管理数据和写操作才会开放。" : paired ? "使用主机所有者创建的短期授权代码；权限由配对会话决定。" : "请输入管理密码。托盘打开的地址不会绕过密码认证。"),
   );
+  if (model.authBusy) {
+    content.append(note("正在切换管理会话，请稍候。"));
+    return content;
+  }
+  if (model.notice) content.append(note(model.notice.message, model.notice.kind));
   if (setup && !authorized) {
     content.append(note("请从这台主机的 KONE 托盘重新打开管理页，获得一次性本机设置授权。", "warning"));
     return content;
@@ -3713,6 +3806,9 @@ function renderAuth() {
   const errorNode = h("div", { id: "auth-error", role: "alert" });
   const form = h("form", { onsubmit: async (event) => {
     event.preventDefault();
+    if (model.authBusy) return;
+    const epoch = changeAuthEpoch();
+    model.authBusy = true;
     const values = new FormData(event.target);
     const submit = event.target.querySelector('button[type="submit"]');
     submit.disabled = true;
@@ -3728,14 +3824,26 @@ function renderAuth() {
         result = await endpoints.setPassword({ password, confirm_password: confirm });
       } else if (paired) result = await endpoints.login(values.get("pairing_code"));
       else result = await endpoints.passwordLogin(values.get("password"));
+      if (epoch !== model.authEpoch) return;
       event.target.reset();
       setSession(result || {});
       model.state = result || {};
       model.auth = { setup_required: false, password_required: false, authenticated: true };
       model.authenticated = true;
       await refreshAll();
-    } catch (error) { if (errorNode.isConnected) errorNode.replaceChildren(note(error.message, "error")); else failure(error); }
-    finally { submit.disabled = false; }
+    } catch (error) {
+      if (epoch === model.authEpoch) {
+        if (errorNode.isConnected) errorNode.replaceChildren(note(error.message, "error"));
+        else failure(error);
+      }
+    }
+    finally {
+      if (epoch === model.authEpoch) {
+        model.authBusy = false;
+        submit.disabled = false;
+        if (model.authenticated) renderPreserving();
+      }
+    }
   } });
   if (paired) form.append(field("授权代码", "", () => {}, { id: "pairing-code", type: "password", autocomplete: "one-time-code", disabled: false }));
   else {
@@ -3749,7 +3857,7 @@ function renderAuth() {
   if (inputs[1]) { inputs[1].name = "confirm_password"; inputs[1].required = true; }
   form.append(errorNode, h("div", { class: "form-section" }, h("button", { class: "button primary", type: "submit" }, setup ? "设置管理密码" : paired ? "授权并连接" : "登录管理")));
   content.append(form);
-  if (!setup) content.append(h("div", { class: "form-section" }, button(paired ? "使用管理密码" : "使用配对代码", () => { model.authMode = paired ? "password" : "pairing"; render(); }, "ghost", false)));
+  if (!setup) content.append(h("div", { class: "form-section" }, button(paired ? "使用管理密码" : "使用配对代码", () => { if (model.authBusy) return; model.authMode = paired ? "password" : "pairing"; render(); }, "ghost", false)));
   content.append(h("small", { class: "block-hint form-section" }, "密码不写入地址或日志；手机可使用所有者授权的短期配对代码。"));
   return content;
 }
@@ -3796,6 +3904,7 @@ function selectCards(nodes, titles) {
   return nodes.filter(node => node?.getAttribute && titles.includes(node.getAttribute("data-card-title")));
 }
 function renderEditor() {
+  if (!model.authenticated) return;
   const editor = model.editor;
   if (!editor) return;
   let modal = document.querySelector("#editor-dialog");
@@ -3875,8 +3984,10 @@ async function saveEditor(apply) {
   return saveConfig(apply);
 }
 async function refreshOutboundHealth() {
-  try { const result = await endpoints.outboundHealth(); model.outboundHealth = list(result.statuses); }
-  catch { model.outboundHealth = []; }
+  if (!model.authenticated) return;
+  const epoch = model.authEpoch;
+  try { const result = await endpoints.outboundHealth(); if (currentAuth(epoch)) model.outboundHealth = list(result.statuses); }
+  catch { if (currentAuth(epoch)) model.outboundHealth = []; }
 }
 function addOutbound() {
   const index = list(model.draft?.outbounds).length;
@@ -3895,9 +4006,11 @@ function confirmResourceChange(title, mutate) {
 }
 async function saveResourceChange(mutate) {
   if (!canManage()) return;
+  const epoch = model.authEpoch;
   const previous = editorSnapshot();
   mutate(); markDirty();
-  if (!await saveConfig(true)) { Object.assign(model, previous); render(); }
+  const saved = await saveConfig(true);
+  if (currentAuth(epoch) && !saved) { Object.assign(model, previous); render(); }
 }
 function deleteOutbound(index) {
   const outbound = model.draft.outbounds[index];
@@ -3945,24 +4058,18 @@ const renderers = {
 function render() {
   updateShell();
   if (!model.authenticated) {
-    if (model.editor) {
-      model.editor = null;
-      model.draft = clone(model.config?.config || {});
-      model.inbound = clone(model.config?.inbound || {});
-      model.credentialActions = {};
-      model.dirty = false;
-      document.querySelector("#editor-dialog")?.close();
-    }
+    model.editor = null;
+    const editor = document.querySelector("#editor-dialog");
+    editor?.close();
+    editor?.replaceChildren();
     document.querySelector("#detail-dialog")?.close();
+    document.querySelector("#detail-content")?.replaceChildren();
     main.replaceChildren(renderAuth());
     return;
   }
   const actions = [
     button("刷新", () => refreshAll().catch(failure), "ghost compact", false),
-    button("退出登录", async () => {
-      try { await endpoints.logout(); setSession({}); model.authenticated = false; model.online = false; model.state = {}; model.auth = await endpoints.auth(); render(); }
-      catch (error) { failure(error); }
-    }, "ghost compact", !model.online),
+    button("退出登录", logout, "ghost compact", !model.online || model.authBusy),
   ];
   main.replaceChildren(
     pageHeader(actions),
@@ -4005,37 +4112,52 @@ function navigate(page, nextNotice = null) {
   }
 }
 async function loadPageData() {
+  if (!model.authenticated) return;
+  const epoch = model.authEpoch;
   if (model.page === "outbounds") await refreshOutboundHealth();
+  if (!currentAuth(epoch)) return;
   if (model.page === "dns") model.dns = await endpoints.dns();
+  if (!currentAuth(epoch)) return;
   if (model.page === "diagnostics") {
     await loadLogs();
+    if (!currentAuth(epoch)) return;
     model.diagnostics = await endpoints.diagnostics();
   }
   if (model.page === "settings") {
     model.lan = await endpoints.lan();
+    if (!currentAuth(epoch)) return;
     model.sessions = ["manage", "admin", "owner", "local"].includes(role())
       ? await endpoints.sessions()
       : [];
+    if (!currentAuth(epoch)) return;
     try {
       model.geoip = await request("/geoip");
       model.geoError = null;
     } catch (error) {
+      if (!currentAuth(epoch)) return;
       model.geoError = error.message;
       model.geoip = null;
     }
+    if (!currentAuth(epoch)) return;
     try {
       model.recovery = await request("/recovery");
       model.recoveryError = null;
     } catch (error) {
+      if (!currentAuth(epoch)) return;
       model.recoveryError = error.message;
     }
   }
 }
 async function refreshAll() {
-  await refreshState();
+  if (!model.authenticated) return;
+  const epoch = model.authEpoch;
+  if (!await refreshState()) return;
   await loadConfig(false);
+  if (!currentAuth(epoch)) return;
   await refreshTraffic();
+  if (!currentAuth(epoch)) return;
   await loadPageData();
+  if (!currentAuth(epoch)) return;
   renderPreserving();
 }
 function menu(open) {
@@ -4102,22 +4224,24 @@ let polling = false;
 setInterval(async () => {
   if (polling || document.hidden || !model.authenticated || model.busy) return;
   polling = true;
+  const epoch = model.authEpoch;
   const wasOnline = model.online;
   try {
-    await refreshState();
-    await refreshTraffic();
+    if (!await refreshState() || !currentAuth(epoch)) return;
+    if (!await refreshTraffic() || !currentAuth(epoch)) return;
     if (["dns", "diagnostics", "outbounds"].includes(model.page)) await loadPageData();
+    if (!currentAuth(epoch)) return;
     if (
       (["home", "connections", "dns", "diagnostics", "outbounds"].includes(model.page) || !wasOnline) &&
       !document.querySelector("#detail-dialog").open && !document.querySelector("#editor-dialog")?.open
     )
       renderPreserving();
   } catch (error) {
+    if (epoch !== model.authEpoch || error.details?.session_changed) return;
     // Only /state determines management connectivity. Optional telemetry may
     // fail during helper startup without invalidating a working control plane.
     if (error.status === 401) {
-      model.authenticated = false;
-      model.online = false;
+      revokeAuthentication();
       render();
     } else if (wasOnline !== model.online) renderPreserving();
   } finally {
@@ -4148,9 +4272,17 @@ try {
     await refreshAll();
   }
 } catch (error) {
-  if (error.status === 401) model.authenticated = false;
-  else model.notice = { message: error.message, kind: "error" };
-  if (error.status === 401) model.online = false;
-  try { model.auth = await endpoints.auth(); } catch {}
+  let auth = null;
+  try { auth = await endpoints.auth(); } catch {}
+  if (auth?.setup_required || !auth?.authenticated || error.status === 401) {
+    // A valid first-setup cookie survives a reload, but it grants no management
+    // access. Its same-origin auth response restores only setup authorization
+    // and CSRF; clearing those here would prevent completing the password form.
+    revokeAuthentication(!auth?.setup_authorized);
+    model.auth = auth;
+    if (auth?.setup_authorized) setSession(auth);
+  }
+  if (error.status !== 401 && !auth?.setup_required)
+    model.notice = { message: error.message, kind: "error" };
   render();
 }

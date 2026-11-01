@@ -47,12 +47,18 @@ export function flowQueryChunks(base, pathIDs, flowIDs) {
 
 let bearer = "";
 let csrf = "";
+let sessionEpoch = 0;
+export function invalidateSession({ clear = false } = {}) {
+  sessionEpoch++;
+  if (clear) { bearer = ""; csrf = ""; }
+}
 export function setSession(data = {}) {
   csrf = data.csrf_token || data.csrfToken || csrf;
   if (data.token) bearer = data.token;
 }
 
 export async function request(path, method = "GET", body, options = {}) {
+  const epoch = sessionEpoch;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeout || 15000);
   const headers = { Accept: "application/json" };
@@ -87,6 +93,10 @@ export async function request(path, method = "GET", body, options = {}) {
         throw new ApiError("服务返回了无法读取的响应。", response.status);
       }
     }
+    // Responses from an earlier login must neither restore its CSRF token nor
+    // reach callers that could restore private UI state after logout.
+    if (epoch !== sessionEpoch)
+      throw new ApiError("管理会话已变更，请重新执行操作。", 0, { session_changed: true });
     if (!response.ok)
       throw new ApiError(
         explainError(data.error?.message ||
@@ -98,6 +108,8 @@ export async function request(path, method = "GET", body, options = {}) {
     if (typeof data === "object") setSession(data);
     return data;
   } catch (error) {
+    if (epoch !== sessionEpoch)
+      throw new ApiError("管理会话已变更，请重新执行操作。", 0, { session_changed: true });
     if (error.name === "AbortError")
       throw new ApiError(
         "请求已超时，操作可能仍在主机上执行。请先刷新状态，勿重复提交。",

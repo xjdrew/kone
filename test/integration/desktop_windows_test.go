@@ -30,13 +30,16 @@ func TestDesktopUnresponsiveAuthorizationKeepsManagementAvailable(t *testing.T) 
 	document := c.Document()
 	inbound := document["inbound"].(control.Inbound)
 	inbound.Enabled = true
-	_, err = c.Save(control.SaveRequest{BaseVersion: c.State().SavedVersion, Config: document["config"].(map[string]any), Inbound: inbound})
+	directConfirmed := true
+	_, err = c.Save(control.SaveRequest{BaseVersion: c.State().SavedVersion, Config: document["config"].(map[string]any), Inbound: inbound, DirectOnlyConfirmed: &directConfirmed})
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- c.Start(ctx) }()
 	select {
 	case <-entered:
+	case err := <-done:
+		t.Fatalf("capture stopped before the injected authorization boundary: %v", err)
 	case <-time.After(3 * time.Second):
 		t.Fatal("test authorization was not reached")
 	}

@@ -150,7 +150,7 @@ async function mount(page, options = {}) {
         body: JSON.stringify(body),
       });
     const body = request.postDataJSON();
-    if (path === "/auth") return respond({ setup_required: Boolean(data.requireSetup), setup_authorized: Boolean(data.setupSession), password_required: !data.requireSetup, authenticated: data.loggedIn !== false });
+    if (path === "/auth") return respond({ setup_required: Boolean(data.requireSetup), setup_authorized: Boolean(data.setupSession), password_required: !data.requireSetup, authenticated: data.loggedIn !== false, ...(data.setupSession ? { csrf_token: "setup-csrf" } : {}) });
     if (path === "/auth/password") {
       if (!data.setupSession) return respond({ error: { message: "local setup proof required" } }, 403);
       if (!body.password || body.password !== body.confirm_password) return respond({ error: { message: "password mismatch" } }, 400);
@@ -172,7 +172,13 @@ async function mount(page, options = {}) {
         session_id: "test-session",
       });
     }
-    if (data.loggedIn === false) return respond({ error: { message: "Password required" } }, 401);
+    if (data.loggedIn === false) return respond({ error: { code: data.setupSession ? "setup_required" : "unauthorized", message: data.setupSession ? "Set the management password first" : "Password required" } }, data.setupSession ? 403 : 401);
+    if (path === "/state" && data.deferState) {
+      const deferred = data.deferState;
+      data.deferState = null;
+      deferred.started = true;
+      await deferred.promise;
+    }
     if (options.unauthorized)
       return respond({ error: { message: "Authorization expired" } }, 401);
     if (method !== "GET") {
@@ -535,6 +541,8 @@ async function saveOutbound(page) {
 
 test("@compat first-time password setup requires matching inputs and remains capture-paused", async ({ page }) => {
   const data = await mount(page, { requireSetup: true, loggedIn: false, authScreen: "设置管理密码" });
+  await page.reload();
+  await expect(page.locator("#setup-password")).toBeVisible();
   expect(data.requests.some((request) => ["/config", "/logs", "/traffic"].includes(request.path))).toBe(false);
   await page.locator("#setup-password").fill("mock-owner-password");
   await page.locator("#setup-password-confirm").fill("different-password");
@@ -544,6 +552,7 @@ test("@compat first-time password setup requires matching inputs and remains cap
   await page.locator("#setup-password-confirm").fill("mock-owner-password");
   await page.getByRole("button", { name: "设置管理密码", exact: true }).click();
   await expect(page.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
+  expect(data.requests.find((request) => request.path === "/auth/password")?.headers["x-csrf-token"]).toBe("setup-csrf");
   await expect(page.locator("#runtime-status")).toContainText("已暂停");
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
@@ -562,6 +571,28 @@ test("@compat public first visit cannot seize password setup without the local t
   await expect(page.getByText(/请从这台主机的 KONE 托盘重新打开管理页/)).toBeVisible();
   await expect(page.locator("#setup-password")).toHaveCount(0);
   expect(data.writes).toEqual([]);
+});
+
+test("@compat a late authenticated state response cannot restore a logged-out console", async ({ page }) => {
+  const data = await mount(page);
+  data.requirePassword = true;
+  data.managementPassword = "mock-owner-password";
+  let release;
+  const deferred = { started: false, promise: new Promise((resolve) => { release = resolve; }) };
+  data.deferState = deferred;
+  try {
+    await expect.poll(() => deferred.started).toBe(true);
+    await page.getByRole("button", { name: "退出登录", exact: true }).click();
+    await expect(page.locator("#login-password")).toBeVisible();
+    const lateState = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/state" && response.ok());
+    release();
+    await lateState;
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(page.locator("#login-password")).toBeVisible();
+    await expect(page.locator("#runtime-status")).toHaveText("需要登录");
+    await expect(page.locator("#main .sankey-svg")).toHaveCount(0);
+    expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
+  } finally { release(); }
 });
 
 test("@compat direct-only capture requires explicit confirmation before any lifecycle request", async ({ page }) => {
@@ -1271,13 +1302,14 @@ test("corrupt GeoIP still permits explicit revalidation of the saved previous da
     .toEqual({ base_version: 1, base_sha256: "" });
 });
 
-test("initial transport failure displays unknown counters instead of invented zero observations", async ({
+test("initial transport failure keeps management signed out without invented observations", async ({
   page,
 }) => {
   await page.route("**/api/v1/**", (route) => route.abort("connectionfailed"));
   await page.goto("/#home");
-  await expect(page.locator("#runtime-status")).toHaveText("状态未知");
-  await expect(page.locator(".metric-value")).toHaveText(["—", "—", "—", "—"]);
+  await expect(page.locator("#runtime-status")).toHaveText("需要登录");
+  await expect(page.locator(".metric-value")).toHaveCount(0);
+  await expect(page.locator("#login-password")).toBeVisible();
   await expect(page.locator("#lifecycle-toggle")).toBeDisabled();
 });
 

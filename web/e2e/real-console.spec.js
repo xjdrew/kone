@@ -106,6 +106,8 @@ async function openManagement(browser, manager, ownedContexts) {
   const secretInput = page.locator("#setup-password, #login-password").first();
   await expect(secretInput).toBeVisible();
   if (await page.locator("#setup-password").isVisible()) {
+    await page.reload(); // The one-use URL is gone; the limited setup cookie must resume safely.
+    await expect(page.locator("#setup-password")).toBeVisible();
     await page.locator("#setup-password").fill("browser-fixture-management-password");
     await page.locator("#setup-password-confirm").fill("browser-fixture-management-password");
     await page.getByRole("button", { name: "设置管理密码", exact: true }).click();

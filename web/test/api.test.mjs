@@ -9,6 +9,9 @@ import {
   normalizeTraffic,
   exactRuleTarget,
   explainError,
+  invalidateSession,
+  setSession,
+  endpoints,
 } from "../src/api.js";
 const originalFetch = globalThis.fetch;
 
@@ -50,9 +53,69 @@ test("retained traffic preserves its actual observation time without inventing f
   assert.equal(normalizeTraffic({}).frozen, false);
 });
 afterEach(() => {
+  invalidateSession({ clear: true });
   globalThis.fetch = originalFetch;
   delete globalThis.location;
   delete globalThis.history;
+});
+
+test("late state responses cannot overwrite a newer login or reach private UI callers", async () => {
+  for (const status of [200, 401]) {
+    setSession({ csrf_token: "old-csrf" });
+    let release;
+    const calls = [];
+    globalThis.fetch = async (path, options) => {
+      calls.push({ path, ...options });
+      if (path.endsWith("/state"))
+        return new Promise(resolve => { release = () => resolve(new Response(JSON.stringify({ role: "admin", csrf_token: "late-old-csrf" }), { status })); });
+      return new Response(JSON.stringify(path.endsWith("/session") ? { role: "admin", csrf_token: "new-csrf" } : {}), { status: 200 });
+    };
+    const pending = request("/state");
+    invalidateSession();
+    await endpoints.passwordLogin("fixture-password");
+    release();
+    await assert.rejects(pending, error => error.details?.session_changed === true);
+    await request("/config", "PUT", {});
+    assert.equal(calls.at(-1).headers["X-CSRF-Token"], "new-csrf");
+  }
+});
+
+test("logout invalidation retains CSRF for revocation and then clears all session secrets", async () => {
+  setSession({ csrf_token: "logout-csrf" });
+  const calls = [];
+  globalThis.fetch = async (path, options) => {
+    calls.push({ path, ...options });
+    return new Response("{}", { status: 200 });
+  };
+  invalidateSession();
+  await endpoints.logout();
+  assert.equal(calls[0].headers["X-CSRF-Token"], "logout-csrf");
+  invalidateSession({ clear: true });
+  await endpoints.passwordLogin("fixture-password");
+  assert.equal(calls[1].headers["X-CSRF-Token"], undefined);
+  assert.equal(calls[1].headers.Authorization, undefined);
+});
+
+test("setup metadata restores only the authorized cookie CSRF after a page reload", async () => {
+  globalThis.location = { hash: "#home", pathname: "/", search: "" };
+  const calls = [];
+  globalThis.fetch = async (path, options) => {
+    calls.push({ path, ...options });
+    if (path.endsWith("/state"))
+      return new Response(JSON.stringify({ error: { code: "setup_required", message: "set a management password first" } }), { status: 403 });
+    if (path.endsWith("/auth"))
+      return new Response(JSON.stringify({ setup_required: true, setup_authorized: true, authenticated: false, csrf_token: "restored-setup-csrf" }), { status: 200 });
+    return new Response(JSON.stringify({ role: "admin", csrf_token: "owner-csrf" }), { status: 200 });
+  };
+  await assert.rejects(bootstrap(), error => error.status === 403);
+  const auth = await endpoints.auth();
+  assert.equal(auth.authenticated, false);
+  assert.equal(auth.setup_authorized, true);
+  invalidateSession();
+  setSession(auth);
+  await endpoints.setPassword({ password: "fixture-password", confirm_password: "fixture-password" });
+  assert.equal(calls.at(-1).headers["X-CSRF-Token"], "restored-setup-csrf");
+  assert.equal(calls.at(-1).headers.Authorization, undefined);
 });
 
 test("diagnostic target formatting preserves explicit ports and brackets IPv6 literals", () => {

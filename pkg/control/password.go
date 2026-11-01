@@ -72,9 +72,13 @@ func (c *Controller) passwordConfigured() bool {
 func (c *Controller) authInformation(w http.ResponseWriter, r *http.Request) {
 	configured := c.passwordConfigured()
 	session, ok := c.authorize(r)
-	writeJSON(w, 200, map[string]any{"setup_required": !configured, "password_required": configured,
-		"setup_authorized": !configured && ok && session.Role == "setup" && !session.Remote && localRemote(r),
-		"authenticated":    configured && ok && session.Role != "setup"})
+	setup := !configured && ok && session.Role == "setup" && !session.Remote && localRemote(r)
+	info := map[string]any{"setup_required": !configured, "password_required": configured,
+		"setup_authorized": setup, "authenticated": configured && ok && session.Role != "setup"}
+	if setup {
+		info["csrf_token"] = session.csrf
+	} // Resume authorized setup after a page reload.
+	writeJSON(w, 200, info)
 }
 
 func (c *Controller) setupPassword(w http.ResponseWriter, r *http.Request, session *Session) {
