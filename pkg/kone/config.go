@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	singtun "github.com/sagernet/sing-tun"
@@ -39,15 +40,33 @@ type CoreConfig struct {
 	AutoRoute         bool   `toml:"auto-route"`
 	OutboundInterface string `toml:"outbound-interface"`
 	Network           string `toml:"network"`
+	IPv6Network       string `toml:"ipv6-network"`
+	AutoRoute6        bool   `toml:"auto-route6"`
 }
 
 type DNSConfig struct {
-	ListenPort   uint16   `toml:"listen-port"`
-	TTL          uint     `toml:"ttl"`
-	PacketSize   uint16   `toml:"packet-size"`
-	ReadTimeout  uint     `toml:"read-timeout"`
-	WriteTimeout uint     `toml:"write-timeout"`
-	Servers      []string `toml:"servers,omitempty"`
+	System           bool             `toml:"system"`
+	ListenPort       uint16           `toml:"listen-port"`
+	TTL              uint             `toml:"ttl"`
+	PacketSize       uint16           `toml:"packet-size"`
+	ReadTimeout      uint             `toml:"read-timeout"`
+	WriteTimeout     uint             `toml:"write-timeout"`
+	Servers          []string         `toml:"servers,omitempty"`
+	HistoryLimit     uint             `toml:"history-limit"`
+	HistoryRetention uint             `toml:"history-retention"`
+	CacheLimit       uint             `toml:"cache-limit"`
+	Rules            []DNSRouteConfig `toml:"rules,omitempty"`
+	SystemContext    DNSSystemContext `toml:"-"`
+}
+
+type DNSRouteConfig struct {
+	Suffix      string   `toml:"suffix" json:"suffix"`
+	Servers     []string `toml:"servers" json:"servers"`
+	Interface   string   `toml:"interface,omitempty" json:"interface,omitempty"`
+	Automatic   bool     `toml:"-" json:"automatic,omitempty"`
+	Exact       bool     `toml:"-" json:"exact,omitempty"`
+	Unavailable bool     `toml:"-" json:"unavailable,omitempty"`
+	Reason      string   `toml:"-" json:"reason,omitempty"`
 }
 
 type OutboundType string
@@ -62,6 +81,8 @@ const (
 )
 
 type OutboundConfig struct {
+	ID          string `toml:"id,omitempty"`
+	Enabled     *bool  `toml:"enabled,omitempty"`
 	Name        string `toml:"name"`
 	URL         string `toml:"url"`
 	UDPFallback string `toml:"udp-fallback,omitempty"`
@@ -75,9 +96,14 @@ func builtinOutbounds() map[string]OutboundType {
 }
 
 type RuleConfig struct {
-	Schema   string `toml:"type"`
-	Pattern  string `toml:"pattern,omitempty"`
-	Outbound string `toml:"outbound"`
+	ExpiresAt string   `toml:"expires-at,omitempty"`
+	ID        string   `toml:"id,omitempty"`
+	Source    string   `toml:"source,omitempty"`
+	Protocol  string   `toml:"protocol,omitempty"`
+	Ports     []uint16 `toml:"ports,omitempty"`
+	Schema    string   `toml:"type"`
+	Pattern   string   `toml:"pattern,omitempty"`
+	Outbound  string   `toml:"outbound"`
 }
 
 type KoneConfig struct {
@@ -94,13 +120,21 @@ func defaultConfig() *KoneConfig {
 		General: GeneralConfig{ManagerAddr: "127.0.0.1:9200", LogLevel: "info", LogFormat: "text"},
 		Core:    CoreConfig{Network: "10.192.0.1/16", Stack: "system"},
 		DNS: DNSConfig{ListenPort: DnsDefaultPort, TTL: DnsDefaultTtl, PacketSize: DnsDefaultPacketSize,
-			ReadTimeout: DnsDefaultReadTimeout, WriteTimeout: DnsDefaultWriteTimeout},
+			ReadTimeout: DnsDefaultReadTimeout, WriteTimeout: DnsDefaultWriteTimeout, HistoryLimit: 512, HistoryRetention: 3600, CacheLimit: 1024},
 	}
 }
 
 // ParseConfig reads a TOML filename or a copy of TOML bytes. Unknown keys are
 // errors; a misspelled option never silently uses a default.
-func ParseConfig(source any) (*KoneConfig, error) {
+func ParseConfig(source any) (*KoneConfig, error) { return parseConfig(source, true) }
+
+// ParseManagedConfig never imports terminal proxy environment variables.
+// Desktop settings are explicit, durable and independent of the launch shell.
+func ParseManagedConfig(source any) (*KoneConfig, error) { return parseConfig(source, false) }
+
+func DefaultConfig() *KoneConfig { return cloneConfig(defaultConfig()) }
+
+func parseConfig(source any, environment bool) (*KoneConfig, error) {
 	var data []byte
 	var err error
 	switch v := source.(type) {
@@ -142,6 +176,9 @@ func ParseConfig(source any) (*KoneConfig, error) {
 		return nil, err
 	}
 	for _, key := range []string{HTTP_PROXY, HTTPS_PROXY, SOCKS_PROXY} {
+		if !environment {
+			break
+		}
 		value := os.Getenv(key)
 		if value == "" {
 			value = os.Getenv(strings.ToUpper(key))
@@ -170,6 +207,16 @@ func ParseConfig(source any) (*KoneConfig, error) {
 	if len(cfg.DNS.Servers) == 0 {
 		cfg.DNS.Servers = nil // omitted and explicitly empty both mean automatic
 	}
+	for i := range cfg.DNS.Rules {
+		cfg.DNS.Rules[i].Suffix = normalizeDNSSuffix(cfg.DNS.Rules[i].Suffix)
+		for j, addr := range cfg.DNS.Rules[i].Servers {
+			normalized, err := normalizeDNSServer(addr)
+			if err != nil {
+				return nil, fmt.Errorf("dns.rules[%d].servers[%d]: %w", i+1, j+1, err)
+			}
+			cfg.DNS.Rules[i].Servers[j] = normalized
+		}
+	}
 	for i := range cfg.Rule {
 		cfg.Rule[i].Schema = strings.ToUpper(cfg.Rule[i].Schema)
 	}
@@ -180,8 +227,15 @@ func ParseConfig(source any) (*KoneConfig, error) {
 }
 
 func validateOutbounds(config []OutboundConfig) (map[string]OutboundType, error) {
+	ids := map[string]bool{}
 	types := builtinOutbounds()
 	for i, o := range config {
+		if o.ID != "" {
+			if ids[o.ID] || len(o.ID) > 128 || strings.ContainsAny(o.ID, "\x00\r\n\t ") {
+				return nil, fmt.Errorf("outbounds[%d]: id must be unique and contain no whitespace or control characters", i+1)
+			}
+			ids[o.ID] = true
+		}
 		fail := func(reason string) error { return fmt.Errorf("outbounds[%d]: %s", i+1, reason) }
 		if o.Name == "" || strings.TrimSpace(o.Name) != o.Name || strings.ContainsAny(o.Name, "\x00\r\n\t") {
 			return nil, fail("name must be nonempty with no surrounding whitespace or control characters")
@@ -195,12 +249,12 @@ func validateOutbounds(config []OutboundConfig) (map[string]OutboundType, error)
 			return nil, fail("duplicate outbound name " + o.Name)
 		}
 		if _, err := proxy.FromUrl(o.URL); err != nil {
-			return nil, fail("invalid proxy URL (expected http, https or socks5 with host and port)")
+			return nil, fail("invalid proxy URL (expected http, https, socks5 or ss with host and port)")
 		}
-		// Current proxy protocols only implement TCP. Keep fallback targets
-		// terminal: never recurse through another unsupported proxy or a cycle.
+		// Keep fallback targets terminal: never recurse through another
+		// unsupported proxy or a cycle.
 		if o.UDPFallback != "" && o.UDPFallback != BuiltinDirect && o.UDPFallback != BuiltinReject {
-			return nil, fail("udp-fallback must be direct or reject; proxy outbounds do not support UDP")
+			return nil, fail("udp-fallback must be direct or reject")
 		}
 		types[o.Name] = OutboundProxy
 	}
@@ -238,14 +292,19 @@ func systemDNSServers() ([]string, error) {
 
 func normalizeDNSServer(value string) (string, error) {
 	if ip, err := netip.ParseAddr(value); err == nil {
+		if ip.Zone() != "" && !ip.IsLinkLocalUnicast() {
+			return "", errors.New("DNS address zones are allowed only for link-local IPv6")
+		}
 		return net.JoinHostPort(ip.String(), "53"), nil
 	}
 	host, port, err := net.SplitHostPort(value)
 	if err != nil {
 		return "", errors.New("expected an IP address, optionally with a port")
 	}
-	if _, err := netip.ParseAddr(host); err != nil {
+	if ip, err := netip.ParseAddr(host); err != nil {
 		return "", errors.New("DNS server must be an IP address")
+	} else if ip.Zone() != "" && !ip.IsLinkLocalUnicast() {
+		return "", errors.New("DNS address zones are allowed only for link-local IPv6")
 	}
 	if err := validatePort(port); err != nil {
 		return "", err
@@ -275,6 +334,16 @@ func (cfg *KoneConfig) Validate() error {
 	}
 	if !prefix.Contains(prefix.Addr().Next()) || prefix.Addr().Next() == broadcastAddress(prefix) {
 		return errors.New("core.network must leave one additional host address for the TUN stack")
+	}
+	prefix6 := netip.Prefix{}
+	if cfg.Core.IPv6Network != "" {
+		prefix6, err = netip.ParsePrefix(cfg.Core.IPv6Network)
+		if err != nil || !prefix6.Addr().Is6() || prefix6.Addr().Is4In6() || !prefix6.Addr().IsPrivate() || prefix6.Bits() < 64 || prefix6.Bits() > 120 || prefix6.Addr() == prefix6.Masked().Addr() || !prefix6.Contains(prefix6.Addr().Next()) {
+			return errors.New("core.ipv6-network requires a ULA IPv6 host/prefix of length 64..120 with room for the next stack address")
+		}
+	}
+	if cfg.Core.AutoRoute6 && (!prefix6.IsValid() || cfg.Core.OutboundInterface == "") {
+		return errors.New("core.auto-route6 requires core.ipv6-network and core.outbound-interface")
 	}
 	if strings.ContainsAny(cfg.Core.Tun, "\x00\r\n\t\"' ") {
 		return errors.New("core.tun contains unsupported characters")
@@ -318,6 +387,15 @@ func (cfg *KoneConfig) Validate() error {
 	if cfg.DNS.ReadTimeout == 0 || cfg.DNS.ReadTimeout > 300 || cfg.DNS.WriteTimeout == 0 || cfg.DNS.WriteTimeout > 300 {
 		return errors.New("dns read/write timeouts must be between 1 and 300 seconds")
 	}
+	if cfg.DNS.HistoryLimit > 10000 || cfg.DNS.CacheLimit > 10000 {
+		return errors.New("dns history-limit and cache-limit must be between 0 and 10000")
+	}
+	if cfg.DNS.HistoryRetention == 0 || cfg.DNS.HistoryRetention > 86400 {
+		return errors.New("dns.history-retention must be between 1 and 86400 seconds")
+	}
+	if len(cfg.DNS.Servers) > 16 || len(cfg.DNS.Rules) > 64 {
+		return errors.New("DNS accepts at most 16 default servers and 64 split rules")
+	}
 	for i, server := range cfg.DNS.Servers {
 		normalized, err := normalizeDNSServer(server)
 		if err != nil {
@@ -325,16 +403,70 @@ func (cfg *KoneConfig) Validate() error {
 		}
 		host, _, _ := net.SplitHostPort(normalized)
 		ip, _ := netip.ParseAddr(host)
-		if ip.IsUnspecified() || ip.IsMulticast() || prefix.Contains(ip) {
+		if ip.IsUnspecified() || ip.IsMulticast() || prefix.Contains(ip) || prefix6.IsValid() && prefix6.Contains(ip) {
 			return fmt.Errorf("dns.servers[%d] is invalid or routed into the virtual network", i+1)
+		}
+	}
+	seenDNSSuffixes := make(map[string]bool)
+	for i, route := range cfg.DNS.Rules {
+		suffix := normalizeDNSSuffix(route.Suffix)
+		key := dnsRouteKey(route)
+		if !validDNSSuffix(suffix) || seenDNSSuffixes[key] || len(route.Servers) == 0 && !(route.Automatic && route.Unavailable) || len(route.Servers) > 16 {
+			return fmt.Errorf("dns.rules[%d] requires a unique valid suffix and at least one server", i+1)
+		}
+		seenDNSSuffixes[key] = true
+		if len(route.Interface) > 256 || strings.TrimSpace(route.Interface) != route.Interface || strings.ContainsAny(route.Interface, "\x00\r\n\t\"'") || route.Interface != "" && route.Interface == cfg.Core.Tun {
+			return fmt.Errorf("dns.rules[%d].interface is invalid or names the TUN", i+1)
+		}
+		for j, server := range route.Servers {
+			normalized, err := normalizeDNSServer(server)
+			if err != nil {
+				return fmt.Errorf("dns.rules[%d].servers[%d]: %w", i+1, j+1, err)
+			}
+			host, _, _ := net.SplitHostPort(normalized)
+			ip, _ := netip.ParseAddr(host)
+			if ip.IsUnspecified() || ip.IsMulticast() || prefix.Contains(ip) || prefix6.IsValid() && prefix6.Contains(ip) {
+				return fmt.Errorf("dns.rules[%d].servers[%d] is invalid or routed into the virtual network", i+1, j+1)
+			}
 		}
 	}
 	types, err := validateOutbounds(cfg.Outbounds)
 	if err != nil {
 		return err
 	}
+	ruleIDs := map[string]bool{}
 	for i, r := range cfg.Rule {
 		fail := func(reason string) error { return fmt.Errorf("rules[%d]: %s", i+1, reason) }
+		if r.ExpiresAt != "" {
+			if _, err := time.Parse(time.RFC3339, r.ExpiresAt); err != nil {
+				return fail("expires-at must be an RFC3339 timestamp")
+			}
+			switch strings.ToUpper(r.Schema) {
+			case "DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD":
+			default:
+				return fail("temporary rules support domain targets only; capture routes need an explicit restart")
+			}
+		}
+		if r.ID != "" {
+			if ruleIDs[r.ID] || len(r.ID) > 128 || strings.ContainsAny(r.ID, "\x00\r\n\t ") {
+				return fail("id must be unique and contain no whitespace or control characters")
+			}
+			ruleIDs[r.ID] = true
+		}
+		if r.Protocol != "" && r.Protocol != "tcp" && r.Protocol != "udp" {
+			return fail("protocol must be tcp or udp")
+		}
+		for _, port := range r.Ports {
+			if port == 0 {
+				return fail("ports must be between 1 and 65535")
+			}
+		}
+		if len(r.Ports) > 128 {
+			return fail("too many ports")
+		}
+		if len(r.Source) > 128 || strings.ContainsAny(r.Source, "\x00\r\n") {
+			return fail("invalid source")
+		}
 		if _, ok := types[r.Outbound]; !ok {
 			return fail("references undefined outbound " + r.Outbound)
 		}
@@ -352,7 +484,16 @@ func (cfg *KoneConfig) Validate() error {
 				return fail("a default capture route requires core.outbound-interface; prefer core.auto-route")
 			}
 		case "IP-CIDR6":
-			return fail("IPv6 interception is not supported yet")
+			p, err := netip.ParsePrefix(r.Pattern)
+			if err != nil || !p.Addr().Is6() || p.Addr().Is4In6() {
+				return fail("IP-CIDR6 requires an IPv6 prefix")
+			}
+			if !prefix6.IsValid() {
+				return fail("IPv6 interception is not supported without core.ipv6-network")
+			}
+			if p.Bits() == 0 && types[r.Outbound] != OutboundDirect && cfg.Core.OutboundInterface == "" {
+				return fail("an IPv6 default capture route requires core.outbound-interface")
+			}
 		case "GEOIP":
 			if len(r.Pattern) != 2 || r.Pattern[0] < 'A' || r.Pattern[0] > 'Z' || r.Pattern[1] < 'A' || r.Pattern[1] > 'Z' {
 				return fail("GEOIP requires a two-letter uppercase country code")

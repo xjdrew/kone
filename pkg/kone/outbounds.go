@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 
 	"github.com/xjdrew/kone/pkg/proxy"
 )
@@ -14,14 +15,30 @@ type configuredOutbound struct {
 	kind        OutboundType
 	proxy       *proxy.Proxy
 	udpFallback string
+	disabled    bool
+	id          string
 }
 
 var ErrUDPUnsupported = errors.New("outbound does not support UDP")
 var ErrRejected = errors.New("connection rejected by routing policy")
+var ErrOutboundDisabled = fmt.Errorf("outbound is disabled: %w", ErrRejected)
+
+func (cfg OutboundConfig) IsEnabled() bool { return cfg.Enabled == nil || *cfg.Enabled }
 
 type Outbounds struct {
 	entries map[string]configuredOutbound
 	dial    func(context.Context, string, string) (net.Conn, error)
+}
+
+func (p *Outbounds) CheckEnabled(name string) error {
+	entry, ok := p.entries[name]
+	if !ok {
+		return fmt.Errorf("unknown outbound %q", name)
+	}
+	if entry.disabled {
+		return fmt.Errorf("outbound %q: %w", name, ErrOutboundDisabled)
+	}
+	return nil
 }
 
 func (p *Outbounds) Dial(name, addr string) (net.Conn, error) {
@@ -32,6 +49,9 @@ func (p *Outbounds) DialContext(ctx context.Context, name, addr string) (net.Con
 	outbound, ok := p.entries[name]
 	if !ok {
 		return nil, fmt.Errorf("unknown outbound %q", name)
+	}
+	if outbound.disabled {
+		return nil, fmt.Errorf("outbound %q: %w", name, ErrOutboundDisabled)
 	}
 	switch outbound.kind {
 	case OutboundReject:
@@ -45,11 +65,11 @@ func (p *Outbounds) DialContext(ctx context.Context, name, addr string) (net.Con
 	return nil, fmt.Errorf("invalid outbound type for %q", name)
 }
 
-// SupportsUDP describes the actual transport implementation, not the URL's
-// potential protocol features. SOCKS5 UDP ASSOCIATE is not implemented yet.
+// SupportsUDP describes the actual transport implementation. Native SOCKS5/SS
+// associations are distinct from explicit direct fallback on TCP-only proxies.
 func (p *Outbounds) SupportsUDP(name string) bool {
 	entry, ok := p.entries[name]
-	return ok && entry.kind == OutboundDirect
+	return ok && !entry.disabled && (entry.kind == OutboundDirect || entry.kind == OutboundProxy && entry.proxy.SupportsUDP())
 }
 
 // UDPOutbound resolves policy before DNS or dialing. Fallbacks are explicitly
@@ -58,6 +78,9 @@ func (p *Outbounds) UDPOutbound(name string) (string, error) {
 	entry, ok := p.entries[name]
 	if !ok {
 		return "", fmt.Errorf("unknown outbound %q", name)
+	}
+	if entry.disabled {
+		return "", fmt.Errorf("outbound %q: %w", name, ErrOutboundDisabled)
 	}
 	if entry.kind == OutboundReject {
 		return "", fmt.Errorf("outbound %q: %w", name, ErrRejected)
@@ -80,12 +103,17 @@ func (p *Outbounds) DialUDPContext(ctx context.Context, name, addr string) (net.
 	if err != nil {
 		return nil, err
 	}
-	// Only direct currently supports UDP. Future UDP proxy implementations
-	// belong here, using the selected outbound's own protocol association.
 	if target == BuiltinDirect {
-		return p.dial(ctx, "udp4", addr)
+		network := "udp4"
+		host, _, _ := net.SplitHostPort(addr)
+		if address, err := netip.ParseAddr(host); err == nil && address.Is6() && !address.Is4In6() {
+			network = "udp6"
+		}
+		return p.dial(ctx, network, addr)
 	}
-	return nil, ErrUDPUnsupported
+	// A failed association is a real proxy failure, never permission to
+	// silently switch to direct or to execute an unrelated fallback policy.
+	return p.entries[target].proxy.DialUDPContextVia(ctx, addr, p.dial)
 }
 
 func NewOutbounds(config []OutboundConfig) (*Outbounds, error) {
@@ -99,14 +127,14 @@ func NewOutbounds(config []OutboundConfig) (*Outbounds, error) {
 	for _, o := range config {
 		dialer, _ := proxy.FromUrl(o.URL) // validated above; never log credentials
 		slog.Debug("Proxy configured", "outbound", o.Name, "scheme", dialer.Url.Scheme, "endpoint", dialer.Url.Host)
-		p.entries[o.Name] = configuredOutbound{kind: OutboundProxy, proxy: dialer, udpFallback: o.UDPFallback}
+		p.entries[o.Name] = configuredOutbound{kind: OutboundProxy, proxy: dialer, udpFallback: o.UDPFallback, disabled: !o.IsEnabled(), id: o.ID}
 	}
 	return p, nil
 }
 
 func (p *Outbounds) bypassEndpoints(rule *Rule) {
 	for _, entry := range p.entries {
-		if entry.kind == OutboundProxy {
+		if entry.kind == OutboundProxy && !entry.disabled {
 			rule.DirectDomain(entry.proxy.Url.Hostname())
 		}
 	}

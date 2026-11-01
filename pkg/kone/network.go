@@ -69,9 +69,13 @@ func (s *undoStack) restore(ctx context.Context) error {
 }
 
 type commandRunner func(context.Context, string, ...string) ([]byte, error)
+type routeOperations interface {
+	AddRoute(context.Context, Device, *net.IPNet) (Cleanup, error)
+}
 type systemNetwork struct {
 	run     commandRunner
 	gateway string
+	routes  routeOperations
 }
 
 // Sockets allows the same lifecycle to run in a different network namespace or

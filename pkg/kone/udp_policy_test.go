@@ -16,7 +16,7 @@ import (
 )
 
 func TestUDPOutboundCapabilitiesAndNoImplicitDial(t *testing.T) {
-	for _, scheme := range []string{"http", "https", "socks5"} {
+	for _, scheme := range []string{"http", "https"} {
 		for _, fallback := range []string{"", BuiltinDirect, BuiltinReject} {
 			t.Run(scheme+"/"+fallback, func(t *testing.T) {
 				p, err := NewOutbounds([]OutboundConfig{{Name: "office", URL: scheme + "://127.0.0.1:8080", UDPFallback: fallback}})
@@ -53,6 +53,29 @@ func TestUDPOutboundCapabilitiesAndNoImplicitDial(t *testing.T) {
 	}
 }
 
+func TestSOCKS5UDPUsesNativeAssociationWithoutRuntimeFallback(t *testing.T) {
+	for _, fallback := range []string{"", BuiltinDirect, BuiltinReject} {
+		t.Run(fallback, func(t *testing.T) {
+			p, err := NewOutbounds([]OutboundConfig{{Name: "office", URL: "socks5://127.0.0.1:1080", UDPFallback: fallback}})
+			require.NoError(t, err)
+			require.True(t, p.SupportsUDP("office"))
+			target, err := p.UDPOutbound("office")
+			require.NoError(t, err)
+			require.Equal(t, "office", target)
+			dials := 0
+			p.dial = func(_ context.Context, network, address string) (net.Conn, error) {
+				dials++
+				require.Equal(t, "tcp", network)
+				require.Equal(t, "127.0.0.1:1080", address)
+				return nil, errors.New("SOCKS association unavailable")
+			}
+			_, err = p.DialUDPContext(context.Background(), "office", "private.invalid:443")
+			require.ErrorContains(t, err, "SOCKS association unavailable")
+			require.Equal(t, 1, dials, "a native association failure must never dial the destination directly")
+		})
+	}
+}
+
 func TestUDPPolicyBeforeResolutionAndSnapshotReload(t *testing.T) {
 	cleanProxyEnv(t)
 	one := testEngine(t)
@@ -63,7 +86,7 @@ func TestUDPPolicyBeforeResolutionAndSnapshotReload(t *testing.T) {
 	require.ErrorIs(t, err, ErrUDPUnsupported, "must reject before upstream DNS is needed")
 	require.Equal(t, "A", policy)
 	require.Nil(t, one.dnsTable.Get(record.Hostname).RealIP)
-	one.dnsTable.SetRealIP(record.Hostname, &dns.Msg{Answer: []dns.RR{&dns.A{A: net.IPv4(192, 0, 2, 9)}}})
+	one.dnsTable.SetRealIP(record.Hostname, &dns.Msg{Answer: []dns.RR{&dns.A{Hdr: dns.RR_Header{Ttl: 60}, A: net.IPv4(192, 0, 2, 9)}}})
 	cfg := one.Snapshot().Config
 	cfg.Outbounds[0].UDPFallback = BuiltinDirect
 	require.NoError(t, one.Reload(cfg))

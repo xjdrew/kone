@@ -16,8 +16,14 @@
 # TUN 的 IPv4 主机地址/前缀，也是 Fake-IP 地址池；避免与现有网络冲突。
 # 当前支持 /8.. /30，并为 TUN 地址后的协议栈地址保留空间。
 # network = "10.192.0.1/16"
+# 可选 Linux/Windows IPv6 TUN/Fake-IP 网段；空字符串关闭。当前 macOS 明确拒绝启用。
+# 启用时指定不冲突的 ULA 主机/前缀（/64.. /120），例如 fd7a:203::1/120。
+# ipv6-network = ""
+# IPv6 全局接管；需要非空 ipv6-network 和真实出口 outbound-interface。
+# false 仅接管 IPv6 Fake-IP 子网及显式 IP-CIDR6 路由；不影响 IPv4 设置。
+# auto-route6 = false
 # system：系统 TCP + sing-tun UDP；mixed：系统 TCP + gVisor UDP。
-# mixed 需要以 -tags with_gvisor 构建；两者都只接管 IPv4。
+# mixed 需要以 -tags with_gvisor 构建；IPv6 需另外显式配置，支持 Linux/Windows。
 # 显式选择协议栈；省略时也默认为 system。修改后需要重启。
 stack = "system"
 # true 添加两条 /1 路由接管 IPv4；保留原默认路由，更具体路由仍优先。
@@ -31,11 +37,16 @@ stack = "system"
 # [dns] 整段可省略；默认在启动前读取当前系统 DNS，用于真实域名解析。
 # 系统上游会固定到本次运行，规则热更新不会重读已指向 KONE 的网卡 DNS。
 # [dns]
+# 可选系统 DNS 引导：Linux 使用 resolved 自有 link，macOS 使用自有临时解析服务。
+# Linux 需要已有 resolved stub；两平台均验证真实上游，只恢复自有状态，不覆盖物理/VPN DNS。
+# CLI 默认 false；管理模式 Linux/macOS 首次默认 true，可在界面关闭。Windows true 会阻断启用。
+# system = false
 # 上游 DNS 地址；省略或 [] 使用系统 DNS，不内置公共 DNS 作为回退。
 # 可指定 IPv4/IPv6 地址和端口，例如 ["1.1.1.1", "[2001:4860:4860::8888]:53"]。
 # 不得指向 KONE 虚拟网段；IPv6 上游地址不代表支持 IPv6 流量接管。
 # servers = []
-# KONE DNS 服务在 TUN 地址上的 UDP 监听端口；普通系统客户端使用 53。
+# KONE DNS 的 UDP/TCP 端口；Linux/Windows 使用 TUN 地址，macOS 使用回环入口。
+# 普通系统客户端使用 53；macOS 系统引导也支持显式配置其他空闲端口。
 # listen-port = 53
 # Fake-IP DNS 响应 TTL，单位秒，范围 1..4294967295。
 # ttl = 600
@@ -44,19 +55,45 @@ stack = "system"
 # 上游查询和 DNS 服务读/写超时，单位秒，范围 1..300；总查询超时为两者之和。
 # read-timeout = 5
 # write-timeout = 5
+# DNS 查询历史条数，范围 0..10000；0 关闭记录。历史仅保存在本次运行的内存中。
+# history-limit = 512
+# 查询历史保留秒数，范围 1..86400；条数或时间达到上限后清理旧记录。
+# history-retention = 3600
+# 真实 DNS 响应缓存条数，范围 0..10000；0 关闭缓存，报文编码累计另限 8 MiB。
+# 遵守正/负响应 TTL，不清除正在使用的 Fake-IP 映射。
+# cache-limit = 1024
+# 可选按域名后缀指定专用上游，最长后缀优先；匹配后只查询这里的上游。
+# 不因专用上游失败而向默认/公共 DNS 回退，适合内网、企业 VPN 和反向解析。
+# 最多 64 条，每条 1..16 个 IP 上游；suffix="." 匹配其他全部名称。
+# [[dns.rules]]
+# suffix = "corp.example"
+# servers = ["192.168.1.53"]
+# 可选专用解析出口；空字符串使用 core.outbound-interface，适合 VPN 专用 DNS 网卡。
+# interface = ""
+# [[dns.rules]]
+# suffix = "168.192.in-addr.arpa"
+# servers = ["192.168.1.53"]
 
 # 出站数组只需声明代理，填写 name（规则引用的唯一名称）和 url 即可。
 # direct（直连）和 reject（拒绝）是内置出站，无需声明；名称及其大小写变体保留。
 # 只使用内置出站时可省略整个 outbounds 数组。
 [[outbounds]]
+# 可选稳定标识；管理界面自动分配，重命名可保留标识。
+# id = "office-proxy"
+# 默认启用；禁用后新连接明确拒绝，既有连接保留原决定，不回退直连。
+# enabled = true
 name = "office"
-# 支持 http、https CONNECT 或 socks5，必须显式提供端口。
+# 支持 http、https CONNECT、socks5 或 ss，必须显式提供端口。
 # 也可填写 socks5://127.0.0.1:1080 或 https://username:password@example.com:443。
-# 当前代理出站仅支持 TCP；HTTP/HTTPS/SOCKS5 均未实现 UDP 代理。
+# HTTP/HTTPS 只支持 TCP；SOCKS5 支持 TCP 和原生 UDP ASSOCIATE。
+# Shadowsocks 支持 TCP/UDP，可填写 ss://aes-128-gcm:password@host:8388。
+# SS 方法：aes-128-gcm、aes-256-gcm、chacha20-ietf-poly1305；支持 SIP002 Base64URL 用户信息。
+# 不支持 SS 插件、旧流密码及 AEAD-2022；目标域名交由代理端解析。
 url = "http://127.0.0.1:8080"
 # 可选 UDP 回退出站；省略或空字符串时，代理不支持 UDP 就拒绝，禁止自动直连。
 # 仅允许 direct（明确允许直连 UDP）或 reject（明确拒绝）；不能引用其他代理。
-# 回退只影响该代理的 UDP，不改变 TCP 或 reject 规则；可随代理/规则热更新。
+# 仅协议没有 UDP 实现时执行回退；SOCKS5/SS 的连接或认证失败不会改为直连。
+# 回退不改变 TCP 或 reject 规则；可随代理/规则热更新。
 # udp-fallback = ""
 
 # 规则按顺序匹配，outbound 引用代理名称或内置 direct、reject（小写）。
@@ -65,6 +102,17 @@ url = "http://127.0.0.1:8080"
 # pattern：域名/后缀/关键词、IPv4 CIDR 或大写两字母国家代码；FINAL 不填。
 # FINAL 可省略，但写出时必须是最后一条；没有匹配规则时隐式直连。
 [[rules]]
+# 可选稳定规则标识与来源；管理界面自动分配，手写配置可省略。
+# id = "local-network"
+# source = "user"
+# 可选临时域名规则失效时间（RFC3339，例如 2026-11-02T08:00:00+08:00）。
+# 省略或空字符串表示永久；只允许域名类规则，失效后新连接重新按后续规则匹配。
+# 已建立连接保留原决定，Fake-IP 映射不会在失效时改指其他域名。
+# expires-at = ""
+# 按业务协议/目标端口限定；省略或空值表示全部 TCP/UDP、全部端口。
+# 域名规则先保留 Fake-IP 接管入口，再按实际协议和端口作最终决定。
+# protocol = ""
+# ports = []
 type = "IP-CIDR"
 pattern = "192.168.0.0/16"
 outbound = "direct"

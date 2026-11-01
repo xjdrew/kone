@@ -1,0 +1,164 @@
+name: Verified releases
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Development retry, stable promotion, or withdraw an existing release
+        type: choice
+        options: [development, stable, withdraw]
+        default: development
+      sha:
+        description: Complete master commit SHA (required for a specific retry/promotion)
+        type: string
+      tag:
+        description: Stable vMAJOR.MINOR.PATCH tag, or existing tag to withdraw
+        type: string
+      reason:
+        description: Why the existing release is being withdrawn
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# A unique push/run is never replaced by a newer master push. Each nested CI
+# invocation also has its own SHA group; only PR validation cancels stale work.
+concurrency:
+  group: release-dispatch-${{ github.run_id }}
+  cancel-in-progress: false
+
+# Pin command definitions separately when qualifying an older source SHA.
+defaults:
+  run:
+    shell: bash
+
+env:
+  JUST_JUSTFILE: ${{ github.workspace }}/.ci-tools/justfile
+  JUST_WORKING_DIRECTORY: ${{ github.workspace }}
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      withdraw: ${{ steps.plan.outputs.withdraw }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check out workflow task definitions
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
+      - name: Enumerate every new first-parent master commit
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: just release-plan
+  verify:
+    name: Verify ${{ matrix.sha }}
+    needs: plan
+    if: needs.plan.outputs.withdraw != 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    uses: ./.github/workflows/go.yml
+    with:
+      ref: ${{ matrix.sha }}
+      version: ${{ matrix.version }}
+      artifact-prefix: ${{ matrix.prefix }}
+
+  publish:
+    name: Publish ${{ matrix.sha }}
+    needs: [plan, verify]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/master' && needs.plan.result == 'success' && needs.plan.outputs.withdraw != 'true' }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    concurrency:
+      group: publish-${{ matrix.tag }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ matrix.sha }}
+          fetch-depth: 0
+      - name: Check out workflow task definitions
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
+      - name: Download exact SHA qualification
+        id: evidence
+        continue-on-error: true
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: ${{ matrix.prefix }}verification
+          path: verification
+      - uses: actions/download-artifact@v8.0.2
+        if: steps.evidence.outcome == 'success'
+        with:
+          name: ${{ matrix.prefix }}binaries
+          path: release-input
+      - uses: actions/download-artifact@v8.0.2
+        if: steps.evidence.outcome == 'success'
+        with:
+          pattern: ${{ matrix.prefix }}install-packages-*
+          merge-multiple: true
+          path: release-assets
+      - name: Publish only complete, checksum-verified packages
+        if: steps.evidence.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ matrix.sha }}
+          RELEASE_VERSION: ${{ matrix.version }}
+          RELEASE_TAG: ${{ matrix.tag }}
+          RELEASE_STABLE: ${{ matrix.stable }}
+        run: just release-publish
+      - name: Explain skipped release
+        if: steps.evidence.outcome != 'success'
+        run: just release-skipped
+  withdraw:
+    needs: plan
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && needs.plan.outputs.withdraw == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-${{ needs.plan.outputs.tag }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Check out workflow task definitions
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
+      - name: Withdraw without deleting the traceable source tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: just release-withdraw

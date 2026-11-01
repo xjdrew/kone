@@ -83,6 +83,9 @@ func (h *http11) Dial(network, addr string) (net.Conn, error) {
 	//defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		conn.Close()
+		if resp.StatusCode == http.StatusProxyAuthRequired {
+			return nil, atStage(StageAuth, errors.New(resp.Status))
+		}
 		return nil, errors.New(resp.Status)
 	}
 

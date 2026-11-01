@@ -21,17 +21,11 @@ func (n systemNetwork) Configure(ctx context.Context, d Device, cfg CoreConfig) 
 }
 
 func (n systemNetwork) AddRoute(ctx context.Context, d Device, subnet *net.IPNet) (Cleanup, error) {
-	args := []string{"-n", "add", "-net", subnet.IP.String(), "-netmask", net.IP(subnet.Mask).String(), "-interface", d.Name()}
-	_, err := n.run(ctx, "route", args...)
-	if err != nil {
-		return nil, err
+	backend := n.routes
+	if backend == nil {
+		backend = newDarwinRoutes()
 	}
-	return func(ctx context.Context) error {
-		copy := append([]string(nil), args...)
-		copy[1] = "delete"
-		_, err := n.run(ctx, "route", copy...)
-		return err
-	}, nil
+	return backend.AddRoute(ctx, d, subnet)
 }
 
 func fixTunIP(ip net.IP) net.IP { return net.IPv4zero }

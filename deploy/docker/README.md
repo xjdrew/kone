@@ -1,13 +1,13 @@
 # Docker（Linux）
 
-从仓库根目录构建和检查配置：
+源码镜像的构建和烟雾检查从仓库根目录统一执行 [just 开发任务](../../docs/development.md)：
 
 ```sh
-docker build -f deploy/docker/Dockerfile -t kone:local .
-docker run --rm kone:local -check -config /etc/kone/config.toml
+just docker-build
+just docker-check
 ```
 
-此检查不需要 TUN、管理员网络能力或代理可达。
+任务构建 `kone:ci` 镜像；此检查不需要 TUN、管理员网络能力或代理可达。以下 Compose 命令属于产品部署，直接使用 Docker，不依赖开发用 justfile。
 实际运行前编辑 `configs/kone.example.toml` 的上游代理地址，再执行：
 
 ```sh

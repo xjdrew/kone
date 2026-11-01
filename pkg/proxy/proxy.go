@@ -57,7 +57,7 @@ type cancelForward struct {
 func (f *cancelForward) Dial(network, addr string) (net.Conn, error) {
 	conn, err := f.dial(f.ctx, network, addr)
 	if err != nil {
-		return nil, err
+		return nil, atStage(StageConnect, err)
 	}
 	f.stopped = make(chan struct{})
 	f.stop = context.AfterFunc(f.ctx, func() { conn.Close(); close(f.stopped) })
@@ -86,15 +86,24 @@ func (p *Proxy) DialContextVia(ctx context.Context, network, addr string, dial f
 		if conn != nil {
 			conn.Close()
 		}
-		return nil, ctx.Err()
+		stage := ErrorStage(err)
+		if stage == "" {
+			stage = StageHandshake
+		}
+		return nil, atStage(stage, ctx.Err())
 	}
-	return conn, err
+	return conn, atStage(StageHandshake, err)
 }
 
 func FromUrl(rawurl string) (*Proxy, error) {
 	u, err := url.Parse(rawurl)
 	if err != nil {
 		return nil, errors.New("proxy: invalid URL")
+	}
+	if u.Scheme == "ss" {
+		if err := normalizeShadowsocksURL(u); err != nil {
+			return nil, err
+		}
 	}
 	if u.Opaque != "" || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(u.Host, " \t\r\n") {
 		return nil, errors.New("proxy: expected scheme://host:port without path, query or fragment")

@@ -1,0 +1,12 @@
+{
+  "servers": [
+    {"server": "127.0.0.1", "server_port": 41080, "method": "aes-128-gcm", "password": "kone-ci-only-fixture", "mode": "tcp_and_udp"},
+    {"server": "127.0.0.1", "server_port": 41081, "method": "aes-256-gcm", "password": "kone-ci-only-fixture", "mode": "tcp_and_udp"},
+    {"server": "127.0.0.1", "server_port": 41082, "method": "chacha20-ietf-poly1305", "password": "kone-ci-only-fixture", "mode": "tcp_and_udp"}
+  ],
+  "dns": "udp://127.0.0.1:41083",
+  "dns_cache_size": 0,
+  "ipv6_first": false,
+  "udp_timeout": 3,
+  "timeout": 5
+}

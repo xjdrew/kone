@@ -4,3 +4,6 @@ dist
 coverage*
 config.toml
 *.local.toml
+/web/node_modules
+/web/playwright-report
+/web/test-results
