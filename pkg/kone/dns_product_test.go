@@ -16,8 +16,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TCP and UDP have separate port spaces. Hold the UDP allocation while trying
-// TCP, then release the whole attempt only for an actual cross-protocol clash.
+// TCP and UDP have separate port spaces. Allocate TCP first so its ephemeral
+// allocator avoids Windows' TCP exclusions, then hold it while binding UDP.
+// Release the whole attempt only for an actual cross-protocol clash.
 func dnsFixtureAddressInUse(err error) bool {
 	// Windows exposes WSAEADDRINUSE rather than its POSIX compatibility errno.
 	return errors.Is(err, syscall.EADDRINUSE) || runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(10048))
@@ -26,15 +27,15 @@ func dnsFixtureAddressInUse(err error) bool {
 func bindDNSFixturePair(listenPacket func(string, string) (net.PacketConn, error), listenTCP func(string, string) (net.Listener, error)) (net.PacketConn, net.Listener, error) {
 	var conflict error
 	for range 32 {
-		udp, err := listenPacket("udp4", "127.0.0.1:0")
+		tcp, err := listenTCP("tcp4", "127.0.0.1:0")
 		if err != nil {
 			return nil, nil, err
 		}
-		tcp, err := listenTCP("tcp4", udp.LocalAddr().String())
+		udp, err := listenPacket("udp4", tcp.Addr().String())
 		if err == nil {
 			return udp, tcp, nil
 		}
-		udp.Close()
+		tcp.Close()
 		if !dnsFixtureAddressInUse(err) {
 			return nil, nil, err
 		}
