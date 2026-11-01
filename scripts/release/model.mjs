@@ -15,6 +15,18 @@ export const requiredJobs = [
   "test",
   "build",
   "packages",
+  "quality",
+  "linux-system",
+  "windows-system",
+];
+// Published development releases retain their original complete gate set.
+// New markers use requiredJobs; compatibility never fills missing current
+// gates with individual historical labels (or the reverse).
+const legacyRequiredJobs = [
+  "web",
+  "test",
+  "build",
+  "packages",
   "performance",
   "robustness",
   "docker",
@@ -88,7 +100,9 @@ export function verifyMarker(marker, { sha, version, runID, runAttempt }) {
     );
   if (
     !Array.isArray(marker.required_jobs) ||
-    requiredJobs.some((job) => !marker.required_jobs.includes(job))
+    ![requiredJobs, legacyRequiredJobs].some((jobs) =>
+      jobs.every((job) => marker.required_jobs.includes(job)),
+    )
   )
     throw new Error("CI verification marker is missing required gates");
 }

@@ -34,6 +34,10 @@
 - Preserve the observed protocol and port when drafting a precise rule.
 - Preserve both proxy username and password when editing credentials.
 
+## Changes
+
+- Speed up CI while preserving platform and release validation.
+
 # 2026/10/31
 
 ## Features

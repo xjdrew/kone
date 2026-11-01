@@ -54,7 +54,7 @@ CLI 使用标准库 `signal.NotifyContext`，由 engine 统一负责关闭与恢
 
 ## PR 覆盖率门禁
 
-`Coverage must not decrease` 检查每次 PR 的全项目语句覆盖率，要求不低于该 PR 目标分支的精确 base SHA。
+`Platform tests (windows-latest)` 中的 `Reject coverage regression` 检查每次 PR 的全项目语句覆盖率，要求不低于该 PR 目标分支的精确 base SHA。
 基线会重新运行测试，不依赖历史 artifact；失败、缺失或无有效语句的覆盖率报告均使门禁失败。
 使用 Windows runner 和 PR 的 Go 工具链作为统一口径，避免跨平台语句集合不同，也兼容旧 `master` 的 Unix 构建问题。
 

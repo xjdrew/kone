@@ -6,7 +6,23 @@ KONE publishes one development prerelease for each qualifying first-parent commi
 
 The development tag is `dev-<12-character SHA>`, and its executable reports `0.4.0-dev.<12-character SHA>`. `release.json` records the full SHA, version, CI run and attempt, gate evidence, asset hashes and which architectures passed a native executable/package check. `SHA256SUMS` includes every distributable, the corresponding source and manifests. The source archive includes vendored Go dependencies, frontend sources and built assets, build identity and component licenses. Reproduction uses the toolchain and `-ldflags` recorded in `build-info.json`/`BUILD-INFO.json`.
 
-The required-gate workflow is reused rather than duplicated. The push head therefore has the ordinary master check and an independent release qualification run. This initially spends extra CI time to keep release evidence straightforward; it does not weaken a gate or infer success from another SHA.
+PRs invoke the Go workflow directly. A `master` push invokes the release dispatcher, which calls that same workflow for every qualifying SHA; the push head does not also run a duplicate ordinary Go workflow. Each SHA still receives its own complete qualification, version and artifact prefix. Development-branch pushes do not run CI.
+
+The execution groups are:
+
+| Group | Runners | Checks |
+| --- | --- | --- |
+| Web | 1 Linux | Frontend, three browser engines and genuine paused management persistence |
+| Platform tests | 3 | Native unit/race and optional mixed-stack tests; macOS privileged acceptance; fresh Windows PR coverage comparison |
+| Build | 1 Linux | Seven binary targets, matching source/licenses and Linux package installation |
+| Packages | 2 | macOS and Windows package installation |
+| Quality | 1 Linux | Fuzzing, vulnerability checks and shared core performance baseline |
+| Linux integration | 1 Linux | Isolated TUN/system DNS, official Shadowsocks interoperability and container smoke |
+| Windows native | 2 Windows | Independent `system` and `mixed` Wintun traffic and fault recovery |
+
+These are 11 execution checks, plus the release-only verification marker. Grouping reuses setup, compiler caches and compatible test binaries; it does not remove platform, protocol or failure assertions. PR coverage still measures the exact target-branch SHA afresh with the same Windows toolchain and flags. The three-platform package checks and each native-stack matrix must all succeed before release evidence is emitted. Historical SHA qualification continues to use its checked-out source and existing release scripts, without requiring a newly added CI helper from another commit.
+
+Previously published development evidence with the complete original 12-gate list remains valid for historical stable promotion. New evidence records only the current seven groups. Verification accepts a complete current set or a complete historical set; combining incomplete sets cannot qualify a release. SHA, version, run/attempt, marker schema and the actual latest successful verification job remain required in both cases.
 
 ## Packages and trust
 
