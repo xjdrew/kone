@@ -857,7 +857,7 @@ test("@compat log settings edit inline, cancel restores saved values and save re
 });
 
 for (const destination of ["back", "history", "navigation"]) {
-  test(`unsaved inline log settings can stay or be discarded when leaving through ${destination}`, async ({ page }) => {
+  test(`@compat unsaved inline log settings can stay or be discarded when leaving through ${destination}`, async ({ page }) => {
     const data = await mount(page);
     await navigateSettings(page, "logs");
     await page.locator("#log-level").selectOption("debug");
@@ -898,7 +898,7 @@ test("password subpage protects unfinished input when leaving and clears it afte
   expect(data.requests.some((request) => request.path === "/auth/password")).toBe(false);
 });
 
-test("a delayed log-settings request cannot rebuild a later password subpage or erase its input", async ({ page }) => {
+test("@compat a delayed log-settings request cannot rebuild a later password subpage or erase its input", async ({ page }) => {
   const data = await mount(page);
   await navigate(page, "settings");
   let release;
@@ -922,7 +922,7 @@ test("a delayed log-settings request cannot rebuild a later password subpage or 
   } finally { release(); }
 });
 
-test("cancelling log edits finishes its reload before allowing navigation to a new form", async ({ page }) => {
+test("@compat cancelling log edits finishes its reload before allowing navigation to a new form", async ({ page }) => {
   const data = await mount(page);
   await navigateSettings(page, "logs");
   await page.locator("#log-level").selectOption("debug");
@@ -949,7 +949,7 @@ test("cancelling log edits finishes its reload before allowing navigation to a n
   } finally { release(); }
 });
 
-test("closing an unsaved-settings confirmation with Escape or the close button allows another attempt", async ({ page }) => {
+test("@compat closing an unsaved-settings confirmation with Escape or the close button allows another attempt", async ({ page }) => {
   const data = await mount(page);
   await navigateSettings(page, "logs");
   await page.locator("#log-level").selectOption("debug");
