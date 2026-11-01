@@ -13,9 +13,12 @@ import {
   explainError,
 } from "./api.js";
 import { aggregatePaths, bytes, nativePaths, renderSankey } from "./graph.js";
-import { mergeLogs } from "./logs.js";
+import { mergeLogs, parseLogTimeRange, logQuery } from "./logs.js";
+import { createDiagnosticsPage } from "./diagnostics-page.js";
 import { createConfigurationPages, outboundAddress, currentHealth, needsDirectConfirmation, settingsSections } from "./configuration-pages.js";
 import { outboundProtocols, parseOutboundFields, buildOutboundURL, defaultOutboundName, outboundCredentialAction } from "./outbound-editor.js";
+import { ruleTypes, rulePatternInfo, validateRulePattern, countryOptions, classifyRuleDecision, ruleScope } from "./rule-editor.js";
+import "./outbounds.css";
 
 const pages = [
   ["home", "首页", "◈", "OVERVIEW", "看清流量，掌握每一次连接。"],
@@ -27,7 +30,7 @@ const pages = [
     "从实际路径与失败阶段，理解每条连接。",
   ],
   ["inbounds", "入站", "↳", "INBOUNDS", "明确哪些流量会进入 KONE。"],
-  ["outbounds", "出站", "↗", "OUTBOUNDS", "选择可信出口，并了解它的协议能力。"],
+  ["outbounds", "出站", "↗", "OUTBOUNDS", ""],
   ["rules", "规则", "≡", "ROUTING", "按顺序决定每个目标的出站策略。"],
   ["dns", "DNS", "◎", "DNS & RESOLVERS", "区分真实解析、虚拟地址与业务连接。"],
   [
@@ -86,6 +89,7 @@ const model = {
   frozen: null,
   dns: null,
   diagnostics: [],
+  diagnosticsGeneration: 0,
   logs: [],
   logPage: null,
   logCursor: null,
@@ -95,6 +99,18 @@ const model = {
   logError: "",
   logLoading: false,
   logGeneration: 0,
+  logPageSize: 100,
+  logFrom: "",
+  logTo: "",
+  logFromInput: "",
+  logToInput: "",
+  logFilterError: "",
+  logHistory: [],
+  logHistorical: false,
+  logBefore: null,
+  logHasOlder: false,
+  logNeedsPage: true,
+  logPendingCount: 0,
   sessions: [],
   lan: {},
   lastSuccess: null,
@@ -319,12 +335,17 @@ function revokeAuthentication(clear = true) {
     credentialActions: {}, outboundOrigins: [], outboundHealth: [], outboundTests: {}, outboundTestOpen: null, dirty: false,
     versionConflict: false, traffic: normalizeTraffic(), trafficError: "",
     dns: null, diagnostics: [], logs: [], logPage: null, logCursor: null,
+    logHistory: [], logHistorical: false, logBefore: null, logHasOlder: false, logNeedsPage: true, logPendingCount: 0,
+    logFrom: "", logTo: "", logFromInput: "", logToInput: "", logFilterError: "",
     logError: "", logLoading: false, lan: {}, sessions: [], geoip: null,
     recovery: null, geoFile: null, geoExpected: "", geoHash: "",
     graphSelection: null, graphSnapshot: null, graphFrozen: null, frozen: null,
     lastSuccess: null, notice: null, pendingTask: null,
   });
   model.logGeneration++;
+  model.diagnosticsGeneration++;
+  diagnosticsPage = null;
+  activeLogRequest = null;
   if (model.auth) model.auth.setup_authorized = false;
   for (const id of ["editor-dialog", "detail-dialog"]) {
     const modal = document.getElementById(id);
@@ -512,7 +533,7 @@ function configBody() {
 function configFooter(editorFooter = false) {
   if (model.editor && !editorFooter) return null;
   return h("div", { class: "compact-save" },
-    button("保存", () => saveEditor(false), "primary", !canManage() || !model.dirty || Boolean(model.editor && ["inbounds", "dns", "logs"].includes(model.editor.kind) && captureLocked()), { "data-save": "", "data-editor-save": "" }),
+    button("保存", () => saveEditor(false), "primary", !canManage() || !model.dirty && !conditionalFinal(model.editor?.item) || Boolean(model.editor && ["inbounds", "dns", "logs"].includes(model.editor.kind) && captureLocked()), { "data-save": "", "data-editor-save": "" }),
   );
 }
 
@@ -2067,20 +2088,57 @@ function addExactRule(target, protocol = "") {
   });
   openEditor("rule", 0, () => { model.draft.rules.unshift(rule); markDirty(); });
 }
+function conditionalFinal(rule) { return rule?.type === "FINAL" && Boolean(rule.protocol || rule.ports?.length); }
+function rulePatternField(rule, index) {
+  const info = rulePatternInfo(rule.type);
+  const error = h("small", { class: "rule-pattern-error", "data-rule-pattern-error": "", id: `rule-pattern-error-${index}`, role: "status" }, validateRulePattern(rule.type, rule.pattern));
+  const result = field(info.label, rule.pattern || "", value => {
+    rule.pattern = value;
+    markDirty();
+    const message = validateRulePattern(rule.type, value);
+    error.textContent = message;
+    input.setAttribute("aria-invalid", String(Boolean(message)));
+  }, { id: `rule-pattern-${index}`, placeholder: info.placeholder,
+    ...(rule.type === "GEOIP" ? { options: [{ value: "", label: "选择国家或地区" }, ...countryOptions("zh-CN", rule.pattern)] } : {}),
+  });
+  const input = result.querySelector("input,select");
+  input.setAttribute("aria-describedby", `rule-pattern-help-${index} rule-pattern-error-${index}`);
+  input.setAttribute("aria-invalid", String(Boolean(error.textContent)));
+  result.append(h("small", { "data-rule-pattern-help": "", id: `rule-pattern-help-${index}` }, info.hint), error);
+  return result;
+}
+function renderRuleSimulation(result) {
+  const decision = result.decision || result;
+  const kind = classifyRuleDecision(decision);
+  const type = decision.rule_type || (decision.rule_name || "").split(" ")[0];
+  const savedRule = list(model.config?.config?.rules).find(rule => rule.id && rule.id === decision.rule_id)
+    || (decision.rule_order > 0 ? model.config?.config?.rules?.[decision.rule_order - 1] : null);
+  const pattern = decision.rule_name?.startsWith(`${type} `) ? decision.rule_name.slice(type.length + 1)
+    : decision.config_version === model.config?.version ? savedRule?.pattern || "" : "";
+  const builtin = decision.rule_id === "builtin:default" || decision.rule_source === "builtin";
+  const heading = kind === "protected" ? "命中安全保护规则" : kind === "final" ? "命中最终规则 FINAL" : `命中第 ${decision.rule_order} 条规则`;
+  const root = h("section", { class: "rule-simulation-result", "data-rule-simulation-result": "", "data-rule-simulation-match": kind },
+    h("h3", {}, heading),
+    kind === "rule" && h("p", { "data-rule-simulation-order": decision.rule_order }, `第 ${decision.rule_order} 条 · ${type || savedRule?.type || "规则"} ${pattern}`),
+    kind === "final" && h("p", { class: "muted" }, builtin ? "没有普通规则命中，使用内置 FINAL 直连。" : "前面的普通规则未命中，使用已保存的 FINAL。"),
+    kind === "protected" && h("p", { class: "muted" }, "代理端点通过安全保护规则直连，优先于普通规则和 FINAL。"),
+    detailPairs([["规则出站", decision.outbound || "—"], ["实际出站", Object.hasOwn(decision, "effective_outbound") ? decision.effective_outbound || "不可用" : decision.outbound || "—"]]),
+    decision.fallback && note("此 UDP 连接使用出站明确设置的回退策略。", "warning"),
+    decision.effective_outbound === "" && decision.reason && note(explainError(decision.reason), "warning"),
+    result.error && note(explainError(result.error), "error"),
+  );
+  return root;
+}
 function renderRulesEditor() {
   if (!model.draft) return [empty("配置尚未加载", "连接恢复后可编辑规则。")];
   model.draft.rules ||= [];
-  const types = [
-    "DOMAIN",
-    "DOMAIN-SUFFIX",
-    "DOMAIN-KEYWORD",
-    "IP-CIDR",
-    ...(model.draft.core?.["ipv6-network"] ? ["IP-CIDR6"] : []),
-    "GEOIP",
-    "FINAL",
-  ];
+  const types = ruleTypes.map(value => ({ value, label: value, disabled: value === "IP-CIDR6" && !model.draft.core?.["ipv6-network"] }));
   const editors = model.draft.rules.map((rule, index) =>
-    model.editor?.kind === "rule" && index !== model.draft.rules.indexOf(model.editor.item) ? null : h(
+    model.editor?.kind === "rule" && index !== model.draft.rules.indexOf(model.editor.item) ? null : rule.type === "FINAL" ? h("section", { class: "editor-item", "data-rule-final-editor": "" },
+      h("p", { class: "muted" }, "为所有未命中普通规则的流量选择出站。"),
+      conditionalFinal(rule) && h("div", { "data-rule-final-scope": "" }, note(`旧版 FINAL 当前仅匹配 ${ruleScope(rule)}，其他流量仍直连。保存时需确认改为全部未匹配流量。`, "warning")),
+      field("目标出站", rule.outbound || "direct", value => { rule.outbound = value; markDirty(); }, { id: `rule-outbound-${index}`, options: outboundNames() }),
+    ) : h(
       "section",
       { class: "editor-item" },
       h(
@@ -2105,36 +2163,12 @@ function renderRulesEditor() {
           rule.type,
           (value) => {
             rule.type = value;
-            if (!["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD"].includes(value))
-              delete rule["expires-at"];
-            if (value === "FINAL") {
-              delete rule.pattern;
-              model.draft.rules.splice(index, 1);
-              model.draft.rules.push(rule);
-            }
             markDirty();
             render();
           },
           { id: `rule-type-${index}`, options: types },
         ),
-        rule.type !== "FINAL" &&
-          field(
-            "匹配内容",
-            rule.pattern || "",
-            (value) => {
-              rule.pattern = value;
-              markDirty();
-            },
-            {
-              id: `rule-pattern-${index}`,
-              hint:
-                rule.type === "DOMAIN-SUFFIX"
-                  ? "匹配自身及子域名，扩大作用域前请确认。"
-                  : rule.type === "IP-CIDR"
-                    ? "只有 IP 证据时建议单地址 /32；变更 CIDR 需要重启。"
-                    : "默认优先使用精确域名，避免影响共享 IP 的其他站点。",
-            },
-          ),
+        rulePatternField(rule, index),
         field(
           "目标出站",
           rule.outbound || "direct",
@@ -2206,14 +2240,10 @@ function renderRulesEditor() {
             },
             {
               id: `rule-lifetime-${index}`,
-              disabled:
-                !canManage() ||
-                !["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD"].includes(
-                  rule.type,
-                ),
+              disabled: !canManage(),
               options: [
                 { value: "permanent", label: "永久" },
-                { value: "temporary", label: "临时（默认一小时，可调整）" },
+                { value: "temporary", label: "临时（默认一小时，可调整）", disabled: !["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD"].includes(rule.type) },
               ],
               hint: "临时规则只支持域名，不隐式移除 CIDR 路由。",
             },
@@ -2264,7 +2294,7 @@ function renderRulesEditor() {
     ),
     card(
       "模拟一次规则匹配",
-      "使用已保存版本，不发起业务连接；草稿需先保存，结果不是连通性证明。",
+      "按输入目标和已保存规则计算；不解析 DNS，也不测试连通性。域名结果不包含尚未知晓的 CNAME 或 IP 证据。",
       h(
         "form",
         {
@@ -2277,22 +2307,23 @@ function renderRulesEditor() {
                 target: targetWithPort(data.get("target"), data.get("port")),
                 protocol: data.get("protocol"),
               });
-              showResult("规则模拟", result);
+              const output = event.target.querySelector("[data-rule-simulation-output]");
+              output?.replaceChildren(renderRuleSimulation(result));
             });
           },
         },
         h(
           "div",
-          { class: "button-row" },
-          h("input", {
+          { class: "rule-simulation-fields" },
+          h("div", { class: "field" }, h("label", { for: "simulate-target" }, "目标域名或 IP"), h("input", {
             name: "target",
             id: "simulate-target",
             placeholder: "example.com",
             required: true,
             "aria-label": "模拟目标",
             disabled: !canManage(),
-          }),
-          h("input", {
+          })),
+          h("div", { class: "field" }, h("label", { for: "simulate-port" }, "目标端口"), h("input", {
             name: "port",
             id: "simulate-port",
             type: "number",
@@ -2302,23 +2333,25 @@ function renderRulesEditor() {
             required: true,
             "aria-label": "模拟目标端口",
             disabled: !canManage(),
-          }),
-          h(
+          })),
+          h("div", { class: "field" }, h("label", { for: "simulate-protocol" }, "协议"), h(
             "select",
             {
               name: "protocol",
+              id: "simulate-protocol",
               "aria-label": "模拟协议",
               disabled: !canManage(),
             },
             h("option", { value: "tcp" }, "TCP"),
             h("option", { value: "udp" }, "UDP"),
-          ),
-          h(
+          )),
+        ),
+        h("div", { class: "button-row form-section" }, h(
             "button",
             { class: "button primary", type: "submit", disabled: !canManage() },
             "模拟匹配",
-          ),
-        ),
+          )),
+        h("div", { "data-rule-simulation-output": "", "aria-live": "polite" }),
       ),
     ),
   ];
@@ -2646,72 +2679,132 @@ function renderDNSEditor() {
   ];
 }
 
+let activeLogRequest = null;
 async function loadLogs(force = false) {
-  if (!model.authenticated || model.logLoading || (model.logPaused && !force)) return;
+  if (!model.authenticated || (model.logPaused && !force)) return;
   const epoch = model.authEpoch;
-  model.logLoading = true;
   const generation = model.logGeneration;
+  if (activeLogRequest?.epoch === epoch && activeLogRequest.generation === generation) return;
+  const request = { epoch, generation };
+  activeLogRequest = request;
+  model.logLoading = true;
+  const pageRequest = model.logNeedsPage;
   try {
-    const query = { limit: "100", min_level: model.logLevel };
-    if (model.logSource) query.source = model.logSource;
-    if (model.logCursor !== null) query.after = model.logCursor;
+    const query = logQuery(model, pageRequest ? { before: model.logBefore } : { after: model.logCursor });
     const page = await endpoints.logs(query);
-    if (!currentAuth(epoch) || generation !== model.logGeneration) return;
-    model.logs = mergeLogs(model.logs, page, model.logCursor === null);
-    model.logCursor = page.next_cursor;
-    model.logPage = { ...page, gap: Boolean(page.gap || model.logPage?.gap) };
+    if (!currentAuth(epoch) || generation !== model.logGeneration || activeLogRequest !== request) return;
+    if (pageRequest) {
+      model.logs = mergeLogs([], page, true, model.logPageSize);
+      model.logHasOlder = Boolean(page.has_more);
+      model.logNeedsPage = false;
+      model.logPage = page;
+      if (!model.logHistorical) model.logCursor = page.next_cursor;
+    } else {
+      model.logCursor = page.next_cursor;
+      if (page.records?.length) {
+        if (model.logHistorical || model.logPendingCount || diagnosticsPage?.reading()) {
+          model.logPendingCount += page.records.length;
+        } else {
+          const previous = model.logs;
+          model.logs = mergeLogs(previous, page, false, model.logPageSize);
+          if (previous.length + page.records.length > model.logPageSize) model.logHasOlder = true;
+        }
+      }
+      model.logPage = { ...page, gap: Boolean(page.gap || model.logPage?.gap) };
+    }
     model.logError = "";
+    return true;
   } catch (error) {
-    if (currentAuth(epoch) && generation === model.logGeneration) {
+    if (currentAuth(epoch) && generation === model.logGeneration && activeLogRequest === request) {
       if (error.status === 401) failure(error);
       else model.logError = error.message;
     }
   } finally {
-    if (currentAuth(epoch)) {
+    if (currentAuth(epoch) && activeLogRequest === request) {
+      activeLogRequest = null;
       model.logLoading = false;
-      if (generation !== model.logGeneration) await loadLogs(true);
     }
   }
 }
 
-function renderLogs() {
-  const filter = (key, value) => {
-    model[key] = value;
-    model.logGeneration++;
-    model.logCursor = null;
-    model.logs = [];
-    model.logPage = null;
-    loadLogs(true).then(renderPreserving);
-  };
-  return card(
-    "运行日志",
-    "主机与提权辅助进程的近期日志；仅保存在内存中，凭据会脱敏。此处暂停只停止日志刷新。",
-    h("div", { class: "toolbar" },
-      h("label", { for: "log-level" }, "最低级别", h("select", {
-        id: "log-level", value: model.logLevel, onchange: (event) => filter("logLevel", event.target.value),
-      }, ["debug", "info", "warn", "error"].map((level) => h("option", { value: level }, level.toUpperCase())))),
-      h("label", { for: "log-source" }, "来源", h("select", {
-        id: "log-source", value: model.logSource, onchange: (event) => filter("logSource", event.target.value),
-      }, [["", "全部"], ["management", "管理"], ["desktop", "桌面"], ["helper", "提权辅助进程"]].map(([value, text]) => h("option", { value }, text)))),
-      button(model.logPaused ? "继续日志刷新" : "暂停日志刷新", () => {
-        model.logPaused = !model.logPaused;
-        if (!model.logPaused) loadLogs().then(renderPreserving);
-        renderPreserving();
-      }, "ghost compact", false),
-      button("刷新日志", () => loadLogs(true).then(renderPreserving), "ghost compact", false),
-    ),
-    model.logError && note(`日志暂不可用：${model.logError}`, "error"),
-    model.logPage?.helper?.error && note(`辅助进程日志暂不可用：${model.logPage.helper.error}`),
-    model.logPage?.gap && note("部分旧日志已过期，当前保留记录不连续。"),
-    model.logPage && h("p", { class: "muted" }, `本页保留最近 ${model.logs.length} 条；主机已淘汰 ${model.logPage.dropped || 0} 条。辅助进程${model.logPage.helper?.connected ? "已连接" : "未连接"}。`),
-    model.logs.length ? h("div", { class: "runtime-logs", id: "runtime-logs" }, table(
-      ["时间", "级别", "来源", "消息"], [...model.logs].reverse().map((record) => [
-        time(record.time), record.level, { management: "管理", desktop: "桌面", helper: "提权辅助进程" }[record.source] || record.source,
-        h("div", {}, h("span", {}, record.message), Object.keys(record.attrs || {}).length > 0 && h("details", {},
-          h("summary", {}, "结构化字段"), h("pre", {}, JSON.stringify(record.attrs, null, 2)))),
-      ]),
-    )) : empty("暂无匹配的运行日志", "管理服务启动、接管启停与失败过程会记录在这里。可调整级别或来源查看。"),
-  );
+function resetLogPages() {
+  model.logGeneration++;
+  model.logCursor = null;
+  model.logs = [];
+  model.logPage = null;
+  model.logHistory = [];
+  model.logHistorical = false;
+  model.logBefore = null;
+  model.logHasOlder = false;
+  model.logNeedsPage = true;
+  model.logPendingCount = 0;
+  model.logError = "";
+  diagnosticsPage?.resetScroll();
+}
+function filterLogs(key, value) {
+  model[key] = value;
+  resetLogPages();
+  renderPreserving();
+  loadLogs(true).then(renderPreserving);
+}
+function applyLogTime() {
+  const controls = diagnosticsPage?.root.querySelectorAll("input[type=datetime-local]") || [];
+  const result = parseLogTimeRange(model.logFromInput, model.logToInput);
+  model.logFilterError = [...controls].some(control => !control.validity.valid) ? "请输入有效的开始和结束时间。" : result.error;
+  if (model.logFilterError) return renderPreserving();
+  model.logFrom = result.from;
+  model.logTo = result.to;
+  resetLogPages();
+  renderPreserving();
+  loadLogs(true).then(renderPreserving);
+}
+async function olderLogs() {
+  if (model.logLoading && model.logNeedsPage || !model.logHasOlder || !model.logs.length) return;
+  const previous = { logs: model.logs, page: model.logPage, before: model.logBefore, historical: model.logHistorical, hasOlder: model.logHasOlder };
+  const epoch = model.authEpoch;
+  const position = diagnosticsPage?.root.querySelector("#runtime-logs")?.scrollTop || 0;
+  model.logHistory.push(previous);
+  model.logBefore = model.logs[0].id;
+  model.logHistorical = true;
+  model.logNeedsPage = true;
+  const generation = ++model.logGeneration;
+  diagnosticsPage?.resetScroll();
+  const request = loadLogs(true);
+  renderPreserving();
+  const loaded = await request;
+  if (currentAuth(epoch) && generation === model.logGeneration && !loaded) {
+    model.logHistory.pop();
+    model.logs = previous.logs;
+    model.logPage = previous.page;
+    model.logBefore = previous.before;
+    model.logHistorical = previous.historical;
+    model.logHasOlder = previous.hasOlder;
+    model.logNeedsPage = false;
+    renderPreserving();
+    const viewport = diagnosticsPage?.root.querySelector("#runtime-logs");
+    if (viewport) viewport.scrollTop = position;
+    return;
+  }
+  renderPreserving();
+}
+function newerLogs() {
+  if (model.logLoading && model.logNeedsPage || !model.logHistory.length) return;
+  model.logGeneration++;
+  const page = model.logHistory.pop();
+  model.logs = page.logs;
+  model.logPage = page.page;
+  model.logBefore = page.before;
+  model.logHistorical = page.historical;
+  model.logHasOlder = page.hasOlder;
+  model.logNeedsPage = false;
+  diagnosticsPage?.resetScroll();
+  renderPreserving();
+  loadLogs().then(renderPreserving);
+}
+function latestLogs() {
+  resetLogPages();
+  renderPreserving();
+  loadLogs(true).then(renderPreserving);
 }
 
 function renderDiagnosticsEditor() {
@@ -2883,7 +2976,6 @@ function renderDiagnosticsEditor() {
   );
   return [
     readonlyNote(),
-    renderLogs(),
     note(
       "TCP 连接或 UDP/DNS 响应只说明所列协议、端点和阶段可达，不代表应用业务成功。UDP 必须明确指定 DNS 服务器，不会向任意业务端口发送试探载荷。",
     ),
@@ -2915,6 +3007,7 @@ function renderDiagnosticsEditor() {
                     },
                     "ghost compact",
                     !canManage(),
+                    { "data-diagnostic-write": "" },
                   ),
                 ),
               ),
@@ -2966,6 +3059,8 @@ function renderDiagnosticsEditor() {
                               "已请求取消诊断",
                             ),
                           "danger compact",
+                          !canManage(),
+                          { "data-diagnostic-write": "" },
                         ),
                     ),
                   ),
@@ -4136,7 +4231,7 @@ function renderEditor() {
     modal = h("dialog", { id: "editor-dialog", class: "detail-dialog editor-dialog", "aria-labelledby": "editor-title", oncancel: (event) => { event.preventDefault(); requestCloseEditor(); } });
     document.body.append(modal);
   }
-  const titles = { inbounds: "编辑入站", outbound: "编辑代理出站", rule: "编辑路由规则", dns: "编辑 DNS 设置", logs: "编辑日志设置", lan: "管理局域网访问", geoip: "更新 GeoIP 数据" };
+  const titles = { inbounds: "编辑入站", outbound: "编辑代理出站", rule: editor.item?.type === "FINAL" ? "编辑最终规则 FINAL" : "编辑路由规则", dns: "编辑 DNS 设置", logs: "编辑日志设置", lan: "管理局域网访问", geoip: "更新 GeoIP 数据" };
   let content = [];
   if (editor.kind === "inbounds") content = selectCards(renderInboundsEditor(), ["TUN 接管入口"]);
   if (editor.kind === "outbound") content = selectCards(renderOutboundsEditor(), ["代理出站"]);
@@ -4151,7 +4246,7 @@ function renderEditor() {
     content.unshift(note("接管已进入运行或切换状态；这些设置不能热改，请暂停后再编辑。", "warning"));
   }
   modal.replaceChildren(
-    h("div", { class: "dialog-head" }, h("div", {}, h("h2", { id: "editor-title" }, titles[editor.kind]), h("p", {}, "修改后保存，高级设置按需展开。")), button("×", requestCloseEditor, "ghost compact", model.busy, { "aria-label": "关闭编辑" })),
+    h("div", { class: "dialog-head" }, h("div", {}, h("h2", { id: "editor-title" }, titles[editor.kind]), h("p", {}, editor.item?.type === "FINAL" ? "最后决定其余流量的出站。" : "修改后保存，高级设置按需展开。")), button("×", requestCloseEditor, "ghost compact", model.busy, { "aria-label": "关闭编辑" })),
     h("div", { id: "editor-notice", role: "status" }, model.notice && note(model.notice.message, model.notice.kind)),
     h("div", { "data-editor-conflict": "" }),
     h("div", { class: "editor-content compact-editor-content" }, content),
@@ -4167,6 +4262,7 @@ function compactEditorContent(editor, content) {
   if (!root) return content;
   root.querySelector(".card-head")?.remove();
   root.querySelector(".editor-item-head")?.remove();
+  if (editor.kind === "rule" && editor.item?.type === "FINAL") return content;
   const advancedIDs = editor.kind === "inbounds" ? ["inbound-tun", "inbound-network", "inbound-ipv6-network", "inbound-auto-route6", "inbound-stack"]
     : editor.kind === "rule" ? [`rule-protocol-${editor.index}`, `rule-ports-${editor.index}`]
     : ["dns-port", "dns-ttl", "dns-read-timeout", "dns-write-timeout", "dns-packet-size", "dns-history-limit", "dns-history-retention", "dns-cache-limit"];
@@ -4333,6 +4429,35 @@ async function runSavedOutboundTest(index, draftEditor = null) {
 async function saveEditor() {
   if (!canManage()) return;
   const editor = model.editor;
+  if (editor?.kind === "rule") {
+    const rule = editor.item;
+    if (conditionalFinal(rule)) {
+      const body = JSON.stringify(configBody());
+      const epoch = model.authEpoch;
+      dialog("将 FINAL 改为全部未匹配流量？", `当前范围：${ruleScope(rule)}。确认后会移除协议和端口限制，其余未匹配流量都将使用 ${rule.outbound || "direct"}。`, null, [
+        button("返回修改", closeDialog, "ghost", false),
+        button("确认转换并保存", () => {
+          closeDialog();
+          if (!currentAuth(epoch) || model.editor !== editor || body !== JSON.stringify(configBody())) return notice("草稿或会话已变化，请重新保存。", "warning");
+          delete rule.protocol;
+          delete rule.ports;
+          markDirty();
+          renderEditor();
+          saveEditor();
+        }, "primary", !canManage(), { "data-rule-final-confirm": "" }),
+      ]);
+      return;
+    }
+    const error = validateRulePattern(rule?.type, rule?.pattern)
+      || (rule.type === "IP-CIDR6" && !model.draft.core?.["ipv6-network"] ? "请先在入站设置 IPv6 网段，再保存 IPv6 规则。" : "")
+      || (rule["expires-at"] && !["DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD"].includes(rule.type) ? "此匹配方式不支持临时有效期，请在高级匹配条件中改为永久。" : "");
+    if (error) {
+      const node = document.querySelector("#editor-dialog [data-rule-pattern-error]");
+      if (node) node.textContent = error;
+      notice(error, "error");
+      return;
+    }
+  }
   try { prepareOutboundEditor(); } catch (error) { notice(error.message, "error"); return; }
   const body = JSON.stringify(configBody());
   const epoch = model.authEpoch;
@@ -4406,15 +4531,30 @@ function openOutboundTest(index) {
 }
 
 function openDiagnosticForm() { dialog("新建诊断", "目标和出站由你指定；不重放业务请求。", h("div", {}, ...selectCards(renderDiagnosticsEditor(), ["对比直连与代理"]))); }
+let diagnosticsPage = null;
+function diagnosticTools() {
+  const nodes = renderDiagnosticsEditor();
+  const find = title => nodes.map(node => node?.getAttribute?.("data-card-title") === title ? node : node?.querySelector?.(`[data-card-title="${title}"]`)).find(Boolean);
+  const content = title => { const card = find(title); return card?.querySelector(".panel-list,.empty-state"); };
+  return { candidates: content("待诊断目标"), tasks: content("诊断与控制任务") };
+}
 function renderDiagnostics() {
-  return [card("连通性诊断", "从任务和失败证据判断问题；新诊断由你明确发起。", button("新建诊断", openDiagnosticForm, "primary")), ...renderDiagnosticsEditor().filter(node => node?.getAttribute?.("data-card-title") !== "对比直连与代理")];
+  diagnosticsPage ||= createDiagnosticsPage({ model, h, button, time, canManage, tools: diagnosticTools, openDiagnostic: openDiagnosticForm,
+    filter: filterLogs, applyTime: applyLogTime,
+    clearTime: () => { model.logFromInput = ""; model.logToInput = ""; applyLogTime(); },
+    older: olderLogs, newer: newerLogs, latest: latestLogs,
+    refresh: () => loadLogs(true).then(renderPreserving),
+    pause: () => { model.logPaused = !model.logPaused; if (!model.logPaused) loadLogs().then(renderPreserving); renderPreserving(); },
+  });
+  diagnosticsPage.update();
+  return [diagnosticsPage.root];
 }
 const configurationPages = createConfigurationPages({ model, h, card, note, button, badge, detailPairs, empty, readonlyNote, time, canManage, runtime,
   logout, resetConfiguration: confirmResetConfiguration, settingsDetail: renderSettingsDetail,
   outboundTestPanel: renderOutboundTestPanel,
   stateLabel: () => stateLabels[runtime()] || runtime(), edit: openEditor, addOutbound, addRule, deleteOutbound, deleteRule, moveRule: moveSavedRule, outboundDetails, testOutbound: openOutboundTest,
   refreshHealth: () => refreshOutboundHealth().then(renderPreserving), preflight: () => action(async () => showResult("接管预检", await endpoints.lifecycle("preflight"))),
-  simulateRules: () => dialog("模拟规则匹配", "使用已保存版本，不发起业务连接。", h("div", {}, ...selectCards(renderRulesEditor(), ["模拟一次规则匹配"]))),
+  simulateRules: () => dialog("模拟规则匹配", "按输入目标和已保存规则计算，不解析 DNS 或测试连通性；域名结果不包含尚未知晓的 CNAME 或 IP 证据。", selectCards(renderRulesEditor(), ["模拟一次规则匹配"])[0]?.querySelector("#simulate-form")),
   dnsObservations: () => selectCards(renderDNSEditor(), ["系统解析范围", "查询记录"]),
   settingsObservations: () => selectCards(renderSettingsEditor(), ["配置与生命周期", "导入与恢复配置", "网络恢复", "记录、隐私与导出", "关于 KONE"]),
 });
@@ -4432,6 +4572,7 @@ function render() {
   updateShell();
   main.classList.toggle("settings-page", model.authenticated && model.page === "settings");
   main.classList.toggle("editor-page", model.authenticated && model.page === "outbounds" && Boolean(model.outboundRoute));
+  main.classList.toggle("diagnostics-page", model.authenticated && model.page === "diagnostics");
   if (model.authPending) {
     main.replaceChildren(h("div", { class: "loading-state", role: "status" }, h("span", { class: "spinner", "aria-hidden": true }), h("h1", {}, "正在连接 KONE"), h("p", {}, "正在确认管理会话，请稍候。")));
     return;
@@ -4450,6 +4591,11 @@ function render() {
   }
   beginInlineSettingsEditor();
   beginOutboundPageEditor();
+  if (model.page === "diagnostics" && diagnosticsPage?.root.isConnected) {
+    document.querySelector("#page-notice")?.replaceChildren(...(model.notice ? [note(model.notice.message, model.notice.kind)] : []));
+    diagnosticsPage.update();
+    return;
+  }
   main.replaceChildren(
     ...(model.page === "settings" && model.settingsSection ? [button("‹ 设置", () => navigate("settings"), "settings-back", model.busy || model.authBusy || model.settingsLoading, { "aria-label": "返回设置", "data-settings-back": "" })] : []),
     pageHeader(),
@@ -4465,6 +4611,12 @@ function render() {
   syncOutboundEditorAccess();
 }
 function renderPreserving() {
+  if (model.authenticated && !model.authPending && model.page === "diagnostics" && diagnosticsPage?.root.isConnected) {
+    updateShell();
+    document.querySelector("#page-notice")?.replaceChildren(...(model.notice ? [note(model.notice.message, model.notice.kind)] : []));
+    diagnosticsPage.update();
+    return;
+  }
   if (model.authenticated && !model.authPending && model.editor?.page && outboundEditorElement?.isConnected) {
     updateShell();
     document.querySelector("#page-notice")?.replaceChildren(...(model.notice ? [note(model.notice.message, model.notice.kind)] : []));
@@ -4513,9 +4665,12 @@ async function loadPageData() {
   if (model.page === "dns") model.dns = await endpoints.dns();
   if (!currentAuth(epoch)) return;
   if (model.page === "diagnostics") {
+    const generation = ++model.diagnosticsGeneration;
     await loadLogs();
     if (!currentAuth(epoch)) return;
-    model.diagnostics = await endpoints.diagnostics();
+    const tasks = await endpoints.diagnostics();
+    if (!currentAuth(epoch) || generation !== model.diagnosticsGeneration) return;
+    model.diagnostics = tasks;
   }
   if (model.page === "settings") {
     model.lan = await endpoints.lan();

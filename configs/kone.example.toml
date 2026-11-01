@@ -115,6 +115,7 @@ url = "http://127.0.0.1:8080"
 # type：DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD、IP-CIDR、IP-CIDR6、GEOIP、FINAL。
 # pattern：域名/后缀/关键词、IPv4/IPv6 CIDR 或大写两字母国家代码；FINAL 不填。
 # FINAL 可省略，但写出时必须是最后一条；没有匹配规则时隐式直连。
+# Web 将 FINAL 固定在底部分组，仅编辑兜底出站，普通规则的匹配方式不包含 FINAL。
 [[rules]]
 # 可选稳定规则标识与来源；管理界面自动分配，手写配置可省略。
 # id = "local-network"
@@ -125,6 +126,8 @@ url = "http://127.0.0.1:8080"
 # expires-at = ""
 # 按业务协议/目标端口限定；省略或空值表示全部 TCP/UDP、全部端口。
 # 域名规则先保留 Fake-IP 接管入口，再按实际协议和端口作最终决定。
+# 未启用 IPv6 接管时，需接管域名的 AAAA 返回空结果，避免使用真实 IPv6 绕过。
+# 启用 core.ipv6-network 后，同域名的 A/AAAA 分别使用对应 Fake-IP。
 # protocol = ""
 # ports = []
 type = "IP-CIDR"

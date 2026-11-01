@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -79,6 +80,29 @@ func TestRuntimeStructuredLogsReachAuthenticatedManagementWithoutCapture(t *test
 	require.Equal(t, "ERROR", logs.Records[1].Level)
 	require.Equal(t, initial.NextCursor+2, logs.Dropped)
 	require.True(t, logs.Gap)
+	readPage := func(query string) logstore.Page {
+		request, err := http.NewRequest("GET", server.URL+"/api/v1/logs?"+query, nil)
+		require.NoError(t, err)
+		request.AddCookie(cookie)
+		response, err := client.Do(request)
+		require.NoError(t, err)
+		defer response.Body.Close()
+		require.Equal(t, 200, response.StatusCode)
+		var value logstore.Page
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&value))
+		return value
+	}
+	older := readPage("before=" + strconv.FormatUint(logs.Records[0].ID, 10) + "&limit=1")
+	require.Len(t, older.Records, 1)
+	require.Less(t, older.Records[0].ID, logs.Records[0].ID)
+	require.False(t, older.HasMore)
+	require.Equal(t, logs.NextCursor, older.NextCursor)
+	instant := url.QueryEscape(logs.Records[1].Time.Format(time.RFC3339Nano))
+	filtered := readPage("min_level=error&source=management&from=" + instant + "&to=" + instant)
+	require.Len(t, filtered.Records, 1)
+	require.Equal(t, logs.Records[1].ID, filtered.Records[0].ID, "time filters include the exact runtime error timestamp")
+	require.False(t, filtered.HasMore, "retained info records do not create matching error history")
+	require.Equal(t, logs.NextCursor, filtered.NextCursor, "reading history and filters never adds runtime log events")
 	request, err = http.NewRequest("GET", server.URL+"/api/v1/logs?after="+strconv.FormatUint(logs.NextCursor, 10), nil)
 	require.NoError(t, err)
 	request.AddCookie(cookie)

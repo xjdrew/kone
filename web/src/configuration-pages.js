@@ -1,3 +1,6 @@
+import { ruleScope } from "./rule-editor.js";
+import { createOutboundsPage } from "./outbounds-page.js";
+
 // Configuration pages show saved state; setting forms live in focused subpages.
 export const settingsSections = {
   about: ["关于 KONE", "应用版本、能力与许可。"],
@@ -35,6 +38,7 @@ export function createConfigurationPages(ui) {
   const locked = () => ["starting", "running", "degraded", "pausing", "stopping"].includes(ui.runtime()) || Boolean(model.state.capture_locked ?? model.config?.capture_locked ?? false);
   const actions = (...buttons) => h("div", { class: "button-row resource-actions" }, buttons);
   const versions = () => model.state.running_version && model.state.running_version !== model.config?.version ? note("有已保存的更改等待应用。", "warning") : null;
+  const outbounds = createOutboundsPage({ ...ui, outboundAddress, currentHealth, versions });
 
   function inbounds() {
     const core = saved().core || {};
@@ -51,45 +55,24 @@ export function createConfigurationPages(ui) {
     )];
   }
 
-  function outbounds() {
-    const values = saved().outbounds || [];
-    return [readonlyNote(), versions(), card("代理出站", "保存后可按需测试；测试会连接代理端点与指定目标，不发送应用请求。",
-      actions(button("＋ 添加代理", () => ui.addOutbound(), "primary")),
-      values.length ? h("div", { class: "resource-list outbound-list" }, values.map((outbound, index) => {
-        const health = (model.outboundHealth || []).find(value => (outbound.id && value.id === outbound.id) || value.name === outbound.name);
-        const state = outbound.enabled === false ? "已禁用" : !health || health.stale || health.status === "healthy" && !currentHealth(health) ? "待测试" : ({ healthy: "可用", unhealthy: "测试失败", testing: "测试中", unknown: "待测试" }[health.status] || "待测试");
-        const latency = Number.isFinite(health?.connect_latency_ms) ? health.connect_latency_ms + " ms" : "—";
-        const testing = Boolean(model.outboundTests?.[outbound.id || outbound.name]?.running);
-        return h("article", { class: "resource-item outbound-item", "data-outbound-row": index },
-          h("div", { class: "outbound-row-heading" },
-            h("div", { class: "resource-main" },
-              h("h3", {}, outbound.name),
-              h("p", {}, outboundAddress(outbound.url)),
-              h("div", { class: "outbound-status-line" }, h("span", { class: "tag " + (state === "可用" ? "success" : state === "测试失败" ? "error" : "muted") }, state),
-                h("span", {}, "连接延迟 ", h("b", { "data-outbound-connect-latency": index }, latency)),
-                health?.stale && h("small", {}, "上次结果已过期"),
-              ),
-            ),
-            actions(button("测试", () => ui.testOutbound(index), "", !ui.canManage() || outbound.enabled === false || testing),
-              button("编辑", () => ui.edit("outbound", index), "ghost"),
-              h("details", { class: "resource-more", "data-outbound-more": index }, h("summary", { "aria-label": "更多操作" }, "•••"), button("删除", () => ui.deleteOutbound(index), "danger compact"))),
-          ),
-          health?.protocols && h("div", { class: "outbound-protocol-summary" }, ["tcp", "tls", "udp"].map(protocol => h("span", { class: "tag muted" }, protocol.toUpperCase() + " · " + ({ healthy: "成功", failed: "失败", testing: "测试中", unsupported: "不支持", unknown: "未验证" }[health.protocols[protocol]?.status] || "未验证")))),
-          model.outboundTestOpen === (outbound.id || outbound.name) && ui.outboundTestPanel?.(index),
-        );
-      })) : empty("尚未配置代理", "添加已有代理信息，然后按需测试连接。"),
-    ), h("details", { class: "disclosure builtin-summary" }, h("summary", {}, "内置出站"), detailPairs([["direct", "直连 TCP / UDP"], ["reject", "拒绝连接"]]))];
-  }
-
   function rules() {
     const values = saved().rules || [];
-    return [readonlyNote(), versions(), card("路由规则", "按顺序首个匹配生效，FINAL 在最后；成功热应用只影响新连接。",
-      actions(button("＋ 添加精确域名", () => ui.addRule("DOMAIN"), "primary"), button("＋ 添加最终规则", () => ui.addRule("FINAL")), button("模拟规则匹配", ui.simulateRules, "ghost")),
-      values.length ? h("div", { class: "resource-list" }, values.map((rule, index) => h("article", { class: "resource-item", "data-rule-row": index },
-        h("div", { class: "resource-main" }, h("h3", {}, `${index + 1}. ${rule.type} ${rule.pattern || "默认"}`), h("p", {}, `→ ${rule.outbound || "direct"} · ${(rule.protocol || "TCP / UDP").toUpperCase()}${rule.ports?.length ? ` · ${rule.ports.join(", ")}` : " · 全部端口"}`), rule["expires-at"] && h("small", {}, `到期 ${time(rule["expires-at"])}`)),
-        actions(button("编辑", () => ui.edit("rule", index)), button("↑", () => ui.moveRule(index, -1), "ghost", !ui.canManage() || index === 0 || rule.type === "FINAL", { "aria-label": `将规则 ${index + 1} 上移` }), button("↓", () => ui.moveRule(index, 1), "ghost", !ui.canManage() || index === values.length - 1 || rule.type === "FINAL" || values[index + 1]?.type === "FINAL", { "aria-label": `将规则 ${index + 1} 下移` }), button("删除", () => ui.deleteRule(index), "danger")),
-      ))) : empty("尚无规则", "未命中时使用内置 direct；可添加精确规则再保存。"),
-    )];
+    const ordinary = values.map((rule, index) => ({ rule, index })).filter(({ rule }) => rule.type !== "FINAL");
+    const finalIndex = values.findIndex(rule => rule.type === "FINAL");
+    const final = values[finalIndex];
+    return [readonlyNote(), versions(), card("路由规则", "从上到下匹配，第一条命中规则决定出站；其余流量交给最下方的 FINAL。",
+      actions(button("＋ 添加规则", () => ui.addRule("DOMAIN"), "primary", !ui.canManage(), { "data-rule-add": "" }), button("模拟规则匹配", ui.simulateRules, "ghost")),
+      ordinary.length ? h("div", { class: "resource-list rule-list" }, ordinary.map(({ rule, index }) => h("article", { class: "resource-item", "data-rule-row": index },
+        h("div", { class: "resource-main" }, h("h3", {}, `${index + 1}. ${rule.type} ${rule.pattern || ""}`), h("p", {}, `→ ${rule.outbound || "direct"} · ${ruleScope(rule)}`), rule["expires-at"] && h("small", {}, `到期 ${time(rule["expires-at"])}`)),
+        actions(button("编辑", () => ui.edit("rule", index)), button("↑", () => ui.moveRule(index, -1), "ghost", !ui.canManage() || index === 0, { "aria-label": `将规则 ${index + 1} 上移` }), button("↓", () => ui.moveRule(index, 1), "ghost", !ui.canManage() || index === values.length - 1 || values[index + 1]?.type === "FINAL", { "aria-label": `将规则 ${index + 1} 下移` }), button("删除", () => ui.deleteRule(index), "danger")),
+      ))) : empty("尚无普通规则", "添加一条规则，为特定域名或 IP 选择出站。"),
+    ), h("section", { class: "rule-final", "data-rule-final": "" }, card("最终规则 FINAL", "始终放在最后，处理没有命中前面规则的流量。",
+      h("div", { class: "resource-item" },
+        h("div", { class: "resource-main" }, h("h3", {}, `其余流量 → ${final?.outbound || "direct"}`),
+          h("p", {}, final ? final.protocol || final.ports?.length ? `旧版范围：${ruleScope(final)}；范围外仍直连。` : "全部未匹配流量" : "内置直连；编辑并保存后成为显式 FINAL 规则。")),
+        actions(button("编辑", () => final ? ui.edit("rule", finalIndex) : ui.addRule("FINAL"), "", !ui.canManage(), { "data-rule-final-edit": "" })),
+      ),
+    ))];
   }
 
   function dns() {

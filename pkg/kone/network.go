@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"os/exec"
 	"reflect"
@@ -100,7 +99,6 @@ func (l *ownedListener) Close() error {
 }
 
 func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
-	slog.Debug("Executing network command", "command", name)
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = time.Second
 	var stderr bytes.Buffer

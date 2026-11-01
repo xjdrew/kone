@@ -78,7 +78,7 @@ async function openManagement(browser, manager, ownedContexts) {
   ownedContexts.push(context);
   const page = await context.newPage();
   const forbidden = [], states = [], pending = new Set();
-  const allowed = new Set(["POST /api/v1/session", "POST /api/v1/auth/password", "POST /api/v1/config/validate", "PUT /api/v1/config"]);
+  const allowed = new Set(["POST /api/v1/session", "POST /api/v1/auth/password", "POST /api/v1/config/validate", "PUT /api/v1/config", "POST /api/v1/rules/simulate"]);
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request(), url = new URL(request.url());
     const key = `${request.method()} ${url.pathname}`;
@@ -158,12 +158,13 @@ test("@real genuine management cookie, save, reload and restart stay capture-pau
     await ui.assertPaused();
     await ui.page.locator(".nav-link[data-page=diagnostics]").click();
     await expect(ui.page.getByRole("heading", { name: "运行日志", exact: true })).toBeVisible();
+    await expect(ui.page.locator("[data-diagnostics-root] [data-log-table]")).toContainText("Local management is ready");
     const logs = await ui.page.evaluate(async () => {
       const response = await fetch("/api/v1/logs?limit=100&min_level=info", { credentials: "same-origin" });
       const value = await response.json();
-      return { ok: response.ok, records: Array.isArray(value.records), cursor: typeof value.next_cursor, helperConnected: value.helper?.connected };
+      return { ok: response.ok, records: Array.isArray(value.records), cursor: typeof value.next_cursor, oldest: typeof value.oldest_cursor, hasMore: typeof value.has_more, helperConnected: value.helper?.connected };
     });
-    expect(logs).toEqual({ ok: true, records: true, cursor: "string", helperConnected: false });
+    expect(logs).toEqual({ ok: true, records: true, cursor: "string", oldest: "string", hasMore: "boolean", helperConnected: false });
     await ui.assertPaused();
     await ui.page.locator(".nav-link[data-page=outbounds]").click();
     await ui.page.getByRole("button", { name: "＋ 添加代理", exact: true }).click();
@@ -181,9 +182,22 @@ test("@real genuine management cookie, save, reload and restart stay capture-pau
     await expect(ui.page.locator("#page-notice")).toContainText("已保存");
     await ui.assertPaused();
     await ui.page.locator(".nav-link[data-page=rules]").click();
-    await ui.page.getByRole("button", { name: "＋ 添加精确域名", exact: true }).click();
+    await ui.page.locator("[data-rule-add]").click();
     await ui.page.locator("#rule-pattern-0").fill("saved-browser.example");
     await ui.page.locator("#rule-outbound-0").selectOption("BrowserReal");
+    await expect(ui.page.locator("#rule-protocol-0")).toHaveValue("");
+    await expect(ui.page.locator("#rule-ports-0")).toHaveValue("");
+    await ui.page.locator("#editor-dialog [data-editor-save]").click();
+    await expect(ui.page.locator("#editor-dialog")).not.toBeVisible();
+    await expect(ui.page.locator('[data-rule-row="0"]')).toContainText("saved-browser.example");
+    const unrestricted = await ui.page.evaluate(async () => {
+      const response = await fetch("/api/v1/config", { credentials: "same-origin" });
+      const saved = await response.json();
+      const rule = saved.config?.rules?.find(value => value.pattern === "saved-browser.example");
+      return response.ok && Boolean(rule) && !rule.protocol && !rule.ports?.length;
+    });
+    expect(unrestricted).toBe(true);
+    await ui.page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
     await ui.page.locator('[data-editor-advanced="rule"] > summary').click();
     await ui.page.locator("#rule-protocol-0").selectOption("tcp");
     await ui.page.locator("#rule-ports-0").fill("443");
@@ -242,6 +256,18 @@ test("@real genuine management cookie, save, reload and restart stay capture-pau
     await ui.page.locator('[data-editor-advanced="rule"] > summary').click();
     await expect(ui.page.locator("#rule-protocol-0")).toHaveValue("tcp");
     await expect(ui.page.locator("#rule-ports-0")).toHaveValue("443");
+    await ui.page.locator("#editor-dialog [data-editor-cancel]").click();
+    await expect(ui.page.locator("[data-rule-final] button")).toHaveCount(1);
+    await ui.page.getByRole("button", { name: "模拟规则匹配", exact: true }).click();
+    await ui.page.locator("#simulate-target").fill("saved-browser.example");
+    await ui.page.locator("#simulate-port").fill("443");
+    await ui.page.getByRole("button", { name: "模拟匹配", exact: true }).click();
+    await expect(ui.page.locator('[data-rule-simulation-result][data-rule-simulation-match="rule"]')).toContainText("saved-browser.example");
+    await expect(ui.page.locator("[data-rule-simulation-order]")).toContainText("1");
+    await ui.page.locator("#simulate-target").fill("unmatched-browser.example");
+    await ui.page.getByRole("button", { name: "模拟匹配", exact: true }).click();
+    await expect(ui.page.locator('[data-rule-simulation-result][data-rule-simulation-match="final"]')).toContainText("FINAL");
+    await expect(ui.page.locator('[data-rule-simulation-result][data-rule-simulation-match="final"]')).toContainText("direct");
     await ui.assertPaused();
   } catch (error) { failure = error; }
   finally {

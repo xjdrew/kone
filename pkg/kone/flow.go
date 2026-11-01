@@ -243,11 +243,10 @@ func (h *flowHandler) startObservation(s *runtimeSnapshot, protocol string, sour
 func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	var result error
 	s := h.one.policy.Load()
+	stage, outbound, destinationText := "resolve", "", destination.String()
 	observation := h.startObservation(s, "tcp", source, destination)
 	defer func() {
-		if result != nil && ctx.Err() == nil {
-			slog.Debug("TCP flow ended", "source", source, "destination", destination, "error", result)
-		}
+		h.logFlowFailure(ctx, s, "tcp", outbound, destinationText, stage, result)
 		if onClose != nil {
 			onClose(result)
 		}
@@ -262,6 +261,10 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 	defer func() { observation.Finish(result, h.stopping(ctx)) }()
 	defer h.remove(conn)
 	target, err := h.resolveDestination(ctx, s, destination, false, observation)
+	outbound = target.outbound
+	if outbound == "" {
+		outbound = target.decision.Outbound
+	}
 	if target.release != nil {
 		defer target.release()
 	}
@@ -270,6 +273,7 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 		return
 	}
 	addr, policy := target.address, target.outbound
+	stage, destinationText = "dial", addr
 	observation.Stage("dial")
 	slog.Debug("TCP flow selected", "source", source, "destination", addr, "proxy", policy, "version", s.version)
 	remote, err := s.outbounds.DialContext(ctx, policy, addr)
@@ -284,7 +288,20 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 	defer h.remove(remote)
 	observation.Decision(target.decision, policy, target.realDestination, true)
 	observation.Stage("transfer")
-	relayConnections(&observedConn{Conn: conn, flow: observation}, &observedConn{Conn: remote, flow: observation, upload: true})
+	stage = "transfer"
+	remoteErrors := make(chan error, 1)
+	relayConnections(&observedConn{Conn: conn, flow: observation}, &observedConn{Conn: remote, flow: observation, upload: true, onError: func(err error) {
+		if reportableFlowError(err, "transfer") {
+			select {
+			case remoteErrors <- err:
+			default:
+			}
+		}
+	}})
+	select {
+	case result = <-remoteErrors:
+	default:
+	}
 }
 
 // Each UDP session retains one snapshot. Check policy/capability before any
@@ -292,11 +309,10 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	var result error
 	s := h.one.policy.Load()
+	stage, outbound, destinationText := "resolve", "", destination.String()
 	observation := h.startObservation(s, "udp", source, destination)
 	defer func() {
-		if result != nil && ctx.Err() == nil {
-			slog.Debug("UDP session ended", "source", source, "destination", destination, "error", result)
-		}
+		h.logFlowFailure(ctx, s, "udp", outbound, destinationText, stage, result)
 		if onClose != nil {
 			onClose(result)
 		}
@@ -311,6 +327,10 @@ func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 	defer func() { observation.Finish(result, h.stopping(ctx)) }()
 	defer h.remove(conn)
 	target, err := h.resolveDestination(ctx, s, destination, true, observation)
+	outbound = target.outbound
+	if outbound == "" {
+		outbound = target.decision.Outbound
+	}
 	if target.release != nil {
 		defer target.release()
 	}
@@ -321,6 +341,7 @@ func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 		return
 	}
 	observation.Stage("dial")
+	stage, destinationText = "dial", addr
 	remote, err := s.outbounds.DialUDPContext(ctx, policy, addr)
 	if err != nil {
 		result = err
@@ -333,6 +354,7 @@ func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 	defer h.remove(remote)
 	observation.Decision(target.decision, policy, target.realDestination, true)
 	observation.Stage("transfer")
+	stage = "transfer"
 	stop := context.AfterFunc(ctx, func() { closeFlow(conn); closeFlow(remote) })
 	defer stop()
 	responses := make(chan error, 1)
@@ -342,6 +364,9 @@ func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 			remote.SetReadDeadline(time.Now().Add(2 * time.Minute))
 			n, err := remote.Read(data)
 			if err != nil {
+				if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+					err = net.ErrClosed // The owned read deadline expires idle UDP sessions.
+				}
 				responses <- err
 				closeFlow(conn)
 				return
@@ -358,6 +383,9 @@ func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 		packet := buf.NewSize(65535)
 		conn.SetReadDeadline(time.Now().Add(2 * time.Minute))
 		_, err := conn.ReadPacket(packet)
+		if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+			err = net.ErrClosed
+		}
 		if err == nil {
 			var n int
 			n, err = remote.Write(packet.Bytes())
@@ -373,7 +401,7 @@ func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 	}
 	closeFlow(remote)
 	responseErr := <-responses
-	if (result == nil || errors.Is(result, net.ErrClosed) || errors.Is(result, io.EOF)) && responseErr != nil && !errors.Is(responseErr, net.ErrClosed) {
+	if reportableFlowError(responseErr, "transfer") {
 		result = responseErr
 	}
 }

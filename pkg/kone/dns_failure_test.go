@@ -107,8 +107,9 @@ func TestDNSInputValidationEDNSBoundsAndUnavailablePool(t *testing.T) {
 	_, err = one.dns.HandleQuery(context.Background(), request, "udp", "client")
 	require.ErrorContains(t, err, "virtual IP pool exhausted")
 	request.SetQuestion("unconfigured.example.", dns.TypeAAAA)
-	_, err = one.dns.doIPv4Query(request)
-	require.NoError(t, err, "an unconfigured address family passes through to real DNS")
+	reply, err := one.dns.doIPv4Query(request)
+	require.NoError(t, err)
+	require.Empty(t, reply.Answer, "an uncaptured family cannot bypass the selected proxy")
 	one.dns.nameservers = nil
 	request.SetQuestion("no-upstream.example.", dns.TypeTXT)
 	_, err = one.dns.resolve(context.Background(), request)

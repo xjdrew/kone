@@ -231,7 +231,7 @@ func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.M
 		table = d.one.dnsTable6
 	}
 	if table == nil {
-		return d.resolve(ctx, r)
+		return d.queryWithoutIPv6(ctx, s, r)
 	}
 	record := table.Get(domain)
 	policy := s.rule.Proxy(domain)
@@ -315,10 +315,17 @@ func (d *Dns) HandleQuery(ctx context.Context, r *dns.Msg, transport, source str
 	ctx = context.WithValue(ctx, dnsMetaKey{}, meta)
 	var msg *dns.Msg
 	var err error
-	if r.Question[0].Qclass == dns.ClassINET && (r.Question[0].Qtype == dns.TypeA || r.Question[0].Qtype == dns.TypeAAAA && d.one.dnsTable6 != nil) {
-		msg, err = d.query(ctx, s, r)
-	} else {
+	if r.Question[0].Qclass != dns.ClassINET {
 		msg, err = d.resolve(ctx, r)
+	} else {
+		switch r.Question[0].Qtype {
+		case dns.TypeA, dns.TypeAAAA:
+			msg, err = d.query(ctx, s, r)
+		case dns.TypeHTTPS, dns.TypeSVCB:
+			msg, err = d.queryServiceBinding(ctx, s, r)
+		default:
+			msg, err = d.resolve(ctx, r)
+		}
 	}
 	d.recordQuery(r, msg, err, transport, source, s.configurationVersion(), start, meta)
 	return msg, err
