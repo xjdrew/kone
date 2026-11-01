@@ -148,7 +148,8 @@ func TestSavedDomainRuleDefaultsAndSimulationIdentifyFinalOverHTTP(t *testing.T)
 	server := httptest.NewServer(c.Handler())
 	defer server.Close()
 	client := server.Client()
-	client.Timeout = 3 * time.Second
+	// Real Argon2id setup can be slow with race/coverage instrumentation.
+	client.Timeout = 15 * time.Second
 	var cookie *http.Cookie
 	csrf := ""
 	call := func(method, path string, value any) map[string]any {
@@ -180,6 +181,7 @@ func TestSavedDomainRuleDefaultsAndSimulationIdentifyFinalOverHTTP(t *testing.T)
 	}
 	call("POST", "session", map[string]any{"token": c.BootstrapToken()})
 	call("POST", "auth/password", map[string]any{"password": "domain-rules-owner", "confirm_password": "domain-rules-owner"})
+	client.Timeout = 3 * time.Second
 	doc := call("GET", "config", nil)
 	config := doc["config"].(map[string]any)
 	config["outbounds"] = []map[string]any{{"name": "office", "url": "http://127.0.0.1:8080"}}
