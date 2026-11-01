@@ -7,7 +7,7 @@ import (
 	"io"
 )
 
-func showDesktopFailure(int) {}
+func showDesktopFailure(int, string) {}
 
 func showDesktopNotice(string, string) {}
 

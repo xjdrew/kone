@@ -10,8 +10,8 @@ const startupAlertScript = `on run argv
     display alert (item 1 of argv) message (item 2 of argv) as critical buttons {"OK"} default button "OK"
 end run`
 
-func showDesktopFailure(code int) {
-	showDesktopNotice("KONE startup failed", desktopFailureMessage(code))
+func showDesktopFailure(_ int, message string) {
+	showDesktopNotice("KONE startup failed", message)
 }
 
 func showDesktopNotice(heading, body string) {

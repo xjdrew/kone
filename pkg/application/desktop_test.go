@@ -41,15 +41,20 @@ func TestDesktopStartupFailureIsReportedWithoutRawArguments(t *testing.T) {
 	previous := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	var notified []int
-	code := runDesktop(context.Background(), []string{"-unknown-secret-do-not-display"}, "test", func(code int) { notified = append(notified, code) })
+	code := runDesktop(context.Background(), []string{"-unknown-secret-do-not-display"}, "test", func(code int, message string) {
+		notified = append(notified, code)
+		require.NotContains(t, message, "unknown-secret")
+	})
 	require.Equal(t, 2, code)
 	require.Equal(t, []int{2}, notified)
-	require.NotContains(t, desktopFailureMessage(code), "unknown-secret")
-	require.Contains(t, desktopFailureMessage(code), "kone-cli")
+	require.NotContains(t, desktopFailureMessage(code, errors.New("private startup detail")), "private startup detail")
+	require.Contains(t, desktopFailureMessage(code, nil), "kone-cli")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.Zero(t, runDesktop(ctx, nil, "test", func(int) { t.Fatal("canceled startup is not a failure") }))
-	require.Equal(t, 2, runDesktop(context.Background(), []string{"-network-helper", "invalid"}, "test", func(int) { t.Fatal("an internal helper must report through its parent instead of opening a dialog") }))
+	require.Zero(t, runDesktop(ctx, nil, "test", func(int, string) { t.Fatal("canceled startup is not a failure") }))
+	require.Equal(t, 2, runDesktop(context.Background(), []string{"-network-helper", "invalid"}, "test", func(int, string) {
+		t.Fatal("an internal helper must report through its parent instead of opening a dialog")
+	}))
 }
 
 func TestNetworkHelperDetectionDoesNotReadPastEndOfOptions(t *testing.T) {

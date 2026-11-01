@@ -10,8 +10,8 @@ import (
 
 var desktopMessageBox = windows.NewLazySystemDLL("user32.dll").NewProc("MessageBoxW")
 
-func showDesktopFailure(code int) {
-	showDesktopNotice("KONE startup failed", desktopFailureMessage(code))
+func showDesktopFailure(_ int, message string) {
+	showDesktopNotice("KONE startup failed", message)
 }
 
 func showDesktopNotice(heading, body string) {

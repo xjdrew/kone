@@ -25,13 +25,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, version s
 }
 
 type runOptions struct {
-	version       string
-	desktop       bool
-	logs          *logstore.Store
-	browser       func(string) error
-	tray          func(context.Context, desktop.TrayActions) error
-	trayAvailable func() bool
-	captureNotice func(string)
+	version        string
+	desktop        bool
+	logs           *logstore.Store
+	browser        func(string) error
+	tray           func(context.Context, desktop.TrayActions) error
+	trayAvailable  func() bool
+	captureNotice  func(string)
+	startupFailure func(error)
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -194,6 +195,9 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 		if err != nil {
 			slog.Error("Management initialization failed", "stage", "startup", "error", err)
 			fmt.Fprintf(stderr, "Management initialization failed: %s\n", err)
+			if options.startupFailure != nil {
+				options.startupFailure(err)
+			}
 			return 3
 		}
 		defer manager.Close()
