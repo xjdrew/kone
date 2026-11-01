@@ -263,12 +263,15 @@ func TestManagedCredentialsArePreservedRenamedAndRedacted(t *testing.T) {
 	require.LessOrEqual(t, len(message), 1024)
 }
 
-func TestControllerJournalRequiresRecovery(t *testing.T) {
+func TestControllerJournalDoesNotInventAnActiveCaptureState(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "capture.json"), []byte("invalid"), 0600))
 	c := testController(t, Options{Directory: dir})
-	require.Equal(t, "recovery_required", c.State().State)
-	require.Error(t, c.Start(context.Background()))
+	require.Equal(t, "paused", c.State().State)
+	require.Empty(t, c.State().LastError)
+	enable(t, c)
+	require.ErrorIs(t, c.Start(context.Background()), errAutomaticRecovery)
+	require.Equal(t, "paused", c.State().State)
 	require.Error(t, c.Recover(context.Background()))
 	require.FileExists(t, c.journalPath())
 	require.NoError(t, os.Remove(c.journalPath()))

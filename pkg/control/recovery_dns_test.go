@@ -67,7 +67,8 @@ func TestDNSRecoveryRetainsJournalOnFailureCancellationOrNoEffect(t *testing.T) 
 			require.Error(t, c.Recover(ctx))
 			require.Equal(t, 1, calls)
 			require.FileExists(t, c.journalPath())
-			require.Equal(t, "recovery_required", c.State().State)
+			require.Equal(t, "paused", c.State().State)
+			require.NotEmpty(t, c.State().LastError, "paused capture retains the explicit recovery failure")
 		})
 	}
 }

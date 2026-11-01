@@ -1,6 +1,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createConfigurationPages, outboundAddress, currentHealth } from "../src/configuration-pages.js";
+import { createConfigurationPages, outboundAddress, currentHealth, needsDirectConfirmation } from "../src/configuration-pages.js";
+
+const element = (tag, attrs = {}, ...children) => ({ tag, attrs, children: children.flat(Infinity).filter(Boolean), getAttribute: name => attrs[name] });
+const descendants = (nodes) => (Array.isArray(nodes) ? nodes : [nodes]).flatMap(node => node && typeof node === "object" ? [node, ...descendants(node.children || [])] : []);
+
+function settingsHarness() {
+  const model = {
+    state: { version: "v1.2.3" }, config: { version: 7, config: { general: { "log-level": "warn" } } },
+    draft: { general: { "log-level": "debug" } }, lan: {}, sessions: [], online: true, authBusy: false, busy: false,
+  };
+  const ui = {
+    model, h: element, card: (title, description, ...children) => element("section", { "data-card-title": title }, ...children),
+    note: text => element("p", {}, text), button: (text, onclick, kind, disabled, attrs = {}) => element("button", { onclick, disabled, ...attrs }, text),
+    detailPairs: () => null, readonlyNote: () => null, runtime: () => "paused", canManage: () => true,
+    settingsDetail: section => element("section", { "data-settings-detail": section }, element("input", { id: `${section}-field` })),
+  };
+  return { model, ui, render: () => createConfigurationPages(ui).settings() };
+}
 
 test("health expires even when the user has not refreshed the status page", () => {
   const now = Date.parse("2026-11-01T12:00:00Z");
@@ -54,24 +71,16 @@ test("all configuration landing pages show saved resources without editable form
   assert.equal(afterPause.attrs.disabled, false, "fresh paused state overrides the stale document's lock flag");
 });
 
-test("reset is available for damaged paused settings but requires local access and completed recovery", () => {
-  const h = (tag, attrs, ...children) => ({ tag, attrs, children: children.flat(Infinity).filter(Boolean), getAttribute: name => attrs[name] });
-  const model = { state: {}, config: { config: {} }, lan: {}, sessions: [] };
+test("reset is available for inactive settings and leaves residual cleanup to the host", () => {
+  const { model, ui, render } = settingsHarness();
   let state = "paused";
-  const titles = ["配置与生命周期", "导入与恢复配置", "网络恢复", "记录、隐私与导出", "关于 KONE"];
-  const ui = {
-    model, h, card: (title, description, ...children) => h("section", { "data-card-title": title }, ...children),
-    note: text => h("p", {}, text), button: (text, onclick, kind, disabled) => h("button", { disabled }, text),
-    detailPairs: () => null, readonlyNote: () => null, runtime: () => state, canManage: () => true,
-    settingsObservations: () => titles.map(title => h("section", { "data-card-title": title })),
-  };
-  const settings = createConfigurationPages(ui).settings;
-  const reset = () => settings().find(node => node?.getAttribute("data-card-title") === "重置所有配置").children.find(node => node?.tag === "div" && node.children.some(child => child?.tag === "button")).children[0];
+  ui.runtime = () => state;
+  const reset = () => descendants(render()).find(node => node.attrs["data-settings-action"] === "reset");
   assert.equal(reset().attrs.disabled, false);
   state = "invalid_config";
   model.state.config_error = "Saved settings are damaged";
   assert.equal(reset().attrs.disabled, false, "reset can repair damaged settings without capture");
-  for (state of ["running", "starting", "pausing", "stopping", "degraded", "recovery_required", "recovery_failed"]) {
+  for (state of ["running", "starting", "pausing", "stopping", "degraded", "preflight"]) {
     assert.equal(reset().attrs.disabled, true, state);
   }
   state = "paused";
@@ -81,6 +90,47 @@ test("reset is available for damaged paused settings but requires local access a
     model.state[boundary] = false;
   }
   model.recovery = { required: true };
-  assert.equal(reset().attrs.disabled, true, "a pending journal still requires recovery");
-  assert.equal(settings().at(-1).getAttribute("data-card-title"), "关于 KONE");
+  assert.equal(reset().attrs.disabled, false, "the host automatically handles safe residual records");
+  ui.canManage = () => false;
+  assert.equal(reset().attrs.disabled, true, "read-only sessions cannot reset settings");
+  assert.equal(descendants(render()).find(node => node.attrs["data-settings-action"] === "logout").attrs.disabled, false, "read-only sessions can sign out");
+});
+
+test("settings root has grouped navigation with About first and dangerous actions last", () => {
+  const { render } = settingsHarness();
+  const nodes = descendants(render());
+  assert.equal(nodes.filter(node => Object.hasOwn(node.attrs, "data-settings-root")).length, 1);
+  assert.deepEqual(nodes.filter(node => node.attrs["data-settings-group"]).map(node => node.attrs["data-settings-group"]), ["about", "application", "security", "maintenance", "actions"]);
+  const links = nodes.filter(node => node.attrs["data-settings-link"]);
+  assert.deepEqual(links.map(node => node.attrs["data-settings-link"]), ["about", "logs", "geoip", "lan", "account", "configuration", "privacy", "network"]);
+  for (const link of links) assert.equal(link.attrs.href, `#settings/${link.attrs["data-settings-link"]}`);
+  assert.deepEqual(nodes.filter(node => node.attrs["data-settings-action"]).map(node => node.attrs["data-settings-action"]), ["reset", "logout"]);
+  assert.ok(!nodes.some(node => ["form", "input", "select", "textarea"].includes(node.tag)), "the root menu contains no configuration forms");
+  const text = JSON.stringify(render());
+  assert.match(text, /v1\.2\.3/);
+  assert.match(text, /WARN/);
+  assert.doesNotMatch(text, /DEBUG/);
+});
+
+test("settings detail renders only the selected subpage while retaining read-only navigation", () => {
+  const { model, ui, render } = settingsHarness();
+  ui.canManage = () => false;
+  assert.equal(descendants(render()).filter(node => node.tag === "a").length, 8);
+  for (const section of ["about", "logs", "geoip", "lan", "account", "configuration", "privacy", "network"]) {
+    model.settingsSection = section;
+    const nodes = descendants(render());
+    assert.deepEqual(nodes.filter(node => node.attrs["data-settings-detail"]).map(node => node.attrs["data-settings-detail"]), [section]);
+    assert.ok(!nodes.some(node => Object.hasOwn(node.attrs, "data-settings-root")));
+  }
+});
+
+test("only first-time direct-only rules require the short capture confirmation", () => {
+  const now = Date.parse("2026-11-01T12:00:00Z");
+  const document = rules => ({ config: { rules } });
+  assert.equal(needsDirectConfirmation(document([]), now), true);
+  assert.equal(needsDirectConfirmation(document([{ outbound: "direct" }, { outbound: "reject" }]), now), true);
+  assert.equal(needsDirectConfirmation({ ...document([]), direct_only_confirmed: true }, now), false);
+  assert.equal(needsDirectConfirmation(document([{ outbound: "office" }]), now), false);
+  assert.equal(needsDirectConfirmation(document([{ outbound: "office", "expires-at": "2026-11-01T11:59:59Z" }]), now), true);
+  assert.equal(needsDirectConfirmation(document([{ outbound: "office", "expires-at": "2026-11-01T12:01:00Z" }]), now), false);
 });

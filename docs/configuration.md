@@ -135,9 +135,11 @@ IPv6 默认关闭，Linux/macOS/Windows 可通过 `core.ipv6-network` 显式启�
 
 ## UDP 策略与显式回退
 
+Web 管理页新建代理时会显式保存 `udp-fallback = "direct"`，已有代理保留原策略；回退选择在连接测试确认当前实现不支持 UDP 后展示，也可选择 `reject`。下面说明文件模式中省略该字段时的行为。
+
 `direct` 规则直连 UDP，`reject` 规则始终拒绝且不回退。SOCKS5 使用原生 UDP ASSOCIATE；Shadowsocks 使用原生加密 UDP。两者保留域名供代理端解析，不先向本机解析器查询业务目标。代理外层 TCP/UDP 均通过指定真实出口；SOCKS5 的 TCP 控制连接关闭时，同时关闭 UDP 关联。不支持 SOCKS5 UDP 分片，收到非零 FRAG 时明确拒绝。
 
-HTTP/HTTPS CONNECT 只支持 TCP，选中它们时默认拒绝 UDP，并记录出站名和不支持 UDP 的原因；拒绝不会把 UDP 转换为 TCP。
+HTTP/HTTPS CONNECT 只支持 TCP，未配置回退时会拒绝 UDP，并记录出站名和不支持 UDP 的原因；拒绝不会把 UDP 转换为 TCP。
 
 只有确实允许绕过代理发送 UDP 时，才为该代理显式设置：
 

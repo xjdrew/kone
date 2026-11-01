@@ -30,6 +30,8 @@ func TestRuntimeStructuredLogsReachAuthenticatedManagementWithoutCapture(t *test
 	}})
 	require.NoError(t, err)
 	defer c.Close()
+	initial, err := store.Query(logstore.Query{})
+	require.NoError(t, err)
 	server := httptest.NewServer(c.Handler())
 	defer server.Close()
 	client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}
@@ -75,7 +77,7 @@ func TestRuntimeStructuredLogsReachAuthenticatedManagementWithoutCapture(t *test
 	require.NoError(t, json.Unmarshal(data, &logs))
 	require.Len(t, logs.Records, 2)
 	require.Equal(t, "ERROR", logs.Records[1].Level)
-	require.Equal(t, uint64(2), logs.Dropped)
+	require.Equal(t, initial.NextCursor+2, logs.Dropped)
 	require.True(t, logs.Gap)
 	request, err = http.NewRequest("GET", server.URL+"/api/v1/logs?after="+strconv.FormatUint(logs.NextCursor, 10), nil)
 	require.NoError(t, err)

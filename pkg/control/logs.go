@@ -1,11 +1,19 @@
 package control
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
 
 	"github.com/xjdrew/kone/pkg/logstore"
 )
+
+// Operational events belong to this controller even when it has no process-wide
+// logger. Keep them available independently of the engine's diagnostic level.
+func (c *Controller) logEvent(level slog.Level, message string, attrs ...slog.Attr) {
+	slog.New(c.logs.Handler(nil, "management")).With("service", "kone").LogAttrs(context.Background(), level, message, attrs...)
+}
 
 type runtimeLogs struct {
 	logstore.Page

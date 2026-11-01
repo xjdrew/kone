@@ -16,12 +16,14 @@ import (
 )
 
 func TestConfigurationResetRequiresPausedCaptureAndPersistsDefaults(t *testing.T) {
-	// Real HTTP/authentication/persistence, with only the privileged engine
-	// replaced. This journey never changes system networking.
+	// Real HTTP/authentication/persistence, with the privileged engine and
+	// machine DNS inspection isolated from the developer host.
 	directory := t.TempDir()
 	c, err := control.New(control.Options{Directory: directory, Factory: func(*kone.KoneConfig) (control.Engine, error) {
 		return &isolatedEngine{ready: make(chan struct{}), stop: make(chan struct{})}, nil
-	}, Preflight: func(context.Context, *kone.KoneConfig) kone.PreflightReport { return kone.PreflightReport{Ready: true} }})
+	}, Preflight: func(context.Context, *kone.KoneConfig) kone.PreflightReport { return kone.PreflightReport{Ready: true} },
+		InspectSystemDNSRecovery: func(context.Context) ([]kone.SystemDNSRecoveryEntry, error) { return nil, nil },
+	})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, c.Close()) })
 	server := httptest.NewServer(c.Handler())
@@ -71,7 +73,7 @@ func TestConfigurationResetRequiresPausedCaptureAndPersistsDefaults(t *testing.T
 		require.Eventually(t, func() bool {
 			status, result := call("GET", "operations/"+operation["id"].(string), nil)
 			return status == 200 && result["status"] == "succeeded"
-		}, 2*time.Second, time.Millisecond)
+		}, 2*time.Second, 50*time.Millisecond)
 	}
 	run("start")
 	status, blocked := call("POST", "config/defaults", map[string]any{"base_version": saved["version"]})

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 
@@ -156,16 +157,33 @@ func (one *One) diagnosticUDPTarget(ctx context.Context, s *runtimeSnapshot, out
 func (one *One) probeUDPDiagnostic(parent context.Context, outbound, target string, o DiagnosticOptions, expectedVersion uint64) (result DiagnosticResult, err error) {
 	start := time.Now()
 	result = DiagnosticResult{Target: target, Outbound: outbound, Protocol: "udp", Stage: "configuration", Status: "failed", Time: start, Expires: start.Add(5 * time.Minute), Scope: "explicit UDP/DNS response test; not QUIC or application traffic", DNSName: o.DNSName, DNSType: o.DNSType, DNSPath: "not_attempted"}
-	defer func() { result.DurationMS = time.Since(start).Milliseconds() }()
+	result.Host = DiagnosticHost{Status: "unknown", Message: "No UDP response evidence was obtained; TCP connectivity was not tested"}
+	result.Protocols = DiagnosticProtocolEvidence("")
+	result.Progress = DiagnosticProgress{Stage: "configuration", Total: 3}
+	defer func() {
+		result.DurationMS = time.Since(start).Milliseconds()
+		result.Progress.Stage = "complete"
+		reportDiagnosticProgress(parent, result)
+	}()
 	if err := ValidateDiagnosticTarget(target); err != nil {
 		result.Message = err.Error()
 		return result, nil
 	}
+	result.Host.Address = target
 	snapshot := one.policy.Load()
 	if snapshot == nil {
 		return result, errors.New("engine policy is unavailable")
 	}
 	result.ConfigVersion = snapshot.configurationVersion()
+	for _, item := range snapshot.cfg.Outbounds {
+		if item.Name == outbound {
+			result.Protocols = DiagnosticProtocolEvidence(item.URL)
+			if endpoint, err := url.Parse(item.URL); err == nil {
+				result.Host.Address = endpoint.Host
+			}
+			break
+		}
+	}
 	if expectedVersion != 0 && expectedVersion != result.ConfigVersion {
 		result.Status = "not_applied"
 		result.Message = "The saved configuration has not been applied to this running engine"
@@ -207,6 +225,14 @@ func (one *One) probeUDPDiagnostic(parent context.Context, outbound, target stri
 		} else if stage == "capability" || stage == "virtual_destination" {
 			result.Status = "unsupported"
 		}
+		status := result.Status
+		if status == "canceled" {
+			status = "unknown"
+		}
+		result.Protocols.UDP.Status, result.Protocols.UDP.Message = status, result.Message
+		if stage == "capability" {
+			result.Protocols.UDP.Evidence = "protocol"
+		}
 		return result, nil
 	}
 	address, err := one.diagnosticUDPTarget(ctx, snapshot, outbound, target, o)
@@ -226,11 +252,16 @@ func (one *One) probeUDPDiagnostic(parent context.Context, outbound, target stri
 		stage = "proxy_association"
 		result.PeerKind = "proxy_endpoint"
 	}
+	result.Stage, result.Progress.Stage = stage, stage
+	result.Protocols.UDP = DiagnosticCheck{Status: "testing", Message: "Preparing the selected UDP socket or proxy association; no response is confirmed"}
+	reportDiagnosticProgress(parent, result)
 	conn, err := snapshot.outbounds.DialUDPContext(ctx, outbound, address)
 	if err != nil {
 		return fail(stage, err)
 	}
 	defer conn.Close()
+	result.Stage, result.Progress.Stage, result.Progress.Completed = "udp_write", "udp_write", 1
+	reportDiagnosticProgress(parent, result)
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
 	deadline, _ := ctx.Deadline()
@@ -255,6 +286,10 @@ func (one *One) probeUDPDiagnostic(parent context.Context, outbound, target stri
 	if err != nil {
 		return fail("udp_write", err)
 	}
+	result.Stage, result.Progress.Stage, result.Progress.Completed = "udp_response", "udp_response", 2
+	result.Protocols.UDP.Evidence = "query_sent"
+	result.Protocols.UDP.Message = "UDP/DNS query sent; waiting for a matching response"
+	reportDiagnosticProgress(parent, result)
 	buffer := make([]byte, 4096)
 	for range 4 {
 		n, err := conn.Read(buffer)
@@ -275,6 +310,9 @@ func (one *One) probeUDPDiagnostic(parent context.Context, outbound, target stri
 		}
 		result.DNSTruncated = response.Truncated
 		result.Message = "A matching UDP/DNS response was received; DNS rcode/truncation is separate from application success; no TCP retry was performed"
+		result.Protocols.UDP = DiagnosticCheck{Status: "healthy", Tested: true, Evidence: "validated_dns_response", Message: result.Message}
+		result.Host.Status, result.Host.Message = "healthy", "A validated UDP/DNS response confirms this UDP path; TCP connectivity and latency were not measured"
+		result.Progress.Completed = 3
 		return result, nil
 	}
 	return fail("udp_response", errors.New("received four invalid or mismatched UDP/DNS responses; target reachability is unverified"))

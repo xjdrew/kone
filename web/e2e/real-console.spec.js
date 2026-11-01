@@ -168,37 +168,56 @@ test("@real genuine management cookie, save, reload and restart stay capture-pau
     await ui.page.locator(".nav-link[data-page=outbounds]").click();
     await ui.page.getByRole("button", { name: "＋ 添加代理", exact: true }).click();
     await ui.page.locator("#outbound-name-0").fill("BrowserReal");
-    await ui.page.locator("#outbound-url-0").fill("http://127.0.0.1:18080");
-    await ui.page.locator("#outbound-credentials-0").selectOption("replace");
+    await ui.page.locator("#outbound-protocol-0").selectOption("http");
+    await ui.page.locator("#outbound-host-0").fill("127.0.0.1");
+    await ui.page.locator("#outbound-port-0").fill("18080");
     await ui.page.locator("#outbound-username-0").fill("browser-fixture-user");
     await ui.page.locator("#outbound-password-0").fill("not-a-real-proxy-password");
-    await ui.page.getByRole("button", { name: "保存", exact: true }).click();
-    await ui.page.locator("#outbound-save-untested").click();
+    await ui.page.locator("[data-outbound-editor] [data-editor-save]").click();
+    await expect(ui.page.locator("[data-outbound-test-suggestion]")).toBeVisible();
+    await ui.page.getByRole("button", { name: "稍后", exact: true }).click();
+    await expect(ui.page.locator("[data-outbound-editor]")).toHaveCount(0);
+    await expect(ui.page.locator('[data-outbound-row="0"]')).toContainText("BrowserReal");
     await expect(ui.page.locator("#page-notice")).toContainText("已保存");
     await ui.assertPaused();
     await ui.page.locator(".nav-link[data-page=rules]").click();
     await ui.page.getByRole("button", { name: "＋ 添加精确域名", exact: true }).click();
     await ui.page.locator("#rule-pattern-0").fill("saved-browser.example");
     await ui.page.locator("#rule-outbound-0").selectOption("BrowserReal");
+    await ui.page.locator('[data-editor-advanced="rule"] > summary').click();
     await ui.page.locator("#rule-protocol-0").selectOption("tcp");
     await ui.page.locator("#rule-ports-0").fill("443");
-    await ui.page.getByRole("button", { name: "保存", exact: true }).click();
+    await ui.page.locator("#editor-dialog [data-editor-save]").click();
+    await expect(ui.page.locator("#editor-dialog")).not.toBeVisible();
+    await expect(ui.page.locator('[data-rule-row="0"]')).toContainText("saved-browser.example");
     await expect(ui.page.locator("#page-notice")).toContainText("已保存");
     await ui.page.reload();
     await ui.page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
     await expect(ui.page.locator("#rule-pattern-0")).toHaveValue("saved-browser.example");
     await expect(ui.page.locator("#rule-outbound-0")).toHaveValue("BrowserReal");
-    await ui.page.getByRole("button", { name: "取消编辑", exact: true }).click();
+    await ui.page.locator("#editor-dialog [data-editor-cancel]").click();
     const verifySaved = async () => {
       await ui.page.locator(".nav-link[data-page=outbounds]").click();
       await expect(ui.page.locator("#outbound-name-0")).toHaveCount(0);
       await ui.page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
       await expect(ui.page.locator("#outbound-name-0")).toHaveValue("BrowserReal");
-      const value = await ui.page.locator("#outbound-url-0").inputValue();
-      expect(value.includes("REDACTED")).toBe(true);
-      expect(value.includes("browser-fixture-user") || value.includes("not-a-real-proxy-password")).toBe(false);
-      await expect(ui.page.locator("#outbound-password-0")).toHaveCount(0);
-      await ui.page.getByRole("button", { name: "取消编辑", exact: true }).click();
+      await expect(ui.page.locator("#outbound-protocol-0")).toHaveValue("http");
+      await expect(ui.page.locator("#outbound-host-0")).toHaveValue("127.0.0.1");
+      await expect(ui.page.locator("#outbound-port-0")).toHaveValue("18080");
+      const credentialEvidence = await ui.page.evaluate(async () => {
+        const response = await fetch("/api/v1/config", { credentials: "same-origin" });
+        const saved = await response.json();
+        const value = saved.config?.outbounds?.find((outbound) => outbound.name === "BrowserReal")?.url || "";
+        return {
+          ok: response.ok,
+          masked: value.includes("REDACTED"),
+          containsSecret: value.includes("browser-fixture-user") || value.includes("not-a-real-proxy-password"),
+          configured: Boolean(saved.credential_state?.BrowserReal?.configured),
+          fieldsBlank: ["#outbound-username-0", "#outbound-password-0"].every((selector) => document.querySelector(selector)?.value === ""),
+        };
+      });
+      expect(credentialEvidence).toEqual({ ok: true, masked: true, containsSecret: false, configured: true, fieldsBlank: true });
+      await ui.page.locator("[data-outbound-editor] [data-editor-cancel]").click();
       await ui.assertPaused();
       await assertNoCaptureJournal(directory);
       const persisted = JSON.parse(await readFile(join(directory, "settings.json"), "utf8"));
@@ -220,6 +239,7 @@ test("@real genuine management cookie, save, reload and restart stay capture-pau
     await ui.page.locator('[data-rule-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
     await expect(ui.page.locator("#rule-pattern-0")).toHaveValue("saved-browser.example");
     await expect(ui.page.locator("#rule-outbound-0")).toHaveValue("BrowserReal");
+    await ui.page.locator('[data-editor-advanced="rule"] > summary').click();
     await expect(ui.page.locator("#rule-protocol-0")).toHaveValue("tcp");
     await expect(ui.page.locator("#rule-ports-0")).toHaveValue("443");
     await ui.assertPaused();

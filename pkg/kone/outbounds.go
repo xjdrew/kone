@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"time"
 
 	"github.com/xjdrew/kone/pkg/proxy"
 )
@@ -46,6 +47,15 @@ func (p *Outbounds) Dial(name, addr string) (net.Conn, error) {
 }
 
 func (p *Outbounds) DialContext(ctx context.Context, name, addr string) (net.Conn, error) {
+	dial := p.dial
+	if observe, ok := ctx.Value(diagnosticTransportKey{}).(diagnosticTransportObserver); ok {
+		dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+			start := time.Now()
+			conn, err := p.dial(ctx, network, address)
+			observe(address, time.Since(start), err)
+			return conn, err
+		}
+	}
 	outbound, ok := p.entries[name]
 	if !ok {
 		return nil, fmt.Errorf("unknown outbound %q", name)
@@ -57,10 +67,10 @@ func (p *Outbounds) DialContext(ctx context.Context, name, addr string) (net.Con
 	case OutboundReject:
 		return nil, ErrRejected
 	case OutboundDirect:
-		return p.dial(ctx, "tcp", addr)
+		return dial(ctx, "tcp", addr)
 	case OutboundProxy:
 		slog.Debug("Dialing proxy", "destination", addr, "outbound", name)
-		return outbound.proxy.DialContextVia(ctx, "tcp", addr, p.dial)
+		return outbound.proxy.DialContextVia(ctx, "tcp", addr, dial)
 	}
 	return nil, fmt.Errorf("invalid outbound type for %q", name)
 }

@@ -103,25 +103,39 @@ func TestUDPDiagnosticRequiresMatchedDNSResponseAndSeparatesDNSOutcome(t *testin
 				require.Equal(t, "127.0.0.1:53", address)
 				return conn, nil
 			}
-			result, err := one.ProbeDiagnosticRequestVersion(t.Context(), BuiltinDirect, "127.0.0.1:53", DiagnosticOptions{Protocol: "udp"}, 0)
+			var progress []DiagnosticResult
+			ctx := WithDiagnosticProgress(t.Context(), func(value DiagnosticResult) { progress = append(progress, value) })
+			result, err := one.ProbeDiagnosticRequestVersion(ctx, BuiltinDirect, "127.0.0.1:53", DiagnosticOptions{Protocol: "udp"}, 0)
 			require.NoError(t, err)
 			require.Equal(t, 1, calls)
 			require.True(t, conn.closed.Load())
 			require.Equal(t, "udp", result.Protocol)
+			require.Nil(t, result.ConnectLatencyMS, "opening a UDP socket does not measure TCP connectivity")
+			require.Equal(t, "unknown", result.Protocols.TCP.Status)
+			require.False(t, result.Protocols.TCP.Tested)
+			require.False(t, result.Protocols.TLS.Tested)
+			require.Equal(t, "complete", result.Progress.Stage)
+			require.Equal(t, "complete", progress[len(progress)-1].Progress.Stage)
 			if mode == "success" || mode == "nxdomain" || mode == "refused" || mode == "truncated" {
 				require.Equal(t, "reachable", result.Status)
 				require.Equal(t, "udp_response", result.Stage)
 				require.NotEmpty(t, result.DNSRCode)
 				require.Equal(t, mode == "truncated", result.DNSTruncated)
 				require.Equal(t, "validated_dns_response", result.PeerKind)
+				require.Equal(t, "healthy", result.Protocols.UDP.Status)
+				require.True(t, result.Protocols.UDP.Tested)
+				require.Equal(t, "validated_dns_response", result.Protocols.UDP.Evidence)
+				require.Equal(t, 3, result.Progress.Completed)
 			} else {
 				require.NotEqual(t, "reachable", result.Status)
 				if mode == "timeout" {
 					require.Equal(t, "unknown", result.Status)
 				}
 				require.Empty(t, result.DNSRCode)
+				require.False(t, result.Protocols.UDP.Tested, "no matching DNS reply means no confirmed UDP evidence")
 			}
 			require.Equal(t, "example.com", result.DNSName)
+			require.False(t, progress[0].Protocols.UDP.Tested, "final evidence cannot mutate an earlier progress snapshot")
 		})
 	}
 }
@@ -143,6 +157,9 @@ func TestUDPDiagnosticRejectsFallbackDisabledVirtualAndUnappliedBeforeNetwork(t 
 		require.Equal(t, tc.stage, r.Stage)
 		require.Equal(t, tc.status, r.Status)
 		require.NotContains(t, r.Message, "private-password")
+		require.Nil(t, r.ConnectLatencyMS)
+		require.False(t, r.Protocols.TCP.Tested)
+		require.False(t, r.Protocols.UDP.Tested)
 	}
 	_, err := one.ProbeDiagnosticRequestVersion(t.Context(), BuiltinDirect, "127.0.0.1:53", DiagnosticOptions{Protocol: "udp", TLS: true}, 17)
 	require.Error(t, err)
