@@ -1012,6 +1012,56 @@ test("@compat settings subpages support direct links, the Back button and browse
   expect(data.writes).toEqual([]);
 });
 
+test("@compat a settings link remains clickable across a natural status poll", async ({ page }, testInfo) => {
+  await mount(page);
+  await navigate(page, "settings");
+  await expect(page.locator("[data-settings-root]")).toBeVisible();
+  const account = page.locator('[data-settings-link="account"]');
+  const bounds = await account.evaluate(node => {
+    node.scrollIntoView({ block: "center", inline: "nearest" });
+    window.settingsPressedLink = node;
+    const box = node.getBoundingClientRect();
+    return { x: box.x, y: box.y, width: box.width, height: box.height };
+  });
+  const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === "/api/v1/recovery" && response.ok());
+  await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await page.mouse.down();
+  try {
+    await (await refreshed).finished();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const connected = await page.evaluate(() => window.settingsPressedLink.isConnected);
+    await page.mouse.up();
+    await testInfo.attach("settings-pointer-poll", { contentType: "application/json", body: JSON.stringify({ originalAnchorConnected: connected, hashAfterPointerUp: await page.evaluate(() => location.hash) }) });
+    expect(connected).toBe(true);
+    await expect(page.locator('[data-settings-detail="account"]')).toBeVisible();
+  } finally {
+    await page.mouse.up();
+  }
+});
+
+test("@compat stable settings navigation keeps saved summaries and reset permissions current", async ({ page }) => {
+  const data = await mount(page);
+  await navigate(page, "settings");
+  await expect(page.locator('[data-settings-link="logs"]')).toContainText("INFO");
+  await expect(page.locator('[data-settings-action="reset"]')).toBeEnabled();
+  await page.evaluate(() => { window.settingsRootBeforeRefresh = document.querySelector("[data-settings-root]"); });
+  data.config.config.general["log-level"] = "warn";
+  data.config.version++;
+  data.state = "running";
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.locator('[data-settings-link="logs"]')).toContainText("WARN");
+  await expect(page.locator('[data-settings-action="reset"]')).toBeDisabled();
+  data.state = "paused";
+  data.role = "read";
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#session-role")).toContainText("只读");
+  await expect(page.locator('[data-settings-action="reset"]')).toBeDisabled();
+  await expect(page.locator('[data-settings-action="logout"]')).toBeEnabled();
+  expect(await page.evaluate(() => window.settingsRootBeforeRefresh === document.querySelector("[data-settings-root]"))).toBe(true);
+  expect(data.writes).toEqual([]);
+});
+
 test("@compat log settings edit inline, cancel restores saved values and save retains unrelated configuration", async ({ page }, testInfo) => {
   const data = await mount(page);
   await navigateSettings(page, "logs");

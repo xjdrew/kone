@@ -43,6 +43,7 @@
 
 - Explain incompatible saved password files in the desktop startup dialog and show how to reset authentication while keeping other settings.
 - Keep Windows background DNS and network checks from flashing console windows on startup or during capture.
+- Keep Settings menu links responsive while live status updates refresh their summaries.
 - Preserve log filters, expanded fields and reading position during automatic updates.
 - Show real outbound connection failures in runtime logs at the default log level.
 - Prevent intercepted domains from bypassing their routing policy through real IPv6 DNS answers when IPv6 capture is disabled.
