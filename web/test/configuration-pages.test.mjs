@@ -53,3 +53,34 @@ test("all configuration landing pages show saved resources without editable form
   const afterPause = collect(paused.inbounds()).find(node => node.tag === "button" && node.children.includes("编辑入站"));
   assert.equal(afterPause.attrs.disabled, false, "fresh paused state overrides the stale document's lock flag");
 });
+
+test("reset is available for damaged paused settings but requires local access and completed recovery", () => {
+  const h = (tag, attrs, ...children) => ({ tag, attrs, children: children.flat(Infinity).filter(Boolean), getAttribute: name => attrs[name] });
+  const model = { state: {}, config: { config: {} }, lan: {}, sessions: [] };
+  let state = "paused";
+  const titles = ["配置与生命周期", "导入与恢复配置", "网络恢复", "记录、隐私与导出", "关于 KONE"];
+  const ui = {
+    model, h, card: (title, description, ...children) => h("section", { "data-card-title": title }, ...children),
+    note: text => h("p", {}, text), button: (text, onclick, kind, disabled) => h("button", { disabled }, text),
+    detailPairs: () => null, readonlyNote: () => null, runtime: () => state, canManage: () => true,
+    settingsObservations: () => titles.map(title => h("section", { "data-card-title": title })),
+  };
+  const settings = createConfigurationPages(ui).settings;
+  const reset = () => settings().find(node => node?.getAttribute("data-card-title") === "重置所有配置").children.find(node => node?.tag === "div" && node.children.some(child => child?.tag === "button")).children[0];
+  assert.equal(reset().attrs.disabled, false);
+  state = "invalid_config";
+  model.state.config_error = "Saved settings are damaged";
+  assert.equal(reset().attrs.disabled, false, "reset can repair damaged settings without capture");
+  for (state of ["running", "starting", "pausing", "stopping", "degraded", "recovery_required", "recovery_failed"]) {
+    assert.equal(reset().attrs.disabled, true, state);
+  }
+  state = "paused";
+  for (const boundary of ["capture_locked", "remote_session"]) {
+    model.state[boundary] = true;
+    assert.equal(reset().attrs.disabled, true, boundary);
+    model.state[boundary] = false;
+  }
+  model.recovery = { required: true };
+  assert.equal(reset().attrs.disabled, true, "a pending journal still requires recovery");
+  assert.equal(settings().at(-1).getAttribute("data-card-title"), "关于 KONE");
+});

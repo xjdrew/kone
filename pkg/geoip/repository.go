@@ -64,6 +64,22 @@ func OpenRepository(directory string) (*Repository, error) {
 	return r, nil
 }
 
+// ResetBuiltin is an explicit user reset. It also repairs a damaged manifest,
+// while leaving uploaded bytes available for existing profile backups.
+func ResetBuiltin(directory string) error {
+	if directory == "" {
+		return errors.New("GeoIP repository directory is required")
+	}
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(repositoryManifest{Format: 1, Current: "builtin"})
+	if err != nil {
+		return err
+	}
+	return writeRepositoryFile(filepath.Join(directory, "manifest.json"), data)
+}
+
 func readRepositoryManifest(directory string) (repositoryManifest, error) {
 	var manifest repositoryManifest
 	file, err := os.Open(filepath.Join(directory, "manifest.json"))

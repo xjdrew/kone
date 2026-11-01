@@ -152,7 +152,9 @@ async function mount(page, options = {}) {
     const body = request.postDataJSON();
     if (path === "/auth") return respond({ setup_required: Boolean(data.requireSetup), setup_authorized: Boolean(data.setupSession), password_required: !data.requireSetup, authenticated: data.loggedIn !== false, ...(data.setupSession ? { csrf_token: "setup-csrf" } : {}) });
     if (path === "/auth/password") {
-      if (!data.setupSession) return respond({ error: { message: "local setup proof required" } }, 403);
+      if (method === "POST" && !data.setupSession) return respond({ error: { message: "local setup proof required" } }, 403);
+      if (method === "PUT" && data.loggedIn === false) return respond({ error: { message: "Password required" } }, 401);
+      if (method === "PUT" && (data.role !== "admin" || body.current_password !== (data.managementPassword || "mock-owner-password"))) return respond({ error: { message: "Current management password is incorrect" } }, 403);
       if (!body.password || body.password !== body.confirm_password) return respond({ error: { message: "password mismatch" } }, 400);
       data.requireSetup = false;
       data.requirePassword = true;
@@ -194,7 +196,9 @@ async function mount(page, options = {}) {
         csrf_token: "test-csrf",
         state: data.state,
         data_state: data.state,
-        capture_locked: ["running", "starting", "stopping"].includes(data.state),
+        capture_locked: Boolean(data.captureLocked) || ["running", "starting", "stopping"].includes(data.state),
+        recovery_required: Boolean(data.recoveryRequired),
+        config_error: data.configError || "",
         control_state: "ready",
         host: "Gateway · 测试主机",
         role: data.role,
@@ -241,14 +245,21 @@ async function mount(page, options = {}) {
       return respond(data.config);
     }
     if (path === "/config/defaults") {
+      if (data.resetError) return respond({ error: { message: data.resetError } }, 409);
+      if (data.captureLocked || data.recoveryRequired || ["running", "starting", "degraded", "pausing", "stopping", "preflight", "recovery_required", "recovery_failed"].includes(data.state)) return respond({ error: { message: "Pause capture and finish recovery before resetting configuration" } }, 409);
+      if (body.base_version !== data.config.version) return respond({ error: { message: "Version conflict" } }, 409);
       data.config.version++;
-      data.config.inbound.enabled = false;
+      data.config.inbound.enabled = true;
       data.config.config.rules = [];
       data.config.config.outbounds = [];
+      data.config.direct_only_confirmed = false;
+      data.config.credential_state = {};
+      data.configError = "";
+      data.state = "paused";
       return respond(data.config);
     }
     if (path === "/config" && method === "PUT") {
-      if (data.conflict)
+      if (data.conflict || body.base_version !== data.config.version)
         return respond({ error: { message: "Version conflict" } }, 409);
       data.config = {
         version: data.config.version + 1,
@@ -438,7 +449,7 @@ async function mount(page, options = {}) {
         trust_required: true,
       });
     if (path === "/recovery")
-      return respond({ required: false, ownership: "none", items: [] });
+      return respond({ required: Boolean(data.recoveryRequired), ownership: data.recoveryRequired ? "owned" : "none", items: [] });
     if (path === "/geoip" && method === "PUT")
       return respond({
         saved: {
@@ -555,6 +566,7 @@ test("@compat first-time password setup requires matching inputs and remains cap
   expect(data.requests.find((request) => request.path === "/auth/password")?.headers["x-csrf-token"]).toBe("setup-csrf");
   await expect(page.locator("#runtime-status")).toContainText("已暂停");
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
+  await navigate(page, "settings");
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(page.locator("#login-password")).toBeVisible();
   await expect(page.locator("#login-password")).toHaveValue("");
@@ -573,10 +585,159 @@ test("@compat public first visit cannot seize password setup without the local t
   expect(data.writes).toEqual([]);
 });
 
+test("@compat settings contain account actions and place recovery before the final About card", async ({ page }, testInfo) => {
+  const data = await mount(page);
+  for (const name of ["home", "connections", "inbounds", "outbounds", "rules", "dns", "diagnostics", "settings"]) {
+    await navigate(page, name);
+    await expect(page.getByRole("button", { name: "刷新", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "退出登录", exact: true })).toHaveCount(name === "settings" ? 1 : 0);
+  }
+  const titles = await page.locator("#main [data-card-title]").evaluateAll((cards) => cards.map((card) => card.getAttribute("data-card-title")));
+  expect(titles).toEqual([
+    "配置与生命周期", "日志设置", "GeoIP 数据", "手机与平板访问", "账号与安全",
+    "记录、隐私与导出", "导入与恢复配置", "网络恢复", "重置所有配置", "关于 KONE",
+  ]);
+  await expect(page.locator('[data-card-title="账号与安全"]').getByRole("button", { name: "修改管理密码", exact: true })).toBeEnabled();
+  await page.screenshot({ path: testInfo.outputPath("settings-organized.png"), fullPage: true, animations: "disabled" });
+  expect(data.writes).toEqual([]);
+});
+
+test("@compat change password validates confirmation, verifies the current password and keeps capture paused", async ({ page }, testInfo) => {
+  const data = await mount(page, { managementPassword: "mock-owner-password" });
+  await navigate(page, "settings");
+  await page.getByRole("button", { name: "修改管理密码", exact: true }).click();
+  await page.screenshot({ path: testInfo.outputPath("change-password.png"), animations: "disabled" });
+  await page.locator("#current-password").fill("wrong-owner-password");
+  await page.locator("#new-password").fill("replacement-owner-password");
+  await page.locator("#confirm-new-password").fill("does-not-match");
+  await page.getByRole("button", { name: "确认修改密码", exact: true }).click();
+  await expect(page.locator("#detail-dialog")).toContainText("两次输入");
+  expect(data.requests.filter((request) => request.path === "/auth/password")).toHaveLength(0);
+  await page.locator("#confirm-new-password").fill("replacement-owner-password");
+  await page.getByRole("button", { name: "确认修改密码", exact: true }).click();
+  await expect(page.locator("#detail-dialog")).toContainText("当前管理密码不正确");
+  await page.locator("#current-password").fill("mock-owner-password");
+  await page.getByRole("button", { name: "确认修改密码", exact: true }).click();
+  await expect(page.locator("#detail-dialog")).not.toBeVisible();
+  const changes = data.requests.filter((request) => request.path === "/auth/password");
+  expect(changes.at(-1)).toMatchObject({ method: "PUT", body: { current_password: "mock-owner-password", password: "replacement-owner-password", confirm_password: "replacement-owner-password" } });
+  await expect(page.getByRole("heading", { name: "设置与恢复", exact: true })).toBeVisible();
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
+  await expect(page.locator("#login-password")).toHaveValue("");
+  await page.locator("#login-password").fill("mock-owner-password");
+  await page.getByRole("button", { name: "登录管理", exact: true }).click();
+  await expect(page.locator("#auth-error")).toContainText("Password or authorization is invalid");
+  await page.locator("#login-password").fill("replacement-owner-password");
+  await page.getByRole("button", { name: "登录管理", exact: true }).click();
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
+});
+
+test("@compat reset all configuration requires confirmation and leaves capture stopped", async ({ page }) => {
+  const data = await mount(page);
+  await navigate(page, "settings");
+  await page.getByRole("button", { name: "重置所有配置", exact: true }).click();
+  await page.locator("#detail-dialog").getByRole("button", { name: "取消", exact: true }).click();
+  expect(data.writes.some((write) => write.path === "/config/defaults")).toBe(false);
+  await page.getByRole("button", { name: "重置所有配置", exact: true }).click();
+  await page.getByRole("button", { name: "确认重置所有配置", exact: true }).click();
+  await expect.poll(() => data.writes.filter((write) => write.path === "/config/defaults").length).toBe(1);
+  expect(data.writes.find((write) => write.path === "/config/defaults").body).toEqual({ base_version: 1 });
+  await expect(page.locator("#page-notice")).toContainText("默认");
+  await navigate(page, "outbounds");
+  await expect(page.getByText("尚未配置代理", { exact: true })).toBeVisible();
+  await navigate(page, "inbounds");
+  await expect(page.locator('[data-card-title="TUN 接管入口"]')).toContainText("已启用");
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
+});
+
+test("reset failures preserve the saved settings and surface the server reason", async ({ page }) => {
+  const data = await mount(page, { resetError: "Configuration version changed; reload settings" });
+  await navigate(page, "settings");
+  await page.getByRole("button", { name: "重置所有配置", exact: true }).click();
+  await page.getByRole("button", { name: "确认重置所有配置", exact: true }).click();
+  await expect(page.getByText("Configuration version changed; reload settings", { exact: false })).toBeVisible();
+  expect(data.config.version).toBe(1);
+  await page.locator("#detail-dialog").getByRole("button", { name: "取消", exact: true }).click();
+  await navigate(page, "outbounds");
+  await expect(page.locator('[data-outbound-row="0"]')).toContainText("Proxy A");
+});
+
+test("capture starting after reset confirmation still prevents configuration loss", async ({ page }) => {
+  const data = await mount(page);
+  await navigate(page, "settings");
+  await page.getByRole("button", { name: "重置所有配置", exact: true }).click();
+  data.state = "running";
+  await page.getByRole("button", { name: "确认重置所有配置", exact: true }).click();
+  await expect(page.locator("#detail-dialog")).toContainText("Pause capture and finish recovery before resetting configuration");
+  expect(data.config.version).toBe(1);
+  expect(data.config.config.outbounds[0].name).toBe("Proxy A");
+  expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
+});
+
+test("inactive invalid configuration can be repaired by resetting all settings", async ({ page }) => {
+  const data = await mount(page);
+  data.state = "invalid_config";
+  data.configError = "Saved configuration contains an invalid outbound";
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await navigate(page, "settings");
+  await expect(page.getByRole("button", { name: "重置所有配置", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "重置所有配置", exact: true }).click();
+  await page.getByRole("button", { name: "确认重置所有配置", exact: true }).click();
+  await expect(page.locator("#page-notice")).toContainText("所有配置已恢复默认");
+  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  expect(data.configError).toBe("");
+  expect(data.config.config.outbounds).toEqual([]);
+  expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
+});
+
+for (const condition of ["running", "starting", "degraded", "pausing", "stopping", "preflight", "recovery_required", "recovery_failed", "pending_recovery", "capture_locked"]) {
+  test(`reset configuration is blocked while ${condition}`, async ({ page }) => {
+    const data = await mount(page);
+    if (condition === "capture_locked") data.captureLocked = true;
+    else if (condition === "pending_recovery") data.recoveryRequired = true;
+    else data.state = condition;
+    if (condition === "recovery_required") data.recoveryRequired = true;
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await navigate(page, "settings");
+    await expect(page.getByRole("button", { name: "重置所有配置", exact: true })).toBeDisabled();
+    expect(data.writes.some((write) => write.path === "/config/defaults")).toBe(false);
+  });
+}
+
+test("read-only sessions cannot change the password or reset configuration", async ({ page }) => {
+  const data = await mount(page, { role: "read" });
+  await navigate(page, "settings");
+  await expect(page.getByRole("button", { name: "修改管理密码", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "重置所有配置", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "退出登录", exact: true })).toBeEnabled();
+  expect(data.writes).toEqual([]);
+});
+
+for (const [id, code, message] of [
+  ["recovery", "recovery_required", "上次接管遗留了 KONE 路由，请在网络恢复中检查。"],
+  ["configuration", "config_invalid", "规则 2 引用了不存在的出站 Missing Proxy。"],
+  ["preflight", "preflight_failed", "TUN 设备被另一个程序占用，请先关闭该程序。"],
+]) {
+  test(`capture readiness retains the concrete ${code} failure reason`, async ({ page }, testInfo) => {
+    const data = await mount(page, { readiness: {
+      ready: false, saved_version: 1, checks: [], warnings: [],
+      blockers: [{ id, code, severity: "error", status: "failed", message, page: "settings", action: "recover" }],
+    } });
+    await page.locator("#lifecycle-toggle").click();
+    await expect(page.locator("#detail-dialog")).toContainText(message);
+    if (id === "recovery") await page.screenshot({ path: testInfo.outputPath("capture-readiness-recovery.png"), animations: "disabled" });
+    expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
+  });
+}
+
 test("@compat a late authenticated state response cannot restore a logged-out console", async ({ page }) => {
   const data = await mount(page);
   data.requirePassword = true;
   data.managementPassword = "mock-owner-password";
+  await navigate(page, "settings");
   let release;
   const deferred = { started: false, promise: new Promise((resolve) => { release = resolve; }) };
   data.deferState = deferred;
@@ -795,6 +956,36 @@ test("version conflict retains draft and offers a persistent actionable message"
   await expect(page.locator("#draft-status")).toContainText("未保存");
 });
 
+for (const externalChange of ["reorder", "delete"]) {
+  test(`automatic refresh preserves a pristine outbound editor after external ${externalChange}`, async ({ page }) => {
+    const initial = fixture();
+    initial.config.config.outbounds.push({ id: "outbound-id-2", enabled: true, name: "Proxy B", url: "socks5://127.0.0.1:18081" });
+    const data = await mount(page, { config: initial.config });
+    await navigate(page, "outbounds");
+    await page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true }).click();
+    await expect(page.locator("#outbound-name-0")).toHaveValue("Proxy A");
+    if (externalChange === "reorder") data.config.config.outbounds.reverse();
+    else {
+      data.config.config.outbounds.shift();
+      data.config.config.rules = [{ type: "FINAL", outbound: "direct" }];
+    }
+    data.config.version = 2;
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    await expect(page.getByText("已保存版本发生变化", { exact: false })).toBeVisible();
+    await expect(page.locator("#outbound-name-0")).toHaveValue("Proxy A");
+    await page.locator("#outbound-name-0").fill("Edited Proxy A");
+    await saveOutbound(page);
+    await expect(page.locator("#page-notice")).toContainText("其他页面或文件修改");
+    await expect(page.locator("#outbound-name-0")).toHaveValue("Edited Proxy A");
+    const save = data.writes.find((write) => write.path === "/config");
+    expect(save.body.base_version).toBe(1);
+    expect(save.body.config.outbounds[0]).toMatchObject({ id: "outbound-id-1", name: "Edited Proxy A" });
+    expect(save.body.credential_actions["Edited Proxy A"]).toMatchObject({ action: "preserve", original_name: "Proxy A" });
+    expect(data.config.version).toBe(2);
+    expect(data.config.config.outbounds[0].name).toBe("Proxy B");
+  });
+}
+
 for (const first of ["username", "password"]) {
   test(`credential editor preserves both fields when ${first} is entered first`, async ({ page }) => {
     const data = await mount(page);
@@ -900,7 +1091,6 @@ test("empty and disconnected states never imply traffic or current healthy opera
   await expect(page.getByText("尚无可绘制的业务流量")).toBeVisible();
   await expect(page.locator(".sankey-edge")).toHaveCount(0);
   data.offline = true;
-  await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(page.locator("#runtime-status")).toHaveText("状态未知");
   await expect(page.locator("#connection-banner")).toContainText(
     "管理连接中断",
@@ -913,7 +1103,6 @@ test("@compat weak network recovery refreshes real state without repeating a mut
 }) => {
   const data = await mount(page);
   data.offline = true;
-  await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(page.locator("#runtime-status")).toHaveText("状态未知");
   await expect(page.locator("#lifecycle-toggle")).toBeDisabled();
   await expect(page.locator("#connection-banner")).toContainText(
@@ -921,7 +1110,6 @@ test("@compat weak network recovery refreshes real state without repeating a mut
   );
   data.offline = false;
   data.delay = 200;
-  await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(page.locator("#runtime-status")).toContainText("已暂停");
   await expect(page.locator("#connection-banner")).toBeHidden();
   await expect(page.locator("#lifecycle-toggle")).toBeEnabled();
@@ -1020,7 +1208,7 @@ test("diagnosis sends one explicit TCP target and never replays business payload
   });
 });
 
-test("manual refresh never silently rebases a dirty draft onto a concurrent saved version", async ({
+test("automatic refresh never silently rebases a dirty draft onto a concurrent saved version", async ({
   page,
 }) => {
   const data = await mount(page);
@@ -1333,7 +1521,6 @@ test("@compat retained capture observations never claim live sampling after repe
   await expect(page.getByText(/接管已停止：这里是/)).toContainText("不会继续实时更新");
   await expect(page.getByRole("button", {name: "上次采样速率", exact: true})).toBeVisible();
   const note = await page.getByText(/接管已停止：这里是/).textContent();
-  await page.getByRole("button", {name: "刷新", exact: true}).first().click();
   await expect.poll(() => data.requests.filter((request) => request.path === "/traffic").length).toBeGreaterThan(1);
   await expect(page.getByText(/接管已停止：这里是/)).toHaveText(note);
   await expect(page.locator(".metric-label").filter({ hasText: "实时上传 / 下载" })).toHaveCount(0);

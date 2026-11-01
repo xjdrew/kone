@@ -71,10 +71,17 @@ export function createConfigurationPages(ui) {
 
   function settings() {
     const general = saved().general || {};
-    return [readonlyNote(), ...ui.settingsObservations(),
+    const observations = ui.settingsObservations();
+    const observed = title => observations.find(node => node?.getAttribute?.("data-card-title") === title);
+    const resetLocked = locked() || ["preflight", "recovery_required", "recovery_failed"].includes(ui.runtime()) || Boolean(model.recovery?.required);
+    return [readonlyNote(), observed("配置与生命周期"),
       card("日志设置", "采集级别与诊断页的显示筛选不同，修改按保存结果提示生效。", detailPairs([["级别", (general["log-level"] || "info").toUpperCase()], ["格式", general["log-format"] || "text"]]), locked() && note("请先暂停接管，再修改日志采集设置。", "warning"), actions(button("编辑日志设置", () => ui.edit("logs"), "primary", !ui.canManage() || locked()))),
-      card("手机与平板访问", "默认回环；局域网入口必须由所有者显式授权。", detailPairs([["访问状态", model.lan.enabled ? "已开启" : "未开启"], ["授权会话", `${(model.sessions.sessions || model.sessions || []).length} 个`]]), actions(button("管理局域网访问", () => ui.edit("lan")))),
       card("GeoIP 数据", "查看来源版本，更新和回退在独立操作面板中确认。", detailPairs([["版本", model.geoip?.saved?.version || "尚未加载"], ["来源", model.geoip?.saved?.source || "内置或已保存数据"]]), model.geoError && note(model.geoError, "error"), actions(button("更新 GeoIP 数据", () => ui.edit("geoip")))),
+      card("手机与平板访问", "默认回环；局域网入口必须由所有者显式授权。", detailPairs([["访问状态", model.lan.enabled ? "已开启" : "未开启"], ["授权会话", `${(model.sessions.sessions || model.sessions || []).length} 个`]]), actions(button("管理局域网访问", () => ui.edit("lan")))),
+      card("账号与安全", "修改管理密码或退出当前登录。修改密码后，其他登录与待用配对代码会失效。", actions(button("修改管理密码", ui.changePassword), button("退出登录", ui.logout, "ghost", !model.online || model.authBusy || model.busy))),
+      observed("记录、隐私与导出"), observed("导入与恢复配置"), observed("网络恢复"),
+      card("重置所有配置", "将入站、代理、规则、DNS、日志、GeoIP 和局域网访问恢复为默认状态，保留管理密码与本机登录。", resetLocked && note("请先暂停接管，并完成网络恢复后再重置所有配置。", "warning"), model.state.remote_session && note("重置所有配置需要在 KONE 主机本机操作。", "warning"), actions(button("重置所有配置", ui.resetConfiguration, "danger", !ui.canManage() || resetLocked || Boolean(model.state.remote_session)))),
+      observed("关于 KONE"),
     ];
   }
   return { inbounds, outbounds, rules, dns, settings };
