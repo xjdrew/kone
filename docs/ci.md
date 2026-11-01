@@ -2,6 +2,14 @@
 
 CI 目标是更快发现错误，同时保留同一提交的跨平台、权限边界和发布证据。检查数减少不代表等待时间会按比例缩短；需要分别比较端到端耗时、关键路径和 runner 执行时间。
 
+## 统一任务入口
+
+本地开发和 CI 通过根 [justfile](../justfile) 的同名任务执行，固定 just 1.59.0；任务表和工具要求见 [开发说明](development.md)。默认 `just` 只列出帮助，不构建、不联网或修改系统网络。原生 `ci-linux-*`、`ci-macos-*`、`ci-windows-tun` 和 `ci-ss` 仅供临时 CI 环境验收，并在调用特权操作前检查运行边界。
+
+PR 使用其根 justfile。`workflow_call` 重放历史提交时，额外把 `github.workflow_sha` 的编排工具检出到 `.ci-tools`：`JUST_JUSTFILE` 指向该工具版本的根文件，`JUST_WORKING_DIRECTORY` 指向被测源码目录。编排任务固定到工作流版本，应用源码、配置、测试及发布脚本仍取目标 SHA，历史源码不必自行包含 justfile。
+
+PR 覆盖率基线也复用这一入口：精确 base SHA 已检出到 `.coverage-base` 后执行 `just test-coverage .coverage-base ../coverage-base.out`，再用 `just coverage-check` 比较；输出路径相对于被测模块。不会要求旧 base 自带新任务文件，也不换成当前 PR 的应用代码。
+
 ## 11 个执行检查
 
 | 分组 | 合并后的职责 | 保留的验收 |
@@ -35,7 +43,7 @@ Linux 系统验收共享编译好的测试程序，但 TUN/网关与 resolved �
 
 ## 优化前后的测量
 
-优化前采用 [成功运行 41237028594](https://github.com/xjdrew/kone/actions/runs/41237028594) 为参照，提交为 `e81114f213875790083c9315ca25e424a4587f6d`。优化后在同一提交 `63f225229624ebaf7f3eb2b249733e4f7d046063` 执行 [首轮](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/1) 与 [暖缓存重跑](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/2)，两轮全部检查通过。
+下表是上一轮 CI 分组优化的测量，尚不代表本轮 just 入口调整后的性能。优化前采用 [成功运行 41237028594](https://github.com/xjdrew/kone/actions/runs/41237028594) 为参照，提交为 `e81114f213875790083c9315ca25e424a4587f6d`。优化后在同一提交 `63f225229624ebaf7f3eb2b249733e4f7d046063` 执行 [首轮](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/1) 与 [暖缓存重跑](https://github.com/xjdrew/kone/actions/runs/41261400623/attempts/2)，两轮全部检查通过。
 
 等待时间取首个执行任务开始至最后一个任务完成，不含启动前排队；runner 秒数是各执行任务耗时之和，包含检出、工具链、测试和工件步骤，未按平台计费权重换算。
 

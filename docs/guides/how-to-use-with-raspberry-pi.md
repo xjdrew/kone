@@ -5,15 +5,15 @@ KONE 可以接管 Raspberry Pi 家庭或小企业网关后面的 LAN 客户端�
 
 ## 构建与配置
 
-在树莓派上直接构建：
+在树莓派上从源码构建时，先安装 Go 1.27.3 和 just 1.59.0，再在仓库根目录执行（[开发任务](../development.md)）：
 
 ```sh
-go build -o dist/kone ./cmd/kone
+just build
 cp configs/kone.example.toml config.toml
 ```
 
-也可以在开发机交叉编译：`GOOS=linux GOARCH=arm64 go build -o dist/kone-linux-arm64 ./cmd/kone`。
-32 位 ARMv7 可使用 `GOOS=linux GOARCH=arm GOARM=7 go build -o dist/kone-linux-armv7 ./cmd/kone`，使用默认 system 栈；CI 也编译此目标。启用 mixed 栈时，arm64 构建增加 `-tags with_gvisor`。
+也可以在开发机交叉编译：`GOOS=linux GOARCH=arm64 just build dist/kone-linux-arm64`。
+32 位 ARMv7 使用 `GOOS=linux GOARCH=arm GOARM=7 just build dist/kone-linux-armv7`，使用默认 system 栈；CI 也编译此目标。arm64 的 mixed 构建使用 `GOOS=linux GOARCH=arm64 just build-mixed dist/kone-linux-arm64`。使用发行包时无需安装开发工具，下面的配置和运行命令直接操作 KONE。
 
 编辑上游代理与规则，确认 `core.network` 不与现有 LAN/VPN 冲突。
 显式设置可达的上游 DNS，避免把已转到 KONE 的路由器 DNS 再作为它自己的上游。

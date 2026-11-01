@@ -30,6 +30,15 @@ concurrency:
   group: release-dispatch-${{ github.run_id }}
   cancel-in-progress: false
 
+# Pin command definitions separately when qualifying an older source SHA.
+defaults:
+  run:
+    shell: bash
+
+env:
+  JUST_JUSTFILE: ${{ github.workspace }}/.ci-tools/justfile
+  JUST_WORKING_DIRECTORY: ${{ github.workspace }}
+
 jobs:
   plan:
     if: github.ref == 'refs/heads/master'
@@ -42,12 +51,20 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
+      - name: Check out workflow task definitions
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
       - name: Enumerate every new first-parent master commit
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/plan.mjs
-
+        run: just release-plan
   verify:
     name: Verify ${{ matrix.sha }}
     needs: plan
@@ -82,6 +99,15 @@ jobs:
         with:
           ref: ${{ matrix.sha }}
           fetch-depth: 0
+      - name: Check out workflow task definitions
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
       - name: Download exact SHA qualification
         id: evidence
         continue-on-error: true
@@ -108,11 +134,10 @@ jobs:
           RELEASE_VERSION: ${{ matrix.version }}
           RELEASE_TAG: ${{ matrix.tag }}
           RELEASE_STABLE: ${{ matrix.stable }}
-        run: node scripts/release/publish.mjs
+        run: just release-publish
       - name: Explain skipped release
         if: steps.evidence.outcome != 'success'
-        run: node -e "console.log('Required gates failed or evidence is unavailable for this SHA; no tag or release was created.')"
-
+        run: just release-skipped
   withdraw:
     needs: plan
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && needs.plan.outputs.withdraw == 'true' }}
@@ -124,7 +149,16 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Check out workflow task definitions
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
       - name: Withdraw without deleting the traceable source tag
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/release/withdraw.mjs
+        run: just release-withdraw

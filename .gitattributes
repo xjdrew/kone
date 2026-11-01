@@ -6,3 +6,5 @@
 *.toml text eol=lf
 *.yml text eol=lf
 *.ps1 text eol=crlf
+*.sh text eol=lf
+justfile text eol=lf

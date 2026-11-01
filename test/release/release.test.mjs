@@ -24,6 +24,27 @@ const scripts = fileURLToPath(
 const workflows = fileURLToPath(
   new URL("../../.github/workflows/", import.meta.url),
 );
+const taskRoot = fileURLToPath(new URL("../../", import.meta.url));
+
+async function taskImplementation(name) {
+  const justfile = (await readFile(join(taskRoot, "justfile"), "utf8")).replaceAll("\r\n", "\n");
+  const lines = justfile.split("\n");
+  const start = lines.findIndex(line => new RegExp(`^${name}(?:\\s[^\\n]*)?:`).test(line));
+  assert.notEqual(start, -1, `the ${name} recipe must exist`);
+  const body = [];
+  for (let index = start; index < lines.length; index++) {
+    if (index > start && lines[index] && !/^\s/.test(lines[index])) break;
+    body.push(lines[index]);
+  }
+  let implementation = body.join("\n");
+  for (const match of implementation.matchAll(/scripts\/ci\/([\w-]+\.(?:sh|ps1|mjs))/g))
+    implementation += `\n${await readFile(join(taskRoot, "scripts/ci", match[1]), "utf8")}`;
+  return implementation;
+}
+
+function invokesTask(job, name) {
+  assert.match(job, new RegExp(`\\bjust\\s+${name}(?:\\s|$)`), `workflow must invoke the ${name} recipe`);
+}
 
 function jobSections(workflow) {
   const body = workflow.replaceAll("\r\n", "\n").split("\njobs:\n")[1];
@@ -177,6 +198,8 @@ test("workflow qualification covers every grouped gate and retains exact-source 
   assert.ok(jobs.verified.includes("name: Required gates verified (${{ inputs.ref || github.sha }})"));
   assert.ok(jobs.verified.includes("inputs.ref != ''"), "PRs cannot emit a publication marker");
   assert.ok(jobs.verified.includes("RELEASE_SHA: ${{ inputs.ref }}"));
+  invokesTask(jobs.verified, "release-marker");
+  assert.match(await taskImplementation("release-marker"), /node scripts\/release\/marker\.mjs/);
   assert.ok(jobs.verified.includes("name: ${{ inputs.artifact-prefix }}verification"));
   assert.ok(jobs.build.includes("name: ${{ inputs.artifact-prefix }}binaries"));
   assert.ok(jobs.build.includes("install-packages-"), "Linux packages remain required inside the build group");
@@ -188,6 +211,10 @@ test("workflow qualification covers every grouped gate and retains exact-source 
   assert.ok(verify.includes("uses: ./.github/workflows/go.yml"));
   assert.ok(verify.includes("ref: ${{ matrix.sha }}"));
   assert.ok(verify.includes("artifact-prefix: ${{ matrix.prefix }}"));
+  for (const [job, recipe] of [["plan", "release-plan"], ["publish", "release-publish"], ["withdraw", "release-withdraw"]]) {
+    invokesTask(jobSections(release)[job], recipe);
+    assert.match(await taskImplementation(recipe), new RegExp(`node scripts/release/${job}\\.mjs`));
+  }
 });
 
 test("workflow grouping preserves platform, coverage, protocol and container acceptance without duplicate master CI", async () => {
@@ -204,21 +231,51 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
   assert.deepEqual(flowList(jobs.packages, "os"), ["macos-latest", "windows-latest"]);
   assert.deepEqual(flowList(jobs["windows-system"], "stack"), ["mixed", "system"]);
   assert.ok(jobs.test.includes("github.event.pull_request.base.sha"), "coverage must measure the exact PR base");
-  assert.ok(jobs.test.includes("go run ./cmd/covercheck"));
-  assert.ok(jobs.test.includes("go test -race"));
-  assert.ok(jobs.test.includes("-coverpkg="));
+  for (const recipe of ["go-verify", "vet", "test-coverage", "test-mixed", "test-pe", "test-macos-desktop", "coverage-check", "ci-macos-build", "ci-macos-tun", "ci-macos-session"])
+    invokesTask(jobs.test, recipe);
+  assert.match(await taskImplementation("coverage-check"), /go run \.\/cmd\/covercheck -base "\$1" -head "\$2"/);
+  const coverage = await taskImplementation("test-coverage");
+  assert.match(coverage, /go test -race/);
+  assert.match(coverage, /-coverpkg=\$packages/);
+  assert.match(coverage, /go list \.\/\.\.\./);
+  const nativeMac = await taskImplementation("ci-macos-build");
   for (const name of ["TestSystemDarwinUTUN", "TestSystemDarwinDNSGuidance", "TestDarwinOwnedSystemDNSSessionDeath"])
-    assert.ok(jobs.test.includes(`-test.list '^${name}$' | grep -qx ${name}`), `${name} must be present in the native binary`);
-  assert.ok(jobs.test.includes("-test.run '^TestSystemDarwin(UTUN|DNSGuidance)$' -test.v"));
-  assert.ok(jobs.test.includes("-test.run '^TestDarwinOwnedSystemDNSSessionDeath$' -test.v"));
-  assert.ok(jobs["linux-system"].includes("for stack in system mixed"));
-  assert.ok(jobs["linux-system"].includes("scripts/test-system-dns.sh"));
-  assert.ok(jobs["linux-system"].includes("scripts/test-shadowsocks-interop.sh"));
-  assert.ok(jobs["linux-system"].includes("docker build"));
-  assert.ok(jobs["linux-system"].includes("docker run"));
-  assert.ok(jobs.quality.includes("govulncheck"));
-  assert.ok(jobs.quality.includes("-fuzz"));
-  assert.ok(jobs.quality.includes("-bench"));
+    assert.ok(nativeMac.includes(`-test.list '^${name}$' | grep -qx ${name}`), `${name} must be present in the native binary`);
+  assert.match(await taskImplementation("ci-macos-tun"), /-test\.run '\^TestSystemDarwin\(UTUN\|DNSGuidance\)\$' -test\.v/);
+  assert.match(await taskImplementation("ci-macos-session"), /-test\.run '\^TestDarwinOwnedSystemDNSSessionDeath\$' -test\.v/);
+  for (const recipe of ["ci-linux-build", "ci-linux-tun", "ci-linux-dns-tools", "ci-linux-dns", "ci-ss", "docker-build", "docker-check"])
+    invokesTask(jobs["linux-system"], recipe);
+  assert.match(await taskImplementation("ci-linux-tun"), /for stack in system mixed/);
+  assert.match(await taskImplementation("ci-linux-dns"), /scripts\/test-system-dns\.sh/);
+  assert.match(await taskImplementation("ci-ss"), /scripts\/test-shadowsocks-interop\.sh/);
+  assert.match(await taskImplementation("docker-build"), /docker build/);
+  assert.match(await taskImplementation("docker-check"), /docker run/);
+  for (const recipe of ["quality-check", "fuzz", "vuln", "benchmark-metadata", "benchmark"])
+    invokesTask(jobs.quality, recipe);
+  assert.match(await taskImplementation("vuln"), /govulncheck/);
+  assert.match(await taskImplementation("fuzz"), /-fuzz/);
+  assert.match(await taskImplementation("benchmark"), /-bench/);
+  invokesTask(jobs["windows-system"], "ci-windows-tun");
+  const nativeWindows = await taskImplementation("ci-windows-tun");
+  assert.match(nativeWindows, /go test -tags with_gvisor -race -failfast -count=1/);
+  for (const name of ["traffic", "udp6_rollback", "tcp6_rollback", "route_rollback"])
+    assert.ok(nativeWindows.includes(`'${name}'`));
+  assert.match(nativeWindows, /\$passed -notcontains "TestSystemWindowsIPv6Wintun\/\$stack\/\$case"/);
+  assert.match(nativeWindows, /\$passed -notcontains "TestSystemWindowsWintun\/\$stack\/occupied=\$occupied"/);
+  assert.match(nativeWindows, /Unexpected stack executed on this runner/);
+});
+
+test("the container uses checksum-pinned task bootstrap and keeps task tools out of the runtime image", async () => {
+  const dockerfile = await readFile(join(taskRoot, "deploy/docker/Dockerfile"), "utf8");
+  const [builder, runtime] = dockerfile.split("FROM debian:bookworm-slim");
+  assert.match(builder, /github\.com\/casey\/just\/releases\/download\/1\.59\.0\/just-1\.59\.0-/);
+  assert.match(builder, /sha256sum --check --strict/);
+  assert.match(builder, /just go-deps/);
+  assert.match(builder, /just build-container/);
+  assert.match(await taskImplementation("build-container"), /CGO_ENABLED=0 GOOS="\$\{TARGETOS:-linux\}" GOARCH="\$\{TARGETARCH:-amd64\}" go build -tags with_gvisor -trimpath -ldflags='-s -w' -o \/out\/kone/);
+  assert.ok(runtime, "the runtime must remain a separate image");
+  assert.doesNotMatch(runtime, /just|curl|golang:/);
+  assert.match(runtime, /COPY --from=builder \/out\/kone \/usr\/local\/bin\/kone/);
 });
 
 test("publication retry accepts the latest successful gate and rejects stale evidence after a failed rerun", () => {

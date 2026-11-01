@@ -9,7 +9,7 @@ CI 的质量任务保留可复现性能基线，不设置未经校准的“最�
 - `environment.json`：精确提交、时间、OS/内核、CPU 型号、逻辑核数、内存、并发和数据来源。
 - `toolchain.txt`：Go 版本、GOOS、GOARCH、CGO 状态。
 - `core.txt`、`geoip.txt`：`ns/op`、`B/op`、`allocs/op` 与各基准声明的附加计数；并发固定为 1、2，`-benchtime=500ms -count=3`。
-- `profile.txt`、`cpu.out`、`memory.out`、`kone.test`：观察查询负载的输出、画像及匹配测试程序，可用 `go tool pprof` 分析。
+- `profile.txt`、`cpu.out`、`memory.out`、`kone.test`：观察查询负载的输出、画像及匹配测试程序，可用 `just profile` 进入 pprof 分析。
 - `geoip-startup.txt`：内置数据初始化的实际内存及一致性检查结果。
 
 ## 测量对象
@@ -41,11 +41,11 @@ Linux 原生生命周期任务还在独立网络命名空间中运行 `TestSyste
 在隔离开发/性能环境中运行，不需要创建 TUN 或修改系统网络：
 
 ```sh
-go test ./pkg/kone -run '^$' -bench . -benchmem -benchtime=500ms -count=3 -cpu=1,2
-go test ./pkg/geoip -run '^$' -bench . -benchmem -benchtime=500ms -count=3 -cpu=1,2
-go tool pprof baseline/kone.test baseline/cpu.out
+just benchmark-metadata
+just benchmark
+just profile baseline/cpu.out baseline/kone.test
 ```
 
-比较时保留原始样本、SHA、工具链和硬件信息，区分共享 runner 波动与稳定变化。容量满额时整体计数仍须正确，查询不能改变转发策略；这些是正确性约束，由回归测试验证，不能用较快的平均耗时替代。
+任务从仓库根目录执行，依赖与完整入口见 [开发说明](development.md)。比较时保留原始样本、SHA、工具链和硬件信息，区分共享 runner 波动与稳定变化。容量满额时整体计数仍须正确，查询不能改变转发策略；这些是正确性约束，由回归测试验证，不能用较快的平均耗时替代。
 
 尚需独立实验室基线：HTTP/SOCKS5/SS 加密转发、MTU/分片、长时间管理负载，及 Raspberry Pi 上的吞吐、CPU、内存、丢弃与 p50/p95/p99 延迟。除上述有明确计量边界的 Linux direct 采样外，原生协议/驱动测试仍是功能与恢复验收；不能把功能通过当作性能目标已测量。得到这些硬件基线后，再制定有依据的回退预算。

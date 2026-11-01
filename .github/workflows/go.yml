@@ -23,18 +23,34 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || format('{0}-{1}', github.run_id, inputs.ref || github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Pin command definitions separately when qualifying an older source SHA.
+defaults:
+  run:
+    shell: bash
+
+env:
+  JUST_JUSTFILE: ${{ inputs.ref != '' && format('{0}/.ci-tools/justfile', github.workspace) || format('{0}/justfile', github.workspace) }}
+  JUST_WORKING_DIRECTORY: ${{ github.workspace }}
+
 jobs:
   web:
     name: Management UI and browser journeys
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
+      - name: Check out workflow task definitions
+        if: ${{ inputs.ref != '' }}
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: '26.13.0'
@@ -44,26 +60,21 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: npm ci
-      - run: npm test
+      - run: just web-deps
+      - run: just test-web
       - name: Test release identity, batched commits and safety guards
-        run: node --test ../test/release/*.test.mjs
+        run: just test-release
       - name: Verify GeoIP conversion boundaries and provenance
-        run: node --test ../scripts/data/*.test.mjs
-      - run: npm run build
+        run: just test-data
+      - run: just web-build
       - name: Verify embedded assets match frontend sources
-        run: git diff --exit-code -- dist
+        run: just web-check
       - name: Build genuine management browser fixture
         working-directory: .
-        run: |
-          go build -o "$RUNNER_TEMP/kone-management-ui" ./cmd/kone
-          printf 'KONE_MANAGEMENT_TEST_BINARY=%s/kone-management-ui\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
-      - run: npx playwright install --with-deps chromium webkit firefox
+        run: just ci-web-fixture
+      - run: just web-browsers
       - name: Test browser journeys with real management and enforce execution
-        run: |
-          npx playwright test --project=chromium-1440x900 --grep '@real' --list
-          npm run test:e2e
-          node e2e/assert-real-results.mjs test-results/results.json
+        run: just test-web-e2e
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -87,28 +98,34 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
+      - name: Check out workflow task definitions
+        if: ${{ inputs.ref != '' }}
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
       - name: Verify module checksums
-        run: go mod verify
+        run: just go-verify
       - name: Vet
-        run: go vet ./...
+        run: just vet
       - name: Test with race detector
-        shell: pwsh
-        run: |
-          $packages = (go list ./...) -join ','
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -race -count=1 "-coverpkg=$packages" '-coverprofile=coverage.out' -covermode=atomic ./...
+        run: just test-coverage
       - name: Test optional mixed stack
-        run: go test -tags with_gvisor -race -count=1 ./...
+        run: just test-mixed
       - name: Regress upstream PE loader pointer bounds
         if: ${{ matrix.os == 'windows-latest' }}
-        run: go test -race -count=1 github.com/sagernet/sing-tun/internal/wintun github.com/sagernet/sing-tun/internal/wintun/memmod
+        run: just test-pe
       - name: Validate macOS AppKit and private helper boundaries
         if: matrix.os == 'macos-latest'
-        run: go test -v -count=1 ./pkg/desktop -run '^TestDarwin(NativeTray(Selectors|PipeEOF)|AuthenticatedPrivateHelperLifecycleWithoutNetworkChanges)$'
+        run: just test-macos-desktop
       - name: Check out exact PR base for coverage
         if: ${{ matrix.os == 'windows-latest' && github.event_name == 'pull_request' }}
         uses: actions/checkout@v7.0.1
@@ -119,15 +136,10 @@ jobs:
           persist-credentials: false
       - name: Measure fresh base with the same toolchain and flags
         if: ${{ matrix.os == 'windows-latest' && github.event_name == 'pull_request' }}
-        working-directory: .coverage-base
-        shell: pwsh
-        run: |
-          $packages = (go list ./...) -join ','
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -race -count=1 "-coverpkg=$packages" '-coverprofile=../coverage-base.out' -covermode=atomic ./...
+        run: just test-coverage .coverage-base ../coverage-base.out
       - name: Reject coverage regression
         if: ${{ matrix.os == 'windows-latest' && github.event_name == 'pull_request' }}
-        run: go run ./cmd/covercheck -base coverage-base.out -head coverage.out
+        run: just coverage-check
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() && matrix.os == 'windows-latest' && github.event_name == 'pull_request' }}
         with:
@@ -138,18 +150,13 @@ jobs:
             coverage.out
       - name: Build native utun acceptance binary
         if: ${{ !cancelled() && matrix.os == 'macos-latest' }}
-        run: |
-          go test -tags with_gvisor -race -c -o "$RUNNER_TEMP/kone-darwin-system.test" ./test/integration
-          go test -tags with_gvisor -race -c -o "$RUNNER_TEMP/kone-darwin-dns-session.test" ./pkg/kone
-          "$RUNNER_TEMP/kone-darwin-system.test" -test.list '^TestSystemDarwinUTUN$' | grep -qx TestSystemDarwinUTUN
-          "$RUNNER_TEMP/kone-darwin-system.test" -test.list '^TestSystemDarwinDNSGuidance$' | grep -qx TestSystemDarwinDNSGuidance
-          "$RUNNER_TEMP/kone-darwin-dns-session.test" -test.list '^TestDarwinOwnedSystemDNSSessionDeath$' | grep -qx TestDarwinOwnedSystemDNSSessionDeath
+        run: just ci-macos-build
       - name: Exercise owned utun and temporary system DNS lifecycle
         if: ${{ !cancelled() && matrix.os == 'macos-latest' }}
-        run: sudo -n env KONE_DARWIN_SYSTEM_TEST=1 KONE_DARWIN_DNS_SYSTEM_TEST=1 "$RUNNER_TEMP/kone-darwin-system.test" -test.run '^TestSystemDarwin(UTUN|DNSGuidance)$' -test.v -test.timeout 5m
+        run: just ci-macos-tun
       - name: Verify configd removes a dead owned DNS session automatically
         if: ${{ !cancelled() && matrix.os == 'macos-latest' }}
-        run: sudo -n env KONE_DARWIN_DNS_SYSTEM_TEST=1 "$RUNNER_TEMP/kone-darwin-dns-session.test" -test.run '^TestDarwinOwnedSystemDNSSessionDeath$' -test.v -test.timeout 1m
+        run: just ci-macos-session
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -165,6 +172,16 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
+      - name: Check out workflow task definitions
+        if: ${{ inputs.ref != '' }}
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
@@ -173,44 +190,21 @@ jobs:
             go.sum
             .github/workflows/go.yml
             scripts/release/build-info.mjs
+            justfile
+            scripts/ci/build-all.sh
       - name: Cross compile
         env:
           CGO_ENABLED: '0'
           KONE_VERSION: ${{ inputs.version || format('0.4.0-dev.{0}', github.sha) }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          build_target() {
-            local target="$1" os="${1%%/*}" arch="${1##*/}" suffix=""
-            local flags=()
-            if [ "$os" = windows ]; then suffix=".exe"; fi
-            if [ "$arch" = arm ]; then
-              target="$os-armv7"
-            else
-              target="$os-$arch"
-              flags=(-tags with_gvisor)
-            fi
-            printf 'Compiling %s\n' "$target"
-            GOOS="$os" GOARCH="$arch" GOARM=7 go build "${flags[@]}" -trimpath -ldflags="-X main.VERSION=$KONE_VERSION" -o "dist/kone-$target$suffix" ./cmd/kone
-          }
-          export -f build_target
-          printf '%s\n' linux/amd64 linux/arm64 linux/arm darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 | xargs -n 1 -P 2 bash -c 'build_target "$1"' _
-          cp LICENSE LICENSE-MIT dist/
-          cp -R licenses dist/
-          node scripts/release/build-info.mjs
+        run: just build-all
       - name: Bundle corresponding source and dependency notices
-        run: |
-          mkdir -p "$RUNNER_TEMP/kone-source"
-          git archive HEAD | tar -xf - -C "$RUNNER_TEMP/kone-source"
-          go mod vendor -o "$RUNNER_TEMP/kone-source/vendor"
-          cp dist/build-info.json "$RUNNER_TEMP/kone-source/BUILD-INFO.json"
-          tar -czf dist/kone-source.tar.gz -C "$RUNNER_TEMP/kone-source" .
+        run: just source-bundle
       - name: Package and validate Linux installation in a temporary prefix
         env:
           RELEASE_INPUT: dist
           RELEASE_SHA: ${{ inputs.ref || github.sha }}
           RELEASE_VERSION: ${{ inputs.version || format('0.4.0-dev.{0}', github.sha) }}
-        run: node scripts/release/package.mjs
+        run: just package
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}install-packages-ubuntu-latest
@@ -235,6 +229,16 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
+      - name: Check out workflow task definitions
+        if: ${{ inputs.ref != '' }}
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
       - uses: actions/download-artifact@v8.0.2
         with:
           name: ${{ inputs.artifact-prefix }}binaries
@@ -243,7 +247,7 @@ jobs:
         env:
           RELEASE_SHA: ${{ inputs.ref || github.sha }}
           RELEASE_VERSION: ${{ inputs.version || format('0.4.0-dev.{0}', github.sha) }}
-        run: node scripts/release/package.mjs
+        run: just package
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}install-packages-${{ matrix.os }}
@@ -258,6 +262,16 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
+      - name: Check out workflow task definitions
+        if: ${{ inputs.ref != '' }}
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
@@ -266,34 +280,20 @@ jobs:
             go.sum
             .github/workflows/go.yml
             pkg/kone/core_benchmark_test.go
+            justfile
+            scripts/ci/benchmark.sh
       - name: Check formatting and module files
-        run: |
-          test -z "$(gofmt -l cmd pkg test web/embed.go)"
-          go mod tidy
-          git diff --exit-code -- go.mod go.sum
-      - run: go test ./pkg/kone -run '^$' -fuzz '^FuzzParseConfig$' -fuzztime 15s
+        run: just quality-check
+      - run: just fuzz
       - name: Check reachable dependency vulnerabilities
         if: ${{ !cancelled() }}
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
-
+        run: just vuln
       - name: Record hardware, toolchain and benchmark inputs
         if: ${{ !cancelled() }}
-        run: |
-          mkdir -p baseline
-          node -e 'const fs=require("node:fs"),os=require("node:os"),cp=require("node:child_process"); fs.writeFileSync("baseline/environment.json", JSON.stringify({sha:cp.execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),time:new Date().toISOString(),os:os.platform(),release:os.release(),arch:os.arch(),cpu:os.cpus()[0]?.model,logical_cpus:os.cpus().length,memory_bytes:os.totalmem(),concurrency:[1,2],samples:3,benchtime:"500ms",datasets:"deterministic fixtures in benchmark source at this SHA",network:"stack-independent core fixtures; actual TUN is sampled separately"},null,2)+"\n")'
-          go version > baseline/toolchain.txt
-          go env GOOS GOARCH GOVERSION CGO_ENABLED >> baseline/toolchain.txt
+        run: just benchmark-metadata
       - name: Measure stack-independent algorithms and retain matching profiles
         if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          go test -run '^TestBundledDatasetStartupMemoryAndPublicQueryConsistency$' -v ./pkg/geoip | tee baseline/geoip-startup.txt
-          go test ./pkg/kone -run '^$' -bench . -benchmem -benchtime=500ms -count=3 -cpu=1,2 | tee baseline/core.txt
-          go test ./pkg/geoip -run '^$' -bench . -benchmem -benchtime=500ms -count=3 -cpu=1,2 | tee baseline/geoip.txt
-          grep -q '^Benchmark' baseline/core.txt
-          grep -q '^Benchmark' baseline/geoip.txt
-          go test ./pkg/kone -run '^$' -bench '^BenchmarkObservationQueries$' -benchmem -benchtime=1s -count=1 -cpu=2 -cpuprofile=baseline/cpu.out -memprofile=baseline/memory.out -o baseline/kone.test > baseline/profile.txt
+        run: just benchmark
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -309,37 +309,23 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
+      - name: Check out workflow task definitions
+        if: ${{ inputs.ref != '' }}
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
       - name: Build system tests and CLI
-        run: |
-          go build -tags with_gvisor -race -o "$RUNNER_TEMP/kone-system-cli" ./cmd/kone
-          go test -tags with_gvisor -race -c -o "$RUNNER_TEMP/kone-system.test" ./test/integration
+        run: just ci-linux-build
       - name: Test real TUN in isolated network namespace
-        run: |
-          set -euo pipefail
-          baseline="$RUNNER_TEMP/native-data-plane-baseline"
-          mkdir -p "$baseline"
-          {
-            git rev-parse HEAD
-            go version
-            uname -a
-            getconf _NPROCESSORS_ONLN
-            lscpu
-            head -n 5 /proc/meminfo
-            printf 'build flags: with_gvisor -race; namespaces: isolated per stack\n'
-          } > "$baseline/environment.txt"
-          for stack in system mixed; do
-          sudo unshare --net -- bash -c '
-            set -e
-            ip link set lo up
-            export KONE_SYSTEM_TEST=1
-            export KONE_SYSTEM_CLI="$1"
-            export KONE_TEST_STACK="$3"
-            "$2" -test.run "^TestSystem(Lifecycle|Gateway|DNS|IPv6|Performance)" -test.v -test.timeout 180s
-          ' -- "$RUNNER_TEMP/kone-system-cli" "$RUNNER_TEMP/kone-system.test" "$stack" | tee "$baseline/$stack.log"
-          done
+        run: just ci-linux-tun
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
@@ -350,19 +336,13 @@ jobs:
 
       - name: Verify isolated resolver tools are available
         if: ${{ !cancelled() }}
-        run: |
-          command -v busctl
-          command -v resolvectl
-          command -v dbus-daemon
-          test -x /usr/lib/systemd/systemd-resolved
+        run: just ci-linux-dns-tools
       - name: Exercise OS DNS in private mount, network and D-Bus contexts
         if: ${{ !cancelled() }}
-        run: |
-          sudo env KONE_SYSTEM_DNS_TEST=1 unshare --mount --net --propagation private --fork -- bash scripts/test-system-dns.sh "$RUNNER_TEMP/kone-system.test"
-
+        run: just ci-linux-dns
       - name: Test digest-pinned shadowsocks-rust over isolated loopback
         if: ${{ !cancelled() }}
-        run: bash scripts/test-shadowsocks-interop.sh
+        run: just ci-ss
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -377,11 +357,10 @@ jobs:
       - name: Build container from source
         id: container-build
         if: ${{ !cancelled() }}
-        run: docker build -f deploy/docker/Dockerfile -t kone:ci .
+        run: just docker-build
       - name: Validate container configuration without privileges
         if: ${{ !cancelled() && steps.container-build.outcome == 'success' }}
-        run: docker run --rm kone:ci -check -config /etc/kone/config.toml
-
+        run: just docker-check
   windows-system:
     name: Windows Wintun (${{ matrix.stack }})
     strategy:
@@ -398,29 +377,22 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
+      - name: Check out workflow task definitions
+        if: ${{ inputs.ref != '' }}
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
           cache: true
       - name: Exercise the selected stack and require all six native cases
-        shell: pwsh
-        run: |
-          $pattern = '^TestSystemWindows(Wintun|IPv6Wintun)$/^' + $env:KONE_TEST_STACK + '$'
-          go test -tags with_gvisor -race -failfast -count=1 -timeout 12m -run $pattern -json ./test/integration | Tee-Object -FilePath native-windows.jsonl
-          $result = $LASTEXITCODE
-          $events = Get-Content native-windows.jsonl | ConvertFrom-Json
-          $events | Where-Object Output | ForEach-Object { Write-Host -NoNewline $_.Output }
-          if ($result -ne 0) { exit $result }
-          $passed = @($events | Where-Object { $_.Action -eq 'pass' } | ForEach-Object Test)
-          $stack = $env:KONE_TEST_STACK
-          foreach ($case in @('traffic','udp6_rollback','tcp6_rollback','route_rollback')) {
-            if ($passed -notcontains "TestSystemWindowsIPv6Wintun/$stack/$case") { throw "Missing actual IPv6 pass: $stack/$case" }
-          }
-          foreach ($occupied in @('true','false')) {
-            if ($passed -notcontains "TestSystemWindowsWintun/$stack/occupied=$occupied") { throw "Missing actual IPv4 pass: $stack/occupied=$occupied" }
-          }
-          $other = if ($stack -eq 'system') { 'mixed' } else { 'system' }
-          if (@($events | Where-Object { $_.Test -match "^TestSystemWindows(Wintun|IPv6Wintun)/$other/" }).Count -ne 0) { throw 'Unexpected stack executed on this runner' }
+        run: just ci-windows-tun
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() }}
         with:
@@ -437,11 +409,21 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref }}
+      - name: Check out workflow task definitions
+        if: ${{ inputs.ref != '' }}
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        with:
+          just-version: '1.59.0'
       - name: Record exact successful SHA and gates
         env:
           RELEASE_SHA: ${{ inputs.ref }}
           RELEASE_VERSION: ${{ inputs.version }}
-        run: node scripts/release/marker.mjs
+        run: just release-marker
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ inputs.artifact-prefix }}verification

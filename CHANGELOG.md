@@ -37,6 +37,7 @@
 ## Changes
 
 - Speed up CI while preserving platform and release validation.
+- Unify development, testing and build commands through just.
 
 # 2026/10/31
 

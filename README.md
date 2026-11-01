@@ -29,10 +29,10 @@ These capabilities form the compatibility baseline for future refactoring. New f
 
 ## Build and run
 
-Use the Go toolchain declared in [go.mod](go.mod). Run these commands from the repository root:
+Source development uses [just](https://github.com/casey/just) 1.59.0 and Go 1.27.3. Run tasks from the repository root; Windows developers use Git Bash. Running `just` alone lists tasks without building or changing networking. See [development tasks](docs/development.md).
 
 ```sh
-go build -o dist/kone ./cmd/kone
+just build
 ./dist/kone
 ```
 
@@ -53,7 +53,7 @@ cp configs/kone.example.toml config.toml
 sudo ./dist/kone -config config.toml
 ```
 
-On Windows, build `dist/kone.exe`. The managed console stays at ordinary user privileges and requests a separate UAC network helper when capture needs elevation. Explicit file mode hands off to a visible administrator window when needed; services/headless callers can use `-no-elevate`. Read-only flags do not request elevation. Smart App Control trust is separate from UAC. See [Windows setup](docs/windows/README.md).
+On Windows, use `just build dist/kone.exe` and launch it without arguments for desktop management. After `just web-deps`, `just desktop` builds the current pages and executable, then opens management with capture paused. The managed console stays at ordinary user privileges and requests a separate UAC network helper when capture needs elevation. Explicit file mode hands off to a visible administrator window when needed; services/headless callers can use `-no-elevate`. Read-only flags do not request elevation. Smart App Control trust is separate from UAC. See [desktop builds and packages](docs/development.md#桌面构建与运行) and [Windows setup](docs/windows/README.md).
 
 On macOS, the managed console and menu bar run as the ordinary desktop user. Enabling capture requests administrator authorization for a separate network helper. See [macOS permissions](docs/macos-helper.md) and [menu bar behavior](docs/macos-tray.md).
 
@@ -75,7 +75,7 @@ Reload atomically publishes domain/GeoIP/default rules and outbound definitions,
 
 - IPv4 DNS virtual-address routing, explicit CIDR routes and optional full IPv4 capture; Linux and Windows may explicitly opt into ULA IPv6 virtual addresses, IPv6 rules and optional full IPv6 capture. IPv6 is disabled by default and macOS activation is rejected. Full capture follows routing rules and existing more-specific system routes. LAN clients must use KONE DNS and the gateway; DHCP and firewall setup remain operator-owned.
 - TCP uses the selected outbound. UDP uses direct for direct rules and always denies reject rules. SOCKS5 and supported Shadowsocks AEAD2017 outbounds carry native UDP; HTTP/HTTPS CONNECT do not. Unsupported proxy UDP is denied by default; set `udp-fallback = "direct"` only when direct UDP is intended. Shadowsocks plugins, legacy stream ciphers and AEAD-2022 are outside the supported range.
-- The default `system` stack works with an ordinary Go build. Optional `mixed` (system TCP and gVisor UDP) requires `-tags with_gvisor`; see [stack selection](docs/configuration.md#tun-backend-and-stack). Packet/fragment behavior depends on the selected stack; arbitrary fragmentation is not a compatibility guarantee yet.
+- The default `system` stack uses `just build`. Optional `mixed` (system TCP and gVisor UDP) uses `just build-mixed`, which enables `with_gvisor`; see [stack selection](docs/configuration.md#tun-backend-and-stack). Packet/fragment behavior depends on the selected stack; arbitrary fragmentation is not a compatibility guarantee yet.
 - Startup failures roll back owned network changes; normal signal/context shutdown closes active flows and restores adapter settings. Forced termination cannot run cleanup. See [runtime reliability](docs/runtime.md).
 - Full IPv4 capture requires `core.outbound-interface` so proxy transports and DNS leave through the physical interface. Network changes pause capture for a new preflight; the recovery journal detects leftovers and only restores resources whose ownership can be verified.
 - GeoIP uses bundled DB-IP Country Lite October 2026 IPv4 data, with verified local imports and previous-version recovery. IPv6 country lookup remains outside this dataset. See [GeoIP data and attribution](docs/geoip.md).
@@ -85,28 +85,28 @@ Reload atomically publishes domain/GeoIP/default rules and outbound definitions,
 
 Read [the architecture and core traffic paths](docs/architecture.md) for DNS/Fake-IP, TUN interception, gateway forwarding, sing-tun and gVisor's roles.
 
-Frontend sources live in `web/` and build to the embedded, offline `web/dist/` assets; an ordinary Go build needs no Node installation. After a frontend change, use Node 26.13.0 and npm to update the checked-in assets:
+The root [justfile](justfile) is the shared development and CI entrypoint. Build, test, coverage, frontend, data conversion and release tasks are listed in [the development guide](docs/development.md). Installed KONE binaries and package installers run directly; end users do not need just.
+
+Frontend sources build to the embedded, offline assets; building the existing assets needs no Node installation. After a frontend change, use Node 26.13.0 and run these tasks from the repository root:
 
 ```sh
-cd web
-npm ci
-npm test
-npm run build
-npx playwright install chromium webkit firefox
-npm run test:e2e
+just web-deps
+just test-web
+just web-build
+just web-browsers
 ```
 
-Browser journeys use isolated loopback API fixtures. CI also runs a genuine management service with capture paused, checking real cookie authorization, credential and rule saves, reload, and persistence across process restarts. Browser tests never enable capture; real TUN acceptance runs separately in isolated/native CI. They cover all eight pages at 320px, path aggregation and fixed-window drilldown, configuration conflicts, credential preservation, read-only authorization and offline/error states. iOS Safari and Android Chrome device/network trust still need real-device acceptance.
+Use `just test-web-e2e` to build the local management fixture and run browser journeys, as described in [the development guide](docs/development.md#browser-journeys). They use isolated loopback API fixtures and a genuine management service with capture paused, checking real cookie authorization, credential and rule saves, reload, and persistence across process restarts. Browser tests never enable capture; real TUN acceptance runs separately in isolated/native CI. They cover all eight pages at 320px, path aggregation and fixed-window drilldown, configuration conflicts, credential preservation, read-only authorization and offline/error states. iOS Safari and Android Chrome device/network trust still need real-device acceptance.
 
 The frontend build targets Safari/iOS 16.4, Chrome/Android 110 and Firefox 115 or later. Browser automation exercises Chromium and key touch, permission and recovery journeys in WebKit/Firefox, with engine and viewport in the report; it does not replace real iOS/Android device testing. Assets, icons and fonts do not require a public CDN. [Verified releases](docs/releases.md) describes per-commit qualification, three-platform packages, checksums, stable promotion, withdrawal and rollback; packages are currently unsigned and macOS packages are not notarized.
 
 [System DNS guidance](docs/system-dns.md) describes the Linux/macOS integration and platform boundaries. [The acceptance index](docs/acceptance.md) links each feature to tests and remaining hardware checks; [performance baselines](docs/performance.md) distinguish synthetic counters, finite TUN samples and hardware measurements.
 
 ```sh
-go test ./...
-go vet ./...
-go test -race ./... # requires CGO and a platform C compiler
-go test ./pkg/kone -run '^$' -fuzz '^FuzzParseConfig$' -fuzztime 15s
+just test # race checks require CGO and a platform C compiler
+just vet
+just test-mixed
+just fuzz 15s
 ```
 
 CI covers native race tests, non-decreasing PR coverage, cross-platform builds, dependency checks and container smoke tests. Privileged acceptance exercises TUN lifecycle, route ownership, reload, shutdown, Windows Wintun and traffic from a separate LAN client. [CI grouping and measurements](docs/ci.md) explains the parallelism, shared build work and per-commit master qualification. Real Raspberry Pi throughput, suspend/resume and multi-VPN coexistence still need deployment-specific testing.

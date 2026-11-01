@@ -43,7 +43,7 @@ GeoIP 为规则提供 IP 到国家/地区代码的映射，不代表目标可以
 转换器只读显式本地输入，不联网下载，也不修改运行配置或系统网络。先从[官方页面](https://db-ip.com/db/download/ip-to-country-lite)取得对应月份的压缩 CSV 并核对来源和许可，再运行：
 
 ```sh
-node scripts/data/convert-dbip.mjs \
+just geoip-convert \
   --input dbip-country-lite-2026-10.csv.gz \
   --sha256 097426b8ddae89157d444a59ac1847e873f7943c32d52becc4371c8b0273af80 \
   --release 2026-10 --retrieved-at 2026-10-31T18:04:18Z \
@@ -65,10 +65,8 @@ node scripts/data/convert-dbip.mjs \
 以下基准不创建 TUN、不改变系统网络，也不连接外部服务：
 
 ```sh
-go test -run '^$' -bench 'Benchmark(Query|ImmutableDatabaseLookup)' -benchmem -count=5 ./pkg/geoip
-go test -run '^TestBundledDatasetStartupMemoryAndPublicQueryConsistency$' -v ./pkg/geoip
-go test -run '^$' -bench '^BenchmarkBuiltinDecode$' -benchmem -count=3 ./pkg/geoip
-go test -run '^$' -bench 'Benchmark(RuleDecision|DNSResponseCache)' -benchmem -count=5 ./pkg/kone
+just benchmark-metadata
+just benchmark
 ```
 
-每次操作按 Go 基准迭代次数计量，报告分配，并覆盖纯规则决策、GeoIP 查找和真实 DNS 响应缓存副本开销。应在相同设备、构建选项和负载下比较多轮结果；这些微基准不能代替真实 TUN 吞吐、延迟、CPU、内存及长时并发测试。
+任务在 `baseline/` 保存环境信息、内置数据启动检查、核心与 GeoIP 基准的三个样本，以及匹配的画像和测试程序。每次操作按 Go 基准迭代次数计量，报告分配，并覆盖纯规则决策、GeoIP 查找和真实 DNS 响应缓存副本开销。应在相同设备、构建选项和负载下比较多轮结果；这些微基准不能代替真实 TUN 吞吐、延迟、CPU、内存及长时并发测试。入口与依赖见 [开发任务](development.md)。
