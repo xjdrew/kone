@@ -106,6 +106,7 @@ func TestHelperRuntimeLogsTravelPrivateIPCAndRemainAfterShutdown(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "helper-password")
 	require.Contains(t, string(encoded), "helper engine cleanup completed")
+	require.Contains(t, string(encoded), "Network helper engine cleanup completed")
 	for _, record := range retained.Records {
 		require.Equal(t, "helper", record.Source)
 	}

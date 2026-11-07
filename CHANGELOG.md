@@ -8,6 +8,10 @@
 - Group attention events and connection records by target while retaining individual connection details.
 - Control the proxy with a switch beside live upload/download rates and show compact final-rule summaries.
 
+## Bugfixes
+
+- Preserve the helper's final cleanup logs when stopping capture.
+
 ## Changes
 
 - Reduce contributor wait time for automated checks across supported platforms.

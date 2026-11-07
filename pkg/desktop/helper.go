@@ -210,11 +210,16 @@ func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
 		s.mu.Lock()
 		s.runError = err
 		s.mu.Unlock()
-		close(done)
 		if err == nil {
 			s.logEvent(slog.LevelInfo, "Network helper engine cleanup completed", slog.String("stage", "cleanup"))
+		} else {
+			s.logEvent(slog.LevelError, "Capture engine stopped", slog.String("error", err.Error()))
 		}
-		s.logFailure("Capture engine stopped", err)
+		// Stop must see terminal records before it acknowledges cleanup and
+		// closes IPC. Optional log delivery and Finished RPC stay outside this
+		// barrier so a slow parent cannot hold the engine's completion open.
+		close(done)
+		s.flushLogs()
 		var reply Empty
 		s.events.Call("Callbacks.Finished", FinishedEvent{Error: helperError(err), LogsDegraded: s.logsDegraded()}, &reply)
 	}()
@@ -521,7 +526,14 @@ func (s *helperService) Stop(_ Empty, reply *StopReply) error {
 	if err != nil {
 		return nil
 	}
-	if err = engine.Close(); err != nil {
+	s.mu.Lock()
+	done := s.runDone
+	s.mu.Unlock()
+	err = engine.Close()
+	if done != nil {
+		<-done
+	}
+	if err != nil {
 		return errors.New(helperError(err))
 	}
 	query := kone.TrafficQuery{Limit: 500}

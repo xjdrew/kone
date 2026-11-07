@@ -199,19 +199,9 @@ jobs:
             ${{ runner.temp }}/kone-shadowsocks-interop/server.log
             ${{ runner.temp }}/kone-shadowsocks-interop/test.log
             ${{ runner.temp }}/kone-shadowsocks-interop/image.json
-      - name: Cache container build layers
-        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
-        uses: actions/cache@v6.1.0
-        with:
-          path: ${{ runner.temp }}/kone-buildkit-cache
-          key: docker-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deploy/docker/Dockerfile', '.dockerignore') }}-${{ inputs.ref || github.sha }}
-          restore-keys: |
-            docker-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deploy/docker/Dockerfile', '.dockerignore') }}-
       - name: Build container from source
         id: container-build
         if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
-        env:
-          KONE_DOCKER_CACHE: '1'
         run: just ci docker-build
       - name: Validate container configuration without privileges
         if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' && steps.container-build.outcome == 'success' }}
