@@ -121,7 +121,13 @@ export function PolicyView() {
           <details className={styles.protection}>
             <summary>
               {t("policy.protection")}
-              <span>{t("policy.protectedHint")}</span>
+              <span>
+                {t(
+                  policy.data?.explicit && policy.data.mode !== "custom"
+                    ? "policy.protectedHint"
+                    : "policy.legacyHint",
+                )}
+              </span>
             </summary>
             <div className={styles.protectionList}>
               {policy.data?.protection.map((item) => (
@@ -131,7 +137,6 @@ export function PolicyView() {
                 </div>
               ))}
             </div>
-            {!policy.data?.explicit && <p>{t("policy.legacyHint")}</p>}
           </details>
           <RulesView onPolicy={() => setChangePolicy(true)} />
         </>

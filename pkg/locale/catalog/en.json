@@ -378,7 +378,7 @@
     "desktop.exit": "Quit KONE",
     "desktop.available": "KONE — management available",
     "desktop.startFailure": "KONE could not start. Review the technical details.",
-    "policy.legacyHint": "This legacy configuration keeps its original behavior. Apply a base policy to enable the listed protection rules.",
+    "policy.legacyHint": "Legacy and custom policies keep their original behavior. Apply a base policy to enable local/LAN protection.",
     "rules.geoipHint": "Uses the installed GeoIP dataset. Unknown countries continue to the next rule.",
     "settings.lanTrust": "Install the local CA on your own device, verify its fingerprint, then pair. Trust and firewall settings are never changed automatically.",
     "common.succeeded": "Succeeded",

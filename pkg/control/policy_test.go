@@ -86,6 +86,13 @@ func TestPolicyProtectionDescribesTransportsWithoutCredentialsOrQueries(t *testi
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "secret")
 	require.NotContains(t, string(encoded), "username")
+	for _, item := range items {
+		require.NotEqual(t, "local_network", item.Kind, "legacy profiles must not claim protections they do not apply")
+	}
+	cfg.Policy.Mode = "custom"
+	require.Equal(t, items, policyProtection(cfg))
+	cfg.Policy.Mode = "direct-first"
+	require.Contains(t, policyProtection(cfg), kone.ProtectedNetwork{Prefix: "127.0.0.0/8", Kind: "local_network"})
 }
 
 func TestPolicyCustomConversionAndNativeUDPScope(t *testing.T) {

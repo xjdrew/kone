@@ -378,7 +378,7 @@
     "desktop.exit": "退出 KONE",
     "desktop.available": "KONE — 管理可用",
     "desktop.startFailure": "KONE 无法启动，请检查技术详情。",
-    "policy.legacyHint": "旧配置保持原有行为。应用基础策略后启用此保护列表。",
+    "policy.legacyHint": "旧配置与自定义策略保持原有行为；本地与局域网保护需要应用基础策略。",
     "rules.geoipHint": "使用已安装的 GeoIP 数据；国家未知时继续匹配后续规则。",
     "settings.lanTrust": "在自己的设备安装本机 CA，核对指纹后配对。不会自动更改证书信任或防火墙。",
     "common.succeeded": "已完成",

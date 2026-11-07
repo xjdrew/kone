@@ -22,7 +22,10 @@ type policyRequest struct {
 
 // Describe transport bypasses without resolving endpoints or exposing URL credentials.
 func policyProtection(cfg *kone.KoneConfig) []kone.ProtectedNetwork {
-	items := kone.PolicyProtection(cfg.Core)
+	items := []kone.ProtectedNetwork{}
+	if cfg.Policy.Mode == "direct-first" || cfg.Policy.Mode == "proxy-first" {
+		items = kone.PolicyProtection(cfg.Core)
+	}
 	for _, outbound := range cfg.Outbounds {
 		if endpoint, err := url.Parse(outbound.URL); err == nil && outbound.IsEnabled() {
 			items = append(items, kone.ProtectedNetwork{Prefix: endpoint.Host, Kind: "proxy_endpoint"})
