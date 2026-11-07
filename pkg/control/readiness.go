@@ -93,7 +93,7 @@ func (c *Controller) readiness(ctx context.Context, doc Document, state, configE
 			}
 		}
 	}
-	if configError == "" && state != "running" && state != "starting" && state != "pausing" {
+	if doc.Inbound.Enabled && configError == "" && state != "running" && state != "starting" && state != "pausing" {
 		preflight := c.preflight(ctx, engineConfig(doc))
 		if preflight.Changes != nil {
 			report.Changes = preflight.Changes

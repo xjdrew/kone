@@ -435,6 +435,11 @@ test("@compat diagnostic history survives reload and DNS compares system and KON
   expect(
     data.requests.find((entry) => entry.path === "/diagnostics" && entry.method === "POST")?.body,
   ).toMatchObject({ target: "internal.example:80", tls: false });
+  // The server fixture records requests before the browser receives the reply.
+  // Wait for the client to persist the accepted target before navigating away.
+  await expect
+    .poll(() => page.evaluate(() => localStorage.getItem("kone.diagnostic-history.v1")))
+    .toContain("internal.example:80");
   await page.reload();
   await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
   await page.getByRole("button", { name: "Recent targets", exact: true }).click();
