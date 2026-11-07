@@ -1,7 +1,16 @@
 # 2026/11/07
 
+## Features
+
+- Open the numeric loopback management address without a password while keeping remote access authenticated.
+- Apply IPv4 and IPv6 CIDR rule changes live while preserving established connections.
+- Automatically choose a non-conflicting IPv6 subnet for new management profiles on capable hosts, preserving existing settings.
+- Group attention events and connection records by target while retaining individual connection details.
+- Control the proxy with a switch beside live upload/download rates and show compact final-rule summaries.
+
 ## Changes
 
+- Use clearer proxy terminology throughout the console, tray and guides.
 - Consolidate user and developer guides, replace historical notes with current instructions, and define product and Web requirements for future redesigns, including transparent routing, performance and payload privacy goals.
 
 # 2026/11/01

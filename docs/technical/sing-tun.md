@@ -26,7 +26,7 @@ race 回归任务，包括真实 Wintun、默认复用、注入 session 失败�
 
 ## 运行时协议栈与版本边界
 
-固定提交的 [NewStack 实现](https://github.com/xjdrew/sing-tun/blob/fc4685fee0a37e59f174ad964e7b0b4b7894a251/stack.go) 具名支持 `system`、`gvisor`、`mixed`：分别为系统 TCP/sing-tun UDP、完整 gVisor TCP/UDP、系统 TCP/gVisor UDP。KONE 显式默认 `system`，避免依赖空名称的自动选择；三种模式编入同一产物，在配置中切换后重新启用接管。
+固定提交的 [NewStack 实现](https://github.com/xjdrew/sing-tun/blob/fc4685fee0a37e59f174ad964e7b0b4b7894a251/stack.go) 具名支持 `system`、`gvisor`、`mixed`：分别为系统 TCP/sing-tun UDP、完整 gVisor TCP/UDP、系统 TCP/gVisor UDP。KONE 显式默认 `system`，避免依赖空名称的自动选择；三种模式编入同一产物，在配置中切换后重新启用代理。
 
 上游通过 `with_gvisor` 编译标签启用 [gVisor 实现](https://github.com/xjdrew/sing-tun/blob/fc4685fee0a37e59f174ad964e7b0b4b7894a251/stack_gvisor.go)。KONE 的 just 构建、测试与发布统一提供该依赖标签，不再保留本项目的协议栈编译分支。Linux amd64/arm64/ARMv7、Windows amd64/arm64、macOS amd64/arm64 使用相同模式列表；ARMv7 也可以编译固定的 SagerNet gVisor fork，不能套用其他 gVisor 版本的架构限制。跨编译不等于 Raspberry Pi 真机吞吐或长期稳定性验收。
 
