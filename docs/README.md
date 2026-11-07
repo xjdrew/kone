@@ -12,7 +12,7 @@
 | 讨论未来方向 | [技术边界与产品研究](research/product-direction-2026-11-07.md) | 实现边界 → 复现实验 → 竞品 → smart/app → 路线与验收建议 |
 | 研究应用分流 | [Windows/macOS 应用规则](research/application-routing-platforms-2026-11-07.md) | 当前缺口 → 系统身份能力 → Windows/macOS 路线 → 模式结合 → 原型验收 |
 | 评审策略边界修复 | [四池规则与稳定 Fake-IP proposal](proposals/policy-layers-and-fake-ip.md) | 四个问题 → 分层与证据 → 地址一致性 → 持久归属 → 限制与验收 |
-| 评审 Smart 辅助建议 | [DNS 驱动探测 proposal](proposals/dns-driven-smart-suggestions.md) | 可见范围 → 探测能力 → 路径比较 → 建议闭环 → 预算与验收 |
+| 评审路由配置与 Smart | [两种基础模式与双向 Smart proposal](proposals/dns-driven-smart-suggestions.md) | 默认出口与规则 → 独立 Smart → 探测能力 → 直连/代理建议 → 预算与验收 |
 | 重写或重构 Web | [Web 规格](requirements/web-ui.md) | 信息架构 → 权限状态 → 配置 → 功能域 → 数据契约 → 质量与验收 |
 | 设计与实现 Web 界面 | [UI/UX 设计规则](design-system/kone/MASTER.md) | 任务与点击预算 → 顶部双工作区 → 视觉变量 → 组件与操作 → 工具 → 验收 |
 | 处理后续请求 | [待办与决策](requirements/backlog.md) | 请求 → 决策与实现 → 回归证据 → 验收边界 |
