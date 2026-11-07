@@ -2,6 +2,7 @@ package kone
 
 import (
 	"net"
+	"net/netip"
 	"testing"
 
 	"github.com/miekg/dns"
@@ -46,6 +47,10 @@ func TestPolicyProtectsHostsButAllowsExplicitPrivateProxyRules(t *testing.T) {
 		require.True(t, decision.Protected)
 		require.Equal(t, BuiltinDirect, decision.Outbound)
 	}
+	// The host's real interface addresses vary between runners (macOS may
+	// own fe80::1). Test ordinary remote addresses against a fixed host set.
+	protectedHosts := []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128"), netip.MustParsePrefix("192.0.2.10/32")}
+	rule.protected = protectedHosts
 	for _, address := range []string{"192.168.2.9", "149.154.167.50"} {
 		decision := rule.Decide(net.ParseIP(address), "tcp", 443)
 		require.False(t, decision.Protected)
@@ -61,6 +66,7 @@ func TestPolicyProtectsHostsButAllowsExplicitPrivateProxyRules(t *testing.T) {
 	require.Equal(t, "proxy", rule.DecideDNS("printer.local", message, "tcp", 443).Outbound)
 	rule = NewRule([]RuleConfig{{Schema: "FINAL", Outbound: "proxy"}}, outbounds)
 	rule.protectPolicy(cfg)
+	rule.protected = protectedHosts
 	for _, address := range []string{"192.168.2.9", "172.20.0.8", "fd00::5", "10.192.0.5"} {
 		require.Equal(t, "proxy", rule.Decide(net.ParseIP(address), "tcp", 443).Outbound, "deleting a direct rule must take effect")
 	}

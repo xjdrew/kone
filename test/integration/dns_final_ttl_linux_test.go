@@ -43,7 +43,9 @@ func TestSystemDNSFinalProxyExpiresKnownDirectAddress(t *testing.T) {
 		queries.Add(1)
 		address := "127.0.0.2"
 		if changed.Load() {
-			address = "127.0.0.3"
+			// The refreshed target must not be loopback: local addresses now
+			// deliberately bypass proxy rules to prevent recursive capture.
+			address = "192.0.2.3"
 		}
 		response := new(dns.Msg)
 		response.SetReply(request)
@@ -102,7 +104,7 @@ func TestSystemDNSFinalProxyExpiresKnownDirectAddress(t *testing.T) {
 	require.Equal(t, before+1, queries.Load())
 	_, records := one.DNSSnapshot()
 	require.Equal(t, fake, records["rotating-default.example"].IP.String())
-	require.Equal(t, "127.0.0.3", records["rotating-default.example"].RealIP.String())
+	require.Equal(t, "192.0.2.3", records["rotating-default.example"].RealIP.String())
 	require.Equal(t, "office", records["rotating-default.example"].Proxy)
 	transport.CloseIdleConnections()
 	stop()
