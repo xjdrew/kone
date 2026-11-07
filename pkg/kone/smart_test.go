@@ -377,3 +377,75 @@ func TestSmartOwnerLoopExcludesOwnedDeviceAndStopsWorkers(t *testing.T) {
 	require.Equal(t, "paused", state.Status)
 	require.Equal(t, "expired", state.Suggestions[0].Status)
 }
+
+func TestSmartBudgetDefersWorkAndNetworkFailureCancelsAutomaticProbes(t *testing.T) {
+	for _, scenario := range []string{"budget", "network-unknown", "expired-version", "canceled"} {
+		t.Run(scenario, func(t *testing.T) {
+			one, _ := smartTestEngine(t, "direct-first")
+			probes := 0
+			one.smart.probe = func(context.Context, string, string, string, uint64) (DiagnosticResult, error) {
+				probes++
+				return smartVerified(), nil
+			}
+			smartObserve(t, one, "deferred.example", "8.8.8.8")
+			one.smart.schedule(one.smart.now())
+			work := <-one.smart.queue
+			switch scenario {
+			case "budget":
+				one.smart.tokens = 0
+			case "network-unknown":
+				one.smart.networkSample = func(string) (string, error) { return "", errors.New("resolver context unavailable") }
+			case "expired-version":
+				snapshot := *one.policy.Load()
+				snapshot.version++
+				one.policy.Store(&snapshot)
+			case "canceled":
+				work.entry.cancel()
+			}
+			one.smart.execute(work)
+			require.Zero(t, probes)
+			state, _ := one.SmartData()
+			require.Empty(t, state.Suggestions[0].Action)
+			if scenario == "budget" {
+				require.Equal(t, "budget", state.Suggestions[0].Status)
+				require.False(t, one.smart.entries["deferred.example"].due.IsZero())
+			}
+			if scenario == "network-unknown" {
+				require.Equal(t, "network_changed", state.Status)
+				require.False(t, one.smart.checkNetwork(true))
+				require.Equal(t, "expired", state.Suggestions[0].Status)
+			}
+		})
+	}
+}
+
+func TestSmartWidespreadDirectFailureSuppressesProxyRecommendations(t *testing.T) {
+	one, now := smartTestEngine(t, "direct-first")
+	one.smart.probe = func(_ context.Context, out, _, _ string, _ uint64) (DiagnosticResult, error) {
+		if out == BuiltinDirect {
+			return DiagnosticResult{Status: "failed", Stage: "connect"}, nil
+		}
+		return smartVerified(), nil
+	}
+	for i := range 4 {
+		smartObserve(t, one, fmt.Sprintf("outage%d.example", i), "8.8.8.8")
+	}
+	for round := range 2 {
+		if round == 1 {
+			*now = now.Add(30 * time.Second)
+		}
+		one.smart.schedule(*now)
+		require.Len(t, one.smart.queue, 4)
+		for range 4 {
+			one.smart.execute(<-one.smart.queue)
+			*now = now.Add(4 * time.Second)
+		}
+	}
+	state, err := one.SmartData()
+	require.NoError(t, err)
+	require.Equal(t, uint64(16), state.Attempts)
+	for _, suggestion := range state.Suggestions {
+		require.Empty(t, suggestion.Action)
+		require.Equal(t, "network_uncertain", suggestion.Status)
+	}
+}

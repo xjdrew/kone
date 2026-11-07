@@ -1,6 +1,7 @@
 package kone
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/netip"
@@ -287,4 +288,75 @@ func TestFakeIPGenerationAndStorageLimitsPreservePublishedOwners(t *testing.T) {
 	require.NoError(t, restored.register(next))
 	require.Equal(t, first.IP, next.Set("saved.example", "direct").IP)
 	require.NotContains(t, next.owners, "capacity.example")
+}
+
+func TestFakeIPLedgerValidChecksumsDoNotAuthorizeInvalidOwnership(t *testing.T) {
+	for _, scenario := range []string{"invalid-pool", "unsupported-pool", "reserved-outside", "duplicate-pool", "unknown-kind", "bad-domain", "outside-address", "reserved-address", "duplicate-domain", "duplicate-address", "header-order"} {
+		t.Run(scenario, func(t *testing.T) {
+			directory := filepath.Join(t.TempDir(), "ledger")
+			ledger, err := openFakeIPLedger(directory)
+			require.NoError(t, err)
+			table := ledgerTable(t, "10.203.0.1/24")
+			require.NoError(t, ledger.register(table))
+			require.NotNil(t, table.Set("saved.example", "direct"))
+			require.NoError(t, ledger.Close())
+			path := filepath.Join(directory, "ownership-v1.jsonl")
+			original, err := os.ReadFile(path)
+			require.NoError(t, err)
+			lines := []fakeLedgerLine{}
+			for _, raw := range strings.Split(strings.TrimSpace(string(original)), "\n") {
+				var line fakeLedgerLine
+				require.NoError(t, json.Unmarshal([]byte(raw), &line))
+				lines = append(lines, line)
+			}
+			switch scenario {
+			case "invalid-pool":
+				lines[1].Entry.Pool = "invalid"
+			case "unsupported-pool":
+				lines[1].Entry.Pool = "10.203.0.1/32"
+			case "reserved-outside":
+				lines[1].Entry.Reserved = []string{"8.8.8.8"}
+			case "duplicate-pool":
+				lines = append(lines, lines[1])
+			case "unknown-kind":
+				lines[2].Entry.Kind = "future"
+			case "bad-domain":
+				lines[2].Entry.Domain = "bad domain"
+			case "outside-address":
+				lines[2].Entry.Address = "8.8.8.8"
+			case "reserved-address":
+				lines[2].Entry.Address = lines[1].Entry.Reserved[0]
+			case "duplicate-domain":
+				entry := lines[2]
+				entry.Entry.Address = "10.203.0.200"
+				lines = append(lines, entry)
+			case "duplicate-address":
+				entry := lines[2]
+				entry.Entry.Domain = "other.example"
+				lines = append(lines, entry)
+			case "header-order":
+				lines = append(lines, lines[0])
+			}
+			// Recompute a complete, internally consistent chain. Restore must validate
+			// the ownership semantics as well as the serialization checksum.
+			data := []byte{}
+			previous := ""
+			for i := range lines {
+				lines[i].Previous = previous
+				lines[i].Hash = fakeLineHash(lines[i])
+				raw, err := json.Marshal(lines[i])
+				require.NoError(t, err)
+				data = append(data, raw...)
+				data = append(data, '\n')
+				previous = lines[i].Hash
+			}
+			require.NoError(t, os.WriteFile(path, data, 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(directory, "committed-head"), []byte(previous), 0600))
+			_, err = openFakeIPLedger(directory)
+			require.Error(t, err)
+			remaining, err := os.ReadFile(path)
+			require.NoError(t, err)
+			require.Equal(t, data, remaining, "semantic corruption must not be truncated or silently repaired")
+		})
+	}
 }
