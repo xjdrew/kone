@@ -27,6 +27,16 @@
   border-color: var(--accent);
   color: var(--on-accent);
 }
+.button.primary:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--text);
+}
+.button.primary:disabled {
+  background: var(--raised);
+  border-color: var(--line);
+  color: var(--muted);
+}
 .button.danger {
   color: var(--danger);
 }

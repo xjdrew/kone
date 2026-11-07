@@ -23,9 +23,9 @@ import {
   Status,
   Toggle,
 } from "../components/ui";
-import { OutboundName, OutboundSelect } from "./policy";
+import { OutboundName } from "./policy";
 import { useTargetActions } from "./traffic";
-import { timestamp } from "../domain";
+import { timestamp, targetHost } from "../domain";
 import type { Json, Operation } from "../model";
 import styles from "./tools.module.css";
 
@@ -64,7 +64,6 @@ function Diagnostics() {
     context.document?.config.outbounds.find((item) => item.enabled !== false)?.name ?? "direct",
   );
   const [mode, setMode] = useWorkspaceState<"connection" | "dns">("tools.mode", "connection");
-  const [dnsServer, setDNSServer] = useWorkspaceState("tools.dnsServer", "");
   const [history, setHistory] = useState(() => {
     try {
       return readDiagnosticHistory(localStorage.getItem(diagnosticHistoryKey));
@@ -80,11 +79,11 @@ function Diagnostics() {
       /* Diagnostics remain usable when browser storage is unavailable. */
     }
   }
-  const protocol = mode === "dns" ? "udp" : "tcp";
-  const currentTarget = mode === "dns" ? dnsServer : target;
-  const [tls, setTLS] = useWorkspaceState("tools.tls", true);
+  const protocol = mode === "dns" ? "dns" : "tcp";
+  const [tls, setTLS] = useWorkspaceState("tools.tls", false);
   const [dnsName, setDNSName] = useWorkspaceState("tools.dnsName", "example.com");
   const [dnsType, setDNSType] = useWorkspaceState("tools.dnsType", "A");
+  const currentTarget = mode === "dns" ? dnsName : target;
   const [error, setError] = useState<unknown>();
   const [busy, setBusy] = useState(false);
   const tasks = useQuery({
@@ -114,7 +113,10 @@ function Diagnostics() {
         dnsName.trim(),
         dnsType,
       );
-      const operation = await api.diagnose(request);
+      const operation =
+        mode === "dns"
+          ? await api.diagnoseDNS({ name: dnsName.trim(), type: dnsType })
+          : await api.diagnose(request);
       saveHistory(
         rememberDiagnostic(history, {
           mode,
@@ -135,7 +137,7 @@ function Diagnostics() {
     tasks.data?.operations.filter(
       (item) =>
         item.kind.includes("diagnos") &&
-        (mode === "dns" ? item.protocol === "udp" : item.protocol !== "udp"),
+        (mode === "dns" ? item.protocol === "dns" : !item.protocol || item.protocol === "tcp"),
     ) ?? [];
   return (
     <div className={styles.diagnostics}>
@@ -161,16 +163,22 @@ function Diagnostics() {
           </button>
         </fieldset>
         <DiagnosticTarget
-          label={t(mode === "dns" ? "diagnostics.dnsServer" : "diagnostics.target")}
+          label={t(mode === "dns" ? "diagnostics.dnsName" : "diagnostics.target")}
           value={currentTarget}
           history={history.filter((entry) => entry.mode === mode)}
-          placeholder={mode === "dns" ? "192.168.1.1:53" : "example.com:443"}
-          onChange={mode === "dns" ? setDNSServer : setTarget}
+          placeholder="example.com"
+          onChange={
+            mode === "dns"
+              ? setDNSName
+              : (value) => {
+                  setTarget(value);
+                  if (!targetHost(value).port) setTLS(false);
+                }
+          }
           onClear={() => saveHistory(history.filter((entry) => entry.mode !== mode))}
           onSelect={(entry) => {
             if (entry.mode === "dns") {
-              setDNSServer(entry.target);
-              setDNSName(entry.dnsName ?? "");
+              setDNSName(entry.target);
               setDNSType(entry.dnsType ?? "A");
             } else {
               setTarget(entry.target);
@@ -178,33 +186,37 @@ function Diagnostics() {
             }
           }}
         />
-        <Field label={t("common.outbound")}>
-          <OutboundSelect value={outbound} onChange={setOutbound} />
-        </Field>
         {protocol === "tcp" ? (
-          <Toggle
-            checked={target === "149.154.167.50:443" ? false : tls}
-            disabled={target === "149.154.167.50:443"}
-            onChange={setTLS}
-            label={t("diagnostics.tls")}
-          />
-        ) : (
-          <div className="formGrid">
-            <Field label={t("diagnostics.dnsName")}>
-              <input
-                className="mono"
-                required
-                value={dnsName}
-                onChange={(event) => setDNSName(event.target.value)}
-              />
-            </Field>
-            <Field label={t("diagnostics.dnsType")}>
-              <select value={dnsType} onChange={(event) => setDNSType(event.target.value)}>
-                <option>A</option>
-                <option>AAAA</option>
+          <>
+            <Field label={t("common.outbound")}>
+              <select
+                aria-label={t("common.outbound")}
+                value={outbound}
+                onChange={(event) => setOutbound(event.target.value)}
+              >
+                <option value="direct">{t("outbounds.direct")}</option>
+                {context.document?.config.outbounds.map((item) => (
+                  <option key={item.id} value={item.name} disabled={item.enabled === false}>
+                    {item.name}
+                  </option>
+                ))}
               </select>
             </Field>
-          </div>
+            <Toggle
+              checked={target === "149.154.167.50:443" ? false : tls}
+              disabled={target === "149.154.167.50:443"}
+              onChange={setTLS}
+              label={t("diagnostics.tls")}
+            />
+            <small className="muted">{t("diagnostics.defaultPort")}</small>
+          </>
+        ) : (
+          <Field label={t("diagnostics.dnsType")}>
+            <select value={dnsType} onChange={(event) => setDNSType(event.target.value)}>
+              <option>A</option>
+              <option>AAAA</option>
+            </select>
+          </Field>
         )}
         <small className="muted">
           {t(
@@ -223,14 +235,16 @@ function Diagnostics() {
       <div className={styles.results}>
         <div className={styles.resultsHeading}>
           <span>{t(mode === "dns" ? "diagnostics.dnsQueryResult" : "diagnostics.target")}</span>
-          <span>{t("common.outbound")}</span>
+          <span>{t(mode === "dns" ? "diagnostics.resolver" : "common.outbound")}</span>
           <span>{t("diagnostics.latency")}</span>
           <span>{t("common.status")}</span>
         </div>
         {!operations.length ? (
           <Empty
             title={t(mode === "dns" ? "diagnostics.dnsEmpty" : "diagnostics.empty")}
-            description={t("diagnostics.notApplication")}
+            description={t(
+              mode === "dns" ? "diagnostics.dnsPathsHint" : "diagnostics.notApplication",
+            )}
           />
         ) : (
           operations.map((operation) => (
@@ -297,7 +311,8 @@ function DiagnosticTask({ operation, onCancel }: { operation: Operation; onCance
 function DiagnosticResult({ result }: { result: Record<string, Json> }) {
   const { t } = useTranslation();
   const target = String(result.target ?? "");
-  const actions = useTargetActions(target, String(result.protocol ?? "tcp"));
+  const dnsQuery = result.protocol === "dns";
+  const actions = useTargetActions(target, dnsQuery ? "" : String(result.protocol ?? "tcp"));
   const running = result.status === "running" || result.status === "testing";
   const pending = running || result.status === "pending";
   const protocols =
@@ -310,17 +325,23 @@ function DiagnosticResult({ result }: { result: Record<string, Json> }) {
         <span className={styles.target}>
           <code>{target || "—"}</code>
           <small>
-            {result.protocol === "udp"
-              ? `${result.dns_name ?? "DNS"} · ${result.dns_type ?? ""}`
-              : protocols.tls &&
-                  typeof protocols.tls === "object" &&
-                  !Array.isArray(protocols.tls) &&
-                  protocols.tls.tested
-                ? "TCP + TLS"
-                : "TCP"}
+            {dnsQuery
+              ? String(result.dns_type ?? "")
+              : result.protocol === "udp"
+                ? `${result.dns_name ?? "DNS"} · ${result.dns_type ?? ""}`
+                : protocols.tls &&
+                    typeof protocols.tls === "object" &&
+                    !Array.isArray(protocols.tls) &&
+                    protocols.tls.tested
+                  ? "TCP + TLS"
+                  : "TCP"}
           </small>
         </span>
-        <OutboundName name={String(result.outbound ?? "")} />
+        {dnsQuery ? (
+          <span>{t(`diagnostics.resolver.${result.outbound}`)}</span>
+        ) : (
+          <OutboundName name={String(result.outbound ?? "")} />
+        )}
         <span className="mono numeric">
           {pending ? "—" : diagnosticElapsed(result.duration_ms)}
         </span>
@@ -336,15 +357,50 @@ function DiagnosticResult({ result }: { result: Record<string, Json> }) {
           <ActionMenu actions={actions} />
         </div>
         <KeyValues
-          entries={[
-            [t("diagnostics.elapsed"), diagnosticElapsed(result.duration_ms)],
-            [t("diagnostics.endpointElapsed"), diagnosticElapsed(result.connect_latency_ms)],
-            [t("outbounds.endpoint"), String(result.remote_address || "—")],
-            [t("common.version"), String(result.config_version ?? "—")],
-          ]}
+          entries={
+            dnsQuery
+              ? [
+                  [t("diagnostics.elapsed"), diagnosticElapsed(result.duration_ms)],
+                  [
+                    t("diagnostics.scope"),
+                    t(`diagnostics.scope.${result.scope}`, { defaultValue: "—" }),
+                  ],
+                  [t("diagnostics.responseCode"), String(result.dns_rcode || "—")],
+                  [
+                    t("common.version"),
+                    result.outbound === "kone" ? String(result.config_version ?? "—") : "—",
+                  ],
+                ]
+              : [
+                  [t("diagnostics.elapsed"), diagnosticElapsed(result.duration_ms)],
+                  [t("diagnostics.endpointElapsed"), diagnosticElapsed(result.connect_latency_ms)],
+                  [t("outbounds.endpoint"), String(result.remote_address || "—")],
+                  [t("common.version"), String(result.config_version ?? "—")],
+                ]
+          }
         />
+        {dnsQuery && (
+          <div className={styles.dnsAnswers}>
+            <strong>{t("diagnostics.answers")}</strong>
+            {Array.isArray(result.dns_answers) && result.dns_answers.length ? (
+              result.dns_answers.map((answer, index) => <code key={index}>{String(answer)}</code>)
+            ) : (
+              <span className="muted">{t("diagnostics.noAnswers")}</span>
+            )}
+            {Array.isArray(result.dns_virtual_addresses) &&
+              result.dns_virtual_addresses.length > 0 && (
+                <span className="muted">{t("diagnostics.virtualAnswers")}</span>
+              )}
+          </div>
+        )}
         <p className="muted">
-          {t(result.protocol === "udp" ? "diagnostics.dnsElapsedHint" : "diagnostics.elapsedHint")}
+          {t(
+            dnsQuery
+              ? "diagnostics.dnsPathsHint"
+              : result.protocol === "udp"
+                ? "diagnostics.dnsElapsedHint"
+                : "diagnostics.elapsedHint",
+          )}
         </p>
         <div className={styles.protocolChecks}>
           {Object.entries(protocols).map(([name, value]) => {

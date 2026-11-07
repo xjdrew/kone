@@ -28,7 +28,7 @@ func RunNetworkHelper(ctx context.Context, base string, parentPID uint32) error 
 }
 func Preflight(ctx context.Context, cfg *kone.KoneConfig) kone.PreflightReport {
 	report := kone.Preflight(ctx, cfg)
-	if !NeedsHelper() {
+	if !NeedsHelperForConfig(cfg) {
 		return report
 	}
 	_, err := exec.LookPath("pkexec")

@@ -71,7 +71,7 @@ func (c *Controller) readiness(ctx context.Context, doc Document, state, configE
 		add(ReadinessCheck{"inbound", "inbound", "ready", "info", "The configured TUN inbound is enabled; capture still starts only on explicit request", "inbounds", "inbound.enabled", "edit_inbound"})
 	}
 	if len(doc.Config.DNS.Servers) == 0 {
-		add(ReadinessCheck{"dns_source", "dns_source", "ready", "info", "Resolve through the system's current DNS configuration discovered at capture start; no public DNS fallback", "dns", "dns.servers", "edit_dns"})
+		add(ReadinessCheck{"dns_source", "dns_source", "ready", "info", "Discover the original system DNS before capture starts; Host/Gate use visible public defaults only when discovery has no usable default upstream", "dns", "dns.servers", "edit_dns"})
 	}
 	if !doc.Config.Core.AutoRoute && !doc.Config.Core.AutoRoute6 {
 		add(ReadinessCheck{"capture_scope", "capture_scope", "warning", "warning", "Selective capture covers Fake-IP and explicit CIDR routes; ordinary direct traffic can remain outside KONE", "inbounds", "core.auto-route", "edit_inbound"})

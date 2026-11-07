@@ -2,6 +2,8 @@
 
 package kone
 
-func validateDNSListenerUpstreams(CoreConfig, DNSConfig) error { return nil }
+func validateDNSListenerUpstreams(_ CoreConfig, cfg DNSConfig) error {
+	return validateGateDNSUpstreams(cfg)
+}
 
 func configureDNSListenerFamilies(*Dns) {}

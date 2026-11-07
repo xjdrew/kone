@@ -262,6 +262,11 @@ func (d *Dns) Maintain(ctx context.Context) error {
 }
 
 type DNSRuntimeStatus struct {
+	Mode                    string           `json:"mode"`
+	ListenAddress           string           `json:"listen_address"`
+	PublicFallback          bool             `json:"public_fallback"`
+	SystemRequested         bool             `json:"system_requested"`
+	SystemActive            bool             `json:"system_active"`
 	Automatic               bool             `json:"automatic"`
 	Servers                 []string         `json:"servers"`
 	Rules                   []DNSRouteConfig `json:"rules"`
@@ -300,10 +305,15 @@ func (one *One) DNSStatus() DNSRuntimeStatus {
 		return status
 	}
 	d := one.dns
+	if d.server != nil {
+		status.ListenAddress = d.server.Addr
+	}
+	status.PublicFallback = d.systemContext.PublicFallback
 	status.SystemSource = d.systemContext.Source
 	status.SearchDomains = append([]string(nil), d.systemContext.SearchDomains...)
 	status.Warnings = append([]string(nil), d.systemContext.Warnings...)
 	status.IPv6 = one.dnsTable6 != nil
+	status.SystemActive = one.systemDNSActive.Load()
 	status.Servers = append(status.Servers, d.nameservers...)
 	for _, route := range d.routes {
 		copy := route
@@ -311,6 +321,8 @@ func (one *One) DNSStatus() DNSRuntimeStatus {
 		status.Rules = append(status.Rules, copy)
 	}
 	if snapshot := one.policy.Load(); snapshot != nil {
+		status.Mode = snapshot.cfg.DNS.Mode
+		status.SystemRequested = snapshot.cfg.DNS.SystemEnabled()
 		status.Automatic = len(snapshot.cfg.DNS.Servers) == 0
 	}
 	if d.history != nil {

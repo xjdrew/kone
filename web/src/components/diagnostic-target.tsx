@@ -59,7 +59,7 @@ export function DiagnosticTarget({
       document.getElementById(`${id}-${active}`)?.scrollIntoView?.({ block: "nearest" });
   }, [open, active, id]);
   function description(entry: DiagnosticHistoryEntry) {
-    if (entry.mode === "dns") return `${entry.dnsName} · ${entry.dnsType}`;
+    if (entry.mode === "dns") return entry.dnsType ?? "A";
     if (entry.target === "www.google.com:443" && entry.tls) return t("diagnostics.google");
     if (entry.target === "149.154.167.50:443") return t("diagnostics.telegram");
     return entry.tls ? "TCP + TLS" : "TCP";
@@ -134,6 +134,8 @@ export function DiagnosticTarget({
           type="button"
           aria-label={t("diagnostics.history")}
           aria-expanded={open}
+          aria-controls={open ? `${id}-history` : undefined}
+          tabIndex={-1}
           onClick={() => {
             input.current?.focus();
             setFilter("");
@@ -141,7 +143,15 @@ export function DiagnosticTarget({
             setOpen(!open);
           }}
         >
-          ▾
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path
+              d="m4 6 4 4 4-4"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
       </div>
       {open && anchor && (

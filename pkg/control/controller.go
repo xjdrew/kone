@@ -252,6 +252,9 @@ func managementDefaults() *kone.KoneConfig {
 	cfg.Core.IPv6Network = kone.DefaultIPv6Network()
 	cfg.Rule = []kone.RuleConfig{{ID: "rule-default-direct", Source: "default", Schema: "FINAL", Outbound: kone.BuiltinDirect}}
 	cfg.DNS.System = kone.SupportsSystemDNS()
+	if kone.SupportsSystemDNS() {
+		cfg.DNS.Mode = "host"
+	}
 	return cfg
 }
 func (c *Controller) confirmedPath() string  { return filepath.Join(c.directory, "confirmed.json") }
@@ -291,7 +294,7 @@ func (c *Controller) State() State {
 		"inbounds": []string{"tun"}, "stacks": kone.SupportedStacks(),
 		"tcp": true, "udp_direct": true, "udp_proxy": true, "proxy_udp_schemes": []string{"socks5", "ss"},
 		"ipv6": kone.SupportsIPv6Capture(), "ipv6_available": kone.DefaultIPv6Network() != "", "ipv6_enabled": c.doc.Config.Core.IPv6Network != "",
-		"system_dns": kone.SupportsSystemDNS(), "system_dns_enabled": c.doc.Config.DNS.System,
+		"system_dns": kone.SupportsSystemDNS(), "system_dns_enabled": c.doc.Config.DNS.SystemEnabled(),
 		"process_attribution": process.Supported(), "process_scope": "best effort for local IPv4 sockets; IPv6 and unverified owners remain unknown; remote sources remain remote",
 		"tls_lan": true, "persistent_config": true, "statistics": "business payload bytes", "temporary_rules": true, "temporary_rule_scope": "domain rules only",
 	}

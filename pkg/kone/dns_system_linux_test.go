@@ -273,7 +273,7 @@ func TestSystemDNSPreflightIsReadOnlyAndRejectsUnsafeResolverContext(t *testing.
 	}
 	f = newResolvedFixture()
 	f.dns.readFile = func(string) ([]byte, error) { return []byte("nameserver 192.0.2.1\n"), nil }
-	require.ErrorContains(t, f.dns.check(context.Background()), "stub")
+	require.ErrorIs(t, f.dns.check(context.Background()), ErrSystemDNSUnavailable)
 	require.Empty(t, f.calls)
 	f = newResolvedFixture()
 	f.dns.verifyNamespace = func(uint32) error { return errors.New("different namespace") }

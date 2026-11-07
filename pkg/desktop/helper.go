@@ -64,7 +64,13 @@ type DeviceIdentity struct {
 	Index int
 	Known bool
 }
+type StartReply struct {
+	Error string
+	Code  string
+}
+
 type FinishedEvent struct {
+	Code         string
 	Error        string
 	LogsDegraded bool
 }
@@ -143,7 +149,30 @@ type helperService struct {
 	recoverDNS         func(context.Context, string) error
 }
 
-func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
+func helperErrorCode(err error) string {
+	var coded interface{ ErrorCode() string }
+	if errors.As(err, &coded) {
+		return coded.ErrorCode()
+	}
+	return ""
+}
+
+func (s *helperService) Start(request StartRequest, _ *Empty) error {
+	if err := s.start(request); err != nil {
+		return errors.New(helperError(err))
+	}
+	return nil
+}
+
+// StartDetailed preserves structured startup failures across RPC. Start remains
+// available to older parents, which still receive a redacted RPC error.
+func (s *helperService) StartDetailed(request StartRequest, reply *StartReply) error {
+	err := s.start(request)
+	reply.Error, reply.Code = helperError(err), helperErrorCode(err)
+	return nil
+}
+
+func (s *helperService) start(request StartRequest) (result error) {
 	defer func() { s.logFailure("Capture startup failed", result) }()
 	s.logEvent(slog.LevelInfo, "Network helper received capture request", slog.String("stage", "configuration"), slog.Uint64("config_version", request.Version))
 	s.mu.Lock()
@@ -160,7 +189,7 @@ func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
 	}
 	cfg, err := kone.ParseManagedConfig(request.TOML)
 	if err != nil {
-		return errors.New(helperError(err))
+		return err
 	}
 	if s.configureLogs != nil {
 		if err = s.configureLogs(cfg.General); err != nil {
@@ -170,7 +199,7 @@ func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
 	s.logEvent(slog.LevelInfo, "Network helper configuration validated", slog.String("stage", "configuration"), slog.Uint64("config_version", request.Version))
 	engine, err := s.factory(cfg)
 	if err != nil {
-		return errors.New(helperError(err))
+		return err
 	}
 	if err = engine.SetConfigVersion(request.Version); err != nil {
 		engine.Close()
@@ -221,7 +250,7 @@ func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
 		close(done)
 		s.flushLogs()
 		var reply Empty
-		s.events.Call("Callbacks.Finished", FinishedEvent{Error: helperError(err), LogsDegraded: s.logsDegraded()}, &reply)
+		s.events.Call("Callbacks.Finished", FinishedEvent{Error: helperError(err), Code: helperErrorCode(err), LogsDegraded: s.logsDegraded()}, &reply)
 	}()
 	select {
 	case <-engine.Ready():
@@ -234,7 +263,7 @@ func (s *helperService) Start(request StartRequest, _ *Empty) (result error) {
 		if err == nil {
 			err = errors.New("helper engine stopped before readiness")
 		}
-		return errors.New(helperError(err))
+		return err
 	case <-runCtx.Done():
 		engine.Close()
 		return runCtx.Err()
@@ -395,12 +424,17 @@ func (s *helperService) ProbeUDP(request ProbeRequest, reply *kone.DiagnosticRes
 	return s.Probe(request, reply)
 }
 
+// A separate RPC prevents older helpers from treating a DNS query as TCP.
+func (s *helperService) ProbeDNS(request ProbeRequest, reply *kone.DiagnosticResult) error {
+	if request.Options.Protocol != "dns" {
+		return errors.New("DNS diagnostic RPC requires protocol dns")
+	}
+	return s.Probe(request, reply)
+}
+
 func (s *helperService) Probe(request ProbeRequest, reply *kone.DiagnosticResult) error {
 	if request.ID == "" || len(request.ID) > 64 {
 		return errors.New("invalid diagnostic request identity")
-	}
-	if err := kone.ValidateDiagnosticTarget(request.Target); err != nil {
-		return err
 	}
 	options := request.Options
 	if options.Protocol == "" {
@@ -409,6 +443,13 @@ func (s *helperService) Probe(request ProbeRequest, reply *kone.DiagnosticResult
 	options, err := options.Normalize()
 	if err != nil {
 		return err
+	}
+	if options.Protocol != "dns" {
+		if err := kone.ValidateDiagnosticTarget(request.Target); err != nil {
+			return err
+		}
+	} else if request.Target != options.DNSName || request.Outbound != "system" && request.Outbound != "kone" {
+		return errors.New("invalid DNS comparison target or source")
 	}
 	engine, err := s.current()
 	if err != nil {
@@ -465,7 +506,7 @@ func (s *helperService) Probe(request ProbeRequest, reply *kone.DiagnosticResult
 		progress := helperProbeProgress{client: s.events, id: request.ID, slots: slots}
 		ctx = kone.WithDiagnosticProgress(ctx, func(result kone.DiagnosticResult) { progress.publish(ctx, result) })
 	}
-	if options.Protocol == "udp" {
+	if options.Protocol != "tcp" {
 		udpOwner, ok := engine.(interface {
 			ProbeDiagnosticRequestVersion(context.Context, string, string, kone.DiagnosticOptions, uint64) (kone.DiagnosticResult, error)
 		})

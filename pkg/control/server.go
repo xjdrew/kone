@@ -392,6 +392,43 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		}
 	case path == "diagnostics" && r.Method == http.MethodGet:
 		writeJSON(w, 200, map[string]any{"operations": c.Operations()})
+	case path == "dns/configuration" && r.Method == http.MethodGet:
+		c.mu.Lock()
+		cfg, source := cloneDocument(c.doc).Config.DNS, c.dataSource
+		if c.engine == nil || c.state != "running" {
+			source = nil
+		}
+		c.mu.Unlock()
+		interfaces, interfaceErr := localAccessInterfaces()
+		var defaults kone.DNSDefaults
+		var status kone.DNSRuntimeStatus
+		if source != nil {
+			var err error
+			status, _, err = source.DNSData()
+			if err != nil {
+				respondError(err)
+				return
+			}
+			defaults = kone.DNSDefaults{Servers: status.Servers, Source: "running", PublicFallback: status.PublicFallback, Warnings: status.Warnings}
+		} else {
+			defaults = kone.InspectDNSDefaults(cfg)
+		}
+		writeJSON(w, 200, map[string]any{"defaults": defaults, "status": status, "running": source != nil, "interfaces": privateInterfaces(interfaces), "interfaces_unavailable": interfaceErr != nil})
+	case path == "diagnostics/dns" && r.Method == http.MethodPost:
+		var request struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		}
+		if err := readJSON(w, r, &request); err != nil {
+			respondError(err)
+			return
+		}
+		op, err := c.DiagnoseProtocol(request.Name, nil, kone.DiagnosticOptions{Protocol: "dns", DNSName: request.Name, DNSType: request.Type}, key)
+		if err != nil {
+			respondError(err)
+			return
+		}
+		writeOperation(w, op)
 	case path == "diagnostics" && r.Method == http.MethodPost:
 		var request struct {
 			Target    string   `json:"target"`

@@ -59,7 +59,16 @@ export function Status({ value, children }: { value: string; children?: ReactNod
   const { t } = useTranslation();
   const tone = ["failed", "rejected", "error", "offline", "unhealthy"].includes(value)
     ? "danger"
-    : ["running", "active", "succeeded", "ready", "success", "healthy", "reachable"].includes(value)
+    : [
+          "running",
+          "active",
+          "succeeded",
+          "ready",
+          "success",
+          "healthy",
+          "reachable",
+          "answered",
+        ].includes(value)
       ? "success"
       : ["starting", "pausing", "unknown", "warning", "unsupported", "stale"].includes(value)
         ? "warning"

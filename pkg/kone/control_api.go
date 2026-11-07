@@ -99,6 +99,13 @@ func Preflight(ctx context.Context, cfg *KoneConfig) PreflightReport {
 	}
 	if err := checkNetworkPrivileges(); err != nil {
 		add("privileges", err.Error())
+	} else if SystemDNSNeedsAuthorization(cfg.DNS) {
+		add("privileges", "Host DNS requires administrator authorization to replace the local resolver entry")
+	}
+	if cfg.DNS.SystemEnabled() {
+		if err := CheckSystemDNS(ctx, cfg.DNS); err != nil {
+			add("system_dns", err.Error())
+		}
 	}
 	if cfg.Core.Tun != "" {
 		if _, err := net.InterfaceByName(cfg.Core.Tun); err == nil {
@@ -116,6 +123,18 @@ func Preflight(ctx context.Context, cfg *KoneConfig) PreflightReport {
 	if err != nil {
 		add("interfaces", "Cannot inspect local interface addresses")
 	} else {
+		if cfg.DNS.Mode == "gate" {
+			listener, _ := netip.ParseAddr(cfg.DNS.ListenAddress)
+			found := listener.IsUnspecified()
+			for _, value := range addresses {
+				if prefix, err := netip.ParsePrefix(value.String()); err == nil && prefix.Addr().Unmap() == listener.Unmap() {
+					found = true
+				}
+			}
+			if !found {
+				add("dns_listener", "The selected Gate DNS address is no longer assigned to a local interface")
+			}
+		}
 		for _, value := range addresses {
 			p, e := netip.ParsePrefix(value.String())
 			if e == nil && p.Addr().Is4() && (p.Contains(prefix.Addr()) || prefix.Contains(p.Addr())) {

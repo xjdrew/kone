@@ -2,6 +2,8 @@
 
 ## Features
 
+- Add Host and Gate DNS modes with system-upstream discovery, explicit public fallback warnings and a redesigned Resolvers page.
+- Compare system DNS and KONE DNS by query name, including answers and Fake-IP policy results.
 - Enable Linux capture through a native polkit authorization dialog while keeping management unprivileged.
 - Recall up to 20 recent diagnostic targets, separate DNS queries from connection tests, and show total test time in result summaries.
 
@@ -20,6 +22,8 @@
 
 ## Bugfixes
 
+- Enable Host DNS on Linux without systemd-resolved, preserving and restoring the original resolver file or WSL symlink.
+- Accept port-free connection targets as TCP 80, unify diagnostic history controls and keep save feedback from covering actions.
 - Allow default direct routing without configuring a proxy or confirming direct-only mode; removing proxy rules applies immediately.
 - Explain startup blockers and their next steps, keep the enable action visible, and allow readiness checks without starting capture.
 - Allow private-network proxy rules while keeping local hosts and KONE’s own proxy/DNS transports outside recursive capture; preserve deleted LAN defaults across restarts.

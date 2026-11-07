@@ -295,20 +295,27 @@ kbd {
   gap: 8px;
 }
 .toast {
-  position: fixed;
-  bottom: 42px;
-  right: 18px;
-  max-width: min(660px, calc(100vw - 36px));
-  padding: 12px 14px;
+  flex: none;
+  width: 100%;
+  padding: 8px 14px;
   background: var(--raised);
-  border: 1px solid var(--line);
+  border-top: 1px solid var(--line);
   border-inline-start: 3px solid var(--accent);
-  box-shadow: 0 10px 35px #0004;
-  border-radius: 5px;
   display: flex;
   align-items: center;
-  gap: 16px;
-  z-index: 50;
+  gap: 12px;
+}
+.toast > div {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.toast details {
+  max-height: 160px;
+  overflow: auto;
+}
+.toast button {
+  flex: none;
 }
 .toast pre {
   white-space: pre-wrap;
@@ -682,9 +689,7 @@ kbd {
     padding: 8px 12px;
   }
   .toast {
-    right: 12px;
-    bottom: 46px;
-    max-width: calc(100vw - 24px);
+    padding: 8px 12px;
     gap: 8px;
   }
   .statusbar {

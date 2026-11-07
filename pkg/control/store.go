@@ -323,6 +323,9 @@ func readDocument(path string) (Document, error) {
 		return Document{}, errors.New("saved configuration is invalid; restore a backup or save a corrected configuration")
 	}
 	assignReadIDs(cfg)
+	if cfg.DNS.Mode == "" && cfg.DNS.System {
+		cfg.DNS.Mode = "host"
+	}
 	confirmed := true // Preserve the established intent of pre-confirmation profiles.
 	if stored.DirectOnlyConfirmed != nil {
 		confirmed = *stored.DirectOnlyConfirmed

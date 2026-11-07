@@ -14,7 +14,7 @@
 
 Windows NRPT 有超出普通 UDP/TCP DNS 的安全、IPsec、DirectAccess 和查询策略；这些不能仅靠复制服务器 IP 保证语义。Linux 的加密 DNS 及 macOS 的多播/特殊 resolver 也不直接改成普通 UDP。已知不能安全表达的 scope 保持不可用并显示原因，匹配请求失败；它不会改走默认公共 DNS。来源文档：[Microsoft NRPT](https://learn.microsoft.com/en-us/powershell/module/dnsclient/get-dnsclientnrptpolicy)、[systemd resolvectl](https://www.freedesktop.org/software/systemd/man/261/resolvectl.html)、[Apple scutil](https://github.com/apple-oss-distributions/configd/blob/main/scutil.tproj/scutil.8)。
 
-普通模式保留既有 systemd-resolved 本机 stub 时，可以继续由系统服务处理它原有的 VPN 路由与安全策略。启用 KONE 的系统 DNS 引导后，stub 可能指回 KONE，因此必须使用发现的真实上游；无法确定真实上游时阻止启用，不猜测一个公共服务器作为替代。
+普通模式保留既有 systemd-resolved 本机 stub 时，可以继续由系统服务处理它原有的 VPN 路由与安全策略。启用 KONE 的系统 DNS 引导后，stub 可能指回 KONE，因此必须使用发现的真实上游；Host/Gate 无法取得默认上游时显式告警并选择公共默认值；已知私有作用域仍保持专用路由，不随默认回退泄漏公网。
 
 macOS 已有 KONE 引导会话运行时，新启动的管理进程或数据面助手会只读核对 dynamic store 中的会话所有者、utun 和完整 DNS 配置，从上游快照排除该会话自己的监听地址，保留原有默认解析器及更具体的 VPN 域。无法核实所有权、配置在读取期间发生变化或原解析器不可见时，要求显式配置 DNS；不会仅凭回环地址猜测所有权。
 
@@ -41,15 +41,36 @@ DNS 查询和失败是解析事件，不证明业务连接已经进入 TUN。解
 
 ## 系统 DNS 引导
 
-`dns.system` 将“运行一个 DNS 服务”和“引导本机系统查询该服务”分开。CLI/TOML 默认 `false`；Linux/macOS/Windows 管理模式首次初始化会选择 `true`，但仍需预检通过并由用户显式启用代理。既有配置的选择不会被重置。该设置不改变 HTTP/SOCKS 代理、DHCP、路由器或其他机器的 DNS。网关上的 LAN 客户端仍需由管理员配置 DNS/网关。
+`dns.mode` 分为 Host 与 Gate。管理模式默认 Host；旧 `dns.system=true` 管理配置迁移为 Host，旧 false 保持原行为，不自动开放局域网监听。
 
-### Linux：只管理本次创建的 TUN link
+- **Host**：先发现原始系统 DNS，再启动本地 DNS 服务，最后接管系统 DNS；停止时先恢复系统 DNS，再关闭监听。
+- **Gate**：在 `dns.listen-address` / `dns.listen-port`（默认 53）启动 UDP/TCP，不调用系统 DNS 配置接口。管理员负责 DHCP/客户端设置及 Fake-IP 回程路由。
+- **默认上游**：两个模式均自动发现系统 DNS；没有可用默认地址时采用 `8.8.8.8:53`、`8.8.4.4:53`、`1.1.1.1:53`、`1.0.0.1:53`，API 通过 `public_fallback` 标明来源。显式上游和私有后缀不做该回退。
 
-当前引导支持 systemd-resolved。系统应用必须已经使用 `127.0.0.53` 或 `127.0.0.54` stub，KONE 不改写 `/etc/resolv.conf`。`busctl` 与运行中的 resolver 必须可用；服务进程必须能验证为与 KONE 处于同一网络命名空间，避免容器或网络命名空间中的程序误改宿主 DNS。无法验证时预检失败，用户可以明确关闭此选项并采用手工 DNS 方案。
+```mermaid
+flowchart LR
+  OS[系统原始 DNS] --> Snapshot[启用前快照]
+  Snapshot --> Upstream[本次运行上游]
+  Missing[无法获取默认地址] --> Public[公共默认值与告警]
+  Public --> Upstream
+  Host[Host 本机应用] --> KONE[KONE DNS]
+  Gate[Gate 局域网客户端] --> KONE
+  KONE --> Upstream
+```
 
+### Linux：按主机解析方式接管
+
+使用 systemd-resolved stub 的主机保持原有按 link 集成，验证服务与 KONE 位于同一网络命名空间。非 stub 环境（包括 WSL）使用临时本机 resolver 入口：
+
+1. 保存原内容、权限与符号链接关系；私有备份及所有权记录位于 `/var/lib/kone/dns`，可跨进程退出与重启恢复。
+2. DNS 监听就绪后，原子替换本机 `/etc/resolv.conf` 入口；WSL 的共享目标文件保持原样。保留 search/options 等非 nameserver 内容。
+3. 运行期间监测外部替换；停止时仅恢复匹配本次记录的状态。外部修改保持原样，备份保留供检查。
+4. 异常退出后通过本机恢复操作授权处理；验证进程、启动标识、网络命名空间、启动周期与内容摘要。仅有 CAP_NET_ADMIN 不足以替换 resolver 文件时，管理模式使用授权 helper。
+
+Host 文件模式需要端口 53；Gate 可选择 LAN 地址与端口，不能把自己的监听地址配置成上游。
 ```toml
 [dns]
-system = true
+mode = "host"
 # servers = []  # 从启动前的系统解析范围读取真实上游
 ```
 
@@ -92,3 +113,14 @@ Windows 支持 `system = true`，要求 `listen-port = 53`。DNS 监听就绪后
 确定性测试覆盖每个设置阶段失败、命令超时前已生效、外部 DNS/LLMNR 改动、设备复用、resolver 换代与命名空间不匹配。Linux 原生 CI 另起 network/mount namespace，私有 `/run`、resolver 配置、D-Bus 和 systemd-resolved，执行真实 OS stub → KONE Fake-IP → 停止恢复，以及 DNS 就绪后的服务故障；system/gvisor/mixed 分别运行。测试程序在任何写入前再次验证 namespace/resolver，不能借宿主 D-Bus 做假验收。
 
 原生任务缺少工具或隔离失败会明确失败；mock 测试不会被称为系统 DNS 已验收。实际结果以对应 SHA 的 CI 为准。本轮没有在用户主机执行系统 DNS 设置命令。
+
+## DNS 查询诊断
+
+`POST /api/v1/diagnostics/dns` 接收 `name`（默认 example.com）与 `type`（A/AAAA），复用有界、可取消的任务队列，固定比较 system / kone：
+
+| 入口 | 执行路径与证据 |
+| --- | --- |
+| system | 当前操作系统解析入口，含系统缓存与 hosts；不虚构解析 API 未返回的 DNS RCODE/TTL |
+| kone | 运行中引擎的客户端 DNS handler，经过缓存、分流和 Fake-IP；暂停时仅构造已保存配置，不启动监听或 TUN |
+
+系统入口已指向 KONE 时，两者可能返回相同答案。摘要耗时覆盖查询至结果完成；答案、响应码、Fake-IP 标记和运行/保存配置范围在详情中展示。`GET /api/v1/dns/configuration` 为设置页提供默认上游来源、回退警示、网卡候选和实际运行状态。原有指定服务器的 UDP DNS 探测仍由 `/diagnostics` 的 `protocol=udp` 提供。

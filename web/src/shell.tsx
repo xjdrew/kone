@@ -6,6 +6,7 @@ import { api } from "./api/endpoints";
 import { ApiError } from "./api/client";
 import { Button, ErrorNotice, Modal, Status } from "./components/ui";
 import { ReadinessDialog } from "./components/readiness";
+import { DNSFallbackNotice } from "./components/dns-fallback-notice";
 import { canEnable } from "./readiness";
 import { Tools } from "./views/tools";
 import { RuleComposer } from "./views/policy";
@@ -298,6 +299,7 @@ export function Shell() {
         />
       )}
       {!!error && !readiness && <ErrorNotice error={error} />}
+      <DNSFallbackNotice running={running} />
       <ErrorNotice
         error={context.configError}
         retry={() => {
@@ -320,6 +322,31 @@ export function Shell() {
         <Outlet />
       </main>
       {tool && <Tools />}
+      {toast && (
+        <output className="toast">
+          <div>
+            {t(toast.key)}
+            {toast.details && (
+              <details>
+                <summary>{t("common.details")}</summary>
+                <pre>{toast.details}</pre>
+              </details>
+            )}
+          </div>
+          {toast.undo && (
+            <Button
+              onClick={() => {
+                void toast.undo!().catch(setError);
+              }}
+            >
+              {t("common.undo")}
+            </Button>
+          )}
+          <Button tone="quiet" aria-label={t("common.close")} onClick={() => notify(null)}>
+            ×
+          </Button>
+        </output>
+      )}
       <footer className="statusbar">
         <div className="toolTabs">
           <button
@@ -366,31 +393,6 @@ export function Shell() {
         )}
         <span className="privacyLabel">{t("common.privacy")}</span>
       </footer>
-      {toast && (
-        <output className="toast">
-          <div>
-            {t(toast.key)}
-            {toast.details && (
-              <details>
-                <summary>{t("common.details")}</summary>
-                <pre>{toast.details}</pre>
-              </details>
-            )}
-          </div>
-          {toast.undo && (
-            <Button
-              onClick={() => {
-                void toast.undo!().catch(setError);
-              }}
-            >
-              {t("common.undo")}
-            </Button>
-          )}
-          <Button tone="quiet" aria-label={t("common.close")} onClick={() => notify(null)}>
-            ×
-          </Button>
-        </output>
-      )}
       <Modal open={commands} onClose={() => setCommands(false)} title={t("nav.commands")}>
         <input
           className="commandSearch"

@@ -1,0 +1,121 @@
+.resolvers {
+  display: grid;
+  gap: 0;
+}
+.section {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.section:first-child {
+  padding-top: 0;
+}
+.section h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 6px 0;
+}
+.choices {
+  margin: 0;
+  min-width: 0;
+  display: inline-flex;
+  flex-wrap: wrap;
+  padding: 2px;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.choices button {
+  appearance: none;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--muted);
+  padding: 6px 12px;
+  min-height: 32px;
+}
+.choices button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.choices button[aria-pressed="true"] {
+  background: var(--selected);
+  color: var(--text);
+  box-shadow: inset 0 -2px var(--accent);
+}
+.description {
+  color: var(--muted);
+  margin: 8px 0;
+  font-size: 12px;
+  max-width: 70ch;
+}
+.path {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+.listener {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 84px auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 14px;
+}
+.listener > span {
+  padding-bottom: 8px;
+}
+.addresses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 4px 0;
+}
+.addresses code {
+  font-size: 12px;
+}
+.warning {
+  color: var(--warning);
+  font-size: 12px;
+  border-inline-start: 2px solid var(--warning);
+  padding-inline-start: 10px;
+  max-width: 70ch;
+}
+.advanced {
+  padding: 6px 0;
+}
+.advanced h3 {
+  font-size: 13px;
+  margin: 12px 0;
+}
+.rule {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr 1fr auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+.tuning {
+  margin-top: 20px;
+}
+@media (max-width: 640px) {
+  .section {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+    padding: 12px 0;
+  }
+  .listener {
+    grid-template-columns: minmax(0, 1fr) 84px;
+  }
+  .listener > span {
+    grid-column: 1 / -1;
+  }
+  .rule {
+    grid-template-columns: 1fr;
+  }
+}
+@media (pointer: coarse) {
+  .choices button {
+    min-height: 44px;
+  }
+}

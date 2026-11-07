@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build !windows && !linux
 
 package desktop
 
@@ -8,5 +8,5 @@ import (
 )
 
 func RecoverSystemDNS(context.Context, string, LaunchHelper) error {
-	return errors.New("system DNS recovery helper is only available on Windows")
+	return errors.New("system DNS recovery helper is unavailable on this platform")
 }

@@ -16,6 +16,7 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
     operations: [] as Operation[],
     authenticated: !options.remote,
     conflict: false,
+    dnsFallback: false,
     accessFailure: false,
     access: {
       enabled: false,
@@ -161,6 +162,54 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
           },
         ],
       });
+    if (path === "/dns/configuration")
+      return respond({
+        running: data.state.state === "running",
+        defaults: {
+          servers: data.dnsFallback
+            ? ["8.8.8.8:53", "8.8.4.4:53", "1.1.1.1:53", "1.0.0.1:53"]
+            : ["192.168.40.1:53"],
+          source: data.dnsFallback ? "public_fallback" : "system",
+          public_fallback: data.dnsFallback,
+          warnings: [],
+        },
+        status: {
+          mode: data.document.config.dns.mode || "host",
+          system_requested: true,
+          system_active: data.state.state === "running",
+          listen_address: "10.192.0.1:53",
+        },
+        interfaces: data.access.interfaces,
+      });
+    if (path === "/diagnostics/dns" && method === "POST") {
+      const input = body as { name: string; type: string };
+      const operation: Operation = {
+        id: `op-${data.operations.length + 1}`,
+        kind: "diagnostics",
+        target: input.name,
+        outbounds: ["system", "kone"],
+        protocol: "dns",
+        status: "succeeded",
+        stage: "complete",
+        started_at: "2026-11-07T09:30:00Z",
+        result: {
+          results: ["system", "kone"].map((source) => ({
+            target: input.name,
+            outbound: source,
+            protocol: "dns",
+            dns_type: input.type,
+            status: "answered",
+            stage: "dns",
+            duration_ms: source === "system" ? 12 : 0,
+            scope: source === "system" ? "system" : "saved_configuration",
+            dns_answers: [source === "system" ? "2001:db8::1" : "example.com. 30 IN AAAA fd00::4"],
+            dns_virtual_addresses: source === "kone" ? ["fd00::4"] : [],
+          })),
+        },
+      };
+      data.operations.unshift(operation);
+      return respond(operation, 202);
+    }
     if (path === "/diagnostics" && method === "POST") {
       const input = body as {
         target: string;

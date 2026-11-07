@@ -111,11 +111,19 @@ IPv4 `auto-route` 与 IPv6 `auto-route6` 独立；全局捕获要求真实出口
 
 ## 5. DNS
 
-省略 `servers` 或设为空数组时，在启动前发现系统真实上游并固定到本次实例；失败不会猜测公共 DNS。`-check` 不探测上游是否可达。
+在“设置 → 解析”选择模式，再选择上游来源：
+
+| 模式 | 系统 DNS | 监听与部署 |
+| --- | --- | --- |
+| Host（新管理配置默认） | 启用时接管，暂停时恢复原配置 | 为本机应用服务；先保存原始系统 DNS，再作为上游 |
+| Gate | 保持原样 | 在所选局域网地址监听 UDP/TCP 53；管理员配置 DHCP/客户端 DNS，并将 Fake-IP 网段路由到 KONE |
+
+两种模式省略 `servers` 或设为 `[]` 时，都会在启用前读取系统 DNS 并固定到本次运行。获取不到可用默认上游时，界面告警并采用 `8.8.8.8`、`8.8.4.4`、`1.1.1.1`、`1.0.0.1`；这不表示已验证连通性。自定义上游和私有后缀失败不会转向公共 DNS。`-check` 不探测上游是否可达。
 
 ```toml
 [dns]
-system = true
+mode = "host"
+# Gate: mode = "gate", listen-address = "192.168.1.2", listen-port = 53
 # servers = ["192.168.1.1"]
 
 [[dns.rules]]
@@ -128,14 +136,16 @@ interface = "VPN"
 
 | 设置 | 默认与含义 |
 | --- | --- |
-| `system` | CLI 默认 false；首次管理配置默认 true；引导主机 DNS，不修改其他机器 |
-| `listen-port` | 53，UDP/TCP；Linux/Windows 监听 TUN 地址，macOS 使用回环入口 |
+| `mode` | `host` 或 `gate`；管理模式默认 Host，切换需暂停代理 |
+| `listen-address` | Gate 使用的本机网卡地址；`0.0.0.0`/`::` 表示所有相应网卡，可能与本机已有 DNS 服务冲突 |
+| `system` | 旧配置兼容字段；显式 `mode` 优先。旧 false 配置不会自动新增 LAN 监听 |
+| `listen-port` | 默认 53，UDP/TCP；Host 使用本地入口，Gate 使用所选网卡地址 |
 | `ttl` / `packet-size` | 600 秒 / 4096 字节 |
 | `read-timeout` / `write-timeout` | 各 5 秒 |
 | `history-limit` / `history-retention` | 512 条 / 3600 秒；历史条数 0 关闭记录 |
 | `cache-limit` | 1024 条；0 关闭真实响应缓存，活动 Fake-IP 映射独立保留 |
 
-系统引导：Linux 要求 systemd-resolved stub 和可验证的同命名空间服务；macOS 创建自有临时解析服务；Windows 使用自有 NRPT 根规则且要求端口 53。已有策略冲突或无法安全复制的解析语义会阻止启用或令该作用域失败。逐平台边界见 [DNS 原理](../technical/dns.md)。
+Host 接管：Linux 优先使用 systemd-resolved；非 stub 环境临时替换本机 `/etc/resolv.conf` 入口，暂停后恢复原文件或符号链接，不改写 WSL 共享目标。macOS 创建自有临时解析服务；Windows 使用自有 NRPT 根规则且要求端口 53。已有策略冲突或无法安全复制的解析语义会阻止启用或令该作用域失败。逐平台边界见 [DNS 原理](../technical/dns.md)。
 
 ## 6. GeoIP 数据
 

@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/xjdrew/kone/pkg/dnsconfig"
 	"github.com/xjdrew/kone/pkg/proxy"
 )
 
@@ -43,6 +42,8 @@ type CoreConfig struct {
 }
 
 type DNSConfig struct {
+	Mode             string           `toml:"mode,omitempty"`
+	ListenAddress    string           `toml:"listen-address,omitempty"`
 	System           bool             `toml:"system"`
 	ListenPort       uint16           `toml:"listen-port"`
 	TTL              uint             `toml:"ttl"`
@@ -55,6 +56,19 @@ type DNSConfig struct {
 	CacheLimit       uint             `toml:"cache-limit"`
 	Rules            []DNSRouteConfig `toml:"rules,omitempty"`
 	SystemContext    DNSSystemContext `toml:"-"`
+}
+
+func (cfg DNSConfig) SystemEnabled() bool {
+	if cfg.Mode != "" {
+		return cfg.Mode == "host"
+	}
+	return cfg.System
+}
+
+// PublicDNSDefaults are used only when automatic system discovery has no usable
+// upstream. Explicit user servers and private split-DNS routes never fall back.
+func PublicDNSDefaults() []string {
+	return []string{"8.8.8.8:53", "8.8.4.4:53", "1.1.1.1:53", "1.0.0.1:53"}
 }
 
 type DNSRouteConfig struct {
@@ -284,6 +298,14 @@ func effectiveDNSConfig(cfg DNSConfig, read func() ([]string, error)) (DNSConfig
 	cfg.Servers = slices.Clone(cfg.Servers)
 	if len(cfg.Servers) == 0 {
 		servers, err := read()
+		if err != nil || len(servers) == 0 {
+			if cfg.Mode != "" || cfg.SystemEnabled() {
+				cfg.Servers = PublicDNSDefaults()
+				cfg.SystemContext.PublicFallback = true
+				cfg.SystemContext.Source = "public_fallback"
+				return cfg, nil
+			}
+		}
 		if err != nil {
 			return cfg, fmt.Errorf("read system DNS: %w (set dns.servers explicitly)", err)
 		}
@@ -303,7 +325,7 @@ func effectiveDNSConfig(cfg DNSConfig, read func() ([]string, error)) (DNSConfig
 }
 
 func systemDNSServers() ([]string, error) {
-	config := dnsconfig.ReadDnsConfig()
+	config := readPlatformDNSConfig()
 	return config.Servers, config.Err
 }
 
@@ -391,6 +413,15 @@ func (cfg *KoneConfig) Validate() error {
 	}
 	if cfg.DNS.ListenPort == 0 {
 		return errors.New("dns.listen-port must be nonzero")
+	}
+	if cfg.DNS.Mode != "" && cfg.DNS.Mode != "host" && cfg.DNS.Mode != "gate" {
+		return errors.New("dns.mode must be host or gate")
+	}
+	if cfg.DNS.Mode == "gate" {
+		ip, err := netip.ParseAddr(cfg.DNS.ListenAddress)
+		if err != nil || ip.IsMulticast() {
+			return errors.New("gate DNS requires a local dns.listen-address")
+		}
 	}
 	if cfg.DNS.TTL == 0 || cfg.DNS.TTL > math.MaxUint32 {
 		return errors.New("dns.ttl must be between 1 and 4294967295 seconds")

@@ -49,6 +49,18 @@ export const api = {
     request<Traffic>(`/flows?${query({ ...values })}`, { signal }),
   flow: (id: string, signal?: AbortSignal) =>
     request<import("../model").Flow>(`/flows/${encodeURIComponent(id)}`, { signal }),
+  dnsConfiguration: (signal?: AbortSignal) =>
+    request<{
+      running: boolean;
+      defaults: { servers: string[]; source: string; public_fallback: boolean; warnings: string[] };
+      status: {
+        mode: string;
+        listen_address: string;
+        system_active: boolean;
+        system_requested: boolean;
+      };
+      interfaces: { address: string; interface: string }[];
+    }>("/dns/configuration", { signal }),
   dns: (signal?: AbortSignal) =>
     request<{ status: Record<string, Json>; queries: import("../model").DNSQuery[] }>("/dns", {
       signal,
@@ -59,6 +71,8 @@ export const api = {
   policyApply: (body: PolicyRequest) => request<Document>("/policy", { method: "PUT", body }),
   health: () => request<{ statuses: OutboundHealth[] }>("/outbounds/health"),
   diagnose: (body: object) => request<Operation>("/diagnostics", { method: "POST", body }),
+  diagnoseDNS: (body: { name: string; type: string }) =>
+    request<Operation>("/diagnostics/dns", { method: "POST", body }),
   cancel: (id: string) =>
     request<Json>(`/diagnostics/${encodeURIComponent(id)}/cancel`, { method: "POST", body: {} }),
   logs: (values: Record<string, string | undefined>, signal?: AbortSignal) =>

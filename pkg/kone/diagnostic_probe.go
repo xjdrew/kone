@@ -36,6 +36,20 @@ type DiagnosticResult struct {
 	DNSType                string              `json:"dns_type,omitempty"`
 	DNSRCode               string              `json:"dns_rcode,omitempty"`
 	DNSTruncated           bool                `json:"dns_truncated,omitempty"`
+	DNSAnswers             []string            `json:"dns_answers,omitempty"`
+	DNSVirtualAddresses    []string            `json:"dns_virtual_addresses,omitempty"`
+}
+
+// NormalizeConnectionTarget accepts a bare host with the TCP default port 80.
+// Explicit ports are never replaced, and malformed ports remain errors.
+func NormalizeConnectionTarget(target string) (string, error) {
+	target = strings.TrimSpace(target)
+	if !strings.Contains(target, ":") {
+		target = net.JoinHostPort(target, "80")
+	} else if ip, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(target, "["), "]")); err == nil {
+		target = net.JoinHostPort(ip.String(), "80")
+	}
+	return target, ValidateDiagnosticTarget(target)
 }
 
 func ValidateDiagnosticTarget(target string) error {

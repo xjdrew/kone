@@ -48,12 +48,16 @@ stack = "system"
 # [dns] 整段可省略；默认在启动前读取当前系统 DNS，用于真实域名解析。
 # 系统上游会固定到本次运行，规则热更新不会重读已指向 KONE 的网卡 DNS。
 # [dns]
-# 可选系统 DNS 引导：Linux 使用 resolved 自有 link，macOS 使用临时解析服务，Windows 使用自有 NRPT 根规则。
-# Linux 需要已有 resolved stub；三平台均验证真实上游，只恢复自有状态，不覆盖物理/VPN DNS。
-# Windows 要求监听端口为 53；已有根规则、域策略或严格加密策略冲突时拒绝启用。
-# CLI 默认 false；三平台管理模式首次默认 true，可在界面关闭，既有选择保持不变。
+# 模式：host 接管本机 DNS；gate 只向局域网提供 DNS，系统 DNS 保持不变。
+# 管理模式新配置默认 host。空值仅兼容旧 CLI 配置，此时由 system 决定是否接管。
+# mode = ""
+# Gate 监听的本机地址，通常选择局域网网卡 IP；避免 0.0.0.0:53 与系统 stub 端口冲突。
+# listen-address = "192.168.1.2"
+# 兼容旧配置的开关；显式 mode 优先，界面不再使用此开关。
 # system = false
-# 上游 DNS 地址；省略或 [] 使用系统 DNS，不内置公共 DNS 作为回退。
+# Host：Linux 优先 resolved；其他 Linux 临时替换本机 resolv.conf 入口，停止后恢复原文件/符号链接。
+# macOS 使用临时解析服务，Windows 使用自有 NRPT；启动前固定原始上游，避免回环。
+# 上游省略或 [] 时读取系统 DNS。Host/Gate 获取不到时告警并使用 Google/Cloudflare 公共默认值。
 # 可指定 IPv4/IPv6 地址和端口，例如 ["1.1.1.1", "[2001:4860:4860::8888]:53"]。
 # 不得指向 KONE 虚拟网段；IPv6 上游地址不代表支持 IPv6 流量代理。
 # servers = []

@@ -80,6 +80,8 @@ export interface DNSRule {
   reason?: string;
 }
 export interface DNSConfig {
+  mode?: "host" | "gate";
+  "listen-address"?: string;
   system: boolean;
   "listen-port": number;
   ttl: number;

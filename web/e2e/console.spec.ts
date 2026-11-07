@@ -423,59 +423,104 @@ test("@compat generic diagnostics keep per-outbound progress and expand one resu
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test("@compat diagnostic history survives reload and DNS keeps server and query separate", async ({
+test("@compat diagnostic history survives reload and DNS compares system and KONE resolution", async ({
   page,
 }) => {
   const data = await fixture(page);
   await page.goto("/#/outbounds");
   await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "Target · domain or IP:port" })
-    .fill("internal.example:9443");
+  await page.getByRole("combobox", { name: "Target · domain or IP:port" }).fill("internal.example");
   await page.getByRole("button", { name: "Start comparison", exact: true }).click();
   await expect.poll(() => data.operations.length).toBe(1);
+  expect(
+    data.requests.find((entry) => entry.path === "/diagnostics" && entry.method === "POST")?.body,
+  ).toMatchObject({ target: "internal.example:80", tls: false });
   await page.reload();
   await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
   await page.getByRole("button", { name: "Recent targets", exact: true }).click();
-  await page.getByRole("option", { name: /internal.example:9443/ }).click();
+  const trigger = page.getByRole("button", { name: "Recent targets", exact: true });
+  await expect(trigger.locator("svg")).toBeVisible();
+  expect(await trigger.evaluate((el) => getComputedStyle(el).appearance)).toBe("none");
+  await page.getByRole("option", { name: /internal.example:80/ }).click();
   await expect(page.getByRole("combobox", { name: "Target · domain or IP:port" })).toHaveValue(
-    "internal.example:9443",
+    "internal.example:80",
   );
   await page.getByRole("button", { name: "DNS query", exact: true }).click();
   await expect(page.getByLabel("Verify target TLS")).not.toBeVisible();
-  const server = page.getByRole("combobox", { name: "DNS server · IP or domain:port" });
-  await expect(server).toHaveValue("");
-  await server.fill("192.168.1.53:53");
-  await page.getByLabel("Query name", { exact: true }).fill("service.internal");
+  const name = page.getByRole("combobox", { name: "Query name" });
+  await expect(name).toHaveValue("example.com");
+  await expect(page.getByLabel("Outbound", { exact: true })).not.toBeVisible();
+  await name.fill("service.internal");
   await page.getByLabel("DNS query type", { exact: true }).selectOption("AAAA");
-  await page.getByRole("button", { name: "Compare DNS queries" }).click();
+  await page.getByRole("button", { name: "Compare DNS", exact: true }).click();
   await expect.poll(() => data.operations.length).toBe(2);
-  const body = data.requests
-    .filter((entry) => entry.path === "/diagnostics" && entry.method === "POST")
-    .at(-1)?.body;
-  expect(body).toMatchObject({
-    target: "192.168.1.53:53",
-    protocol: "udp",
-    tls: false,
-    dns_name: "service.internal",
-    dns_type: "AAAA",
+  expect(data.requests.filter((entry) => entry.path === "/diagnostics/dns").at(-1)?.body).toEqual({
+    name: "service.internal",
+    type: "AAAA",
   });
-  await expect(
-    page.locator("summary").filter({ hasText: "192.168.1.53:53" }).first(),
-  ).toContainText("service.internal");
+  const summaries = page.locator("summary").filter({ hasText: "service.internal" });
+  await expect(summaries).toHaveCount(2);
+  await expect(summaries.nth(0)).toContainText("System DNS");
+  await expect(summaries.nth(1)).toContainText("KONE DNS");
+  await expect(summaries.nth(1)).toContainText("<1 ms");
+  await summaries.nth(1).click();
+  await expect(page.getByText("Saved settings · capture paused", { exact: true })).toBeVisible();
+  await expect(page.getByText("example.com. 30 IN AAAA fd00::4", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Recent targets", exact: true }).click();
+  await expect(page.getByRole("option", { name: /service.internal/ })).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Connection", exact: true }).click();
   await expect(page.getByRole("combobox", { name: "Target · domain or IP:port" })).toHaveValue(
-    "internal.example:9443",
+    "internal.example:80",
   );
   await page.getByRole("button", { name: "Recent targets", exact: true }).click();
   await expect(
     page.getByRole("listbox", { name: "Recent targets" }).getByRole("option"),
   ).toHaveCount(3);
-  await page.getByRole("option", { name: /internal.example:9443/ }).click();
+  await page.getByRole("option", { name: /internal.example:80/ }).click();
   await page.getByRole("button", { name: "Start comparison", exact: true }).click();
   await expect.poll(() => data.operations.length).toBe(3);
   await page.getByRole("button", { name: "Recent targets", exact: true }).click();
   await expect(
     page.getByRole("listbox", { name: "Recent targets" }).getByRole("option"),
   ).toHaveCount(3);
+});
+
+test("@compat Resolvers separates Host and Gate from automatic upstream selection", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  data.state.state = "paused";
+  data.state.capture_locked = false;
+  await page.goto("/#/settings?section=resolvers");
+  await expect(page.getByRole("button", { name: "Host · this PC", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.getByLabel("Discovered upstream DNS")).toContainText("192.168.40.1:53");
+  await expect(page.getByLabel("LAN listener address", { exact: true })).not.toBeVisible();
+  await page.getByRole("button", { name: "Gate · LAN", exact: true }).click();
+  await expect(page.getByLabel("LAN listener address", { exact: true })).toHaveValue(
+    "192.168.40.2",
+  );
+  await expect(page.getByLabel("Port", { exact: true })).toHaveValue("53");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => data.document.config.dns.mode).toBe("gate");
+  expect(data.document.config.dns.system).toBe(false);
+  expect(data.document.config.dns.servers ?? []).toEqual([]);
+  data.dnsFallback = true;
+  await page.getByRole("button", { name: "Refresh discovery", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("No usable system DNS was discovered");
+  await expect(page.getByLabel("Discovered upstream DNS")).toContainText("8.8.8.8:53");
+  await page.getByRole("button", { name: "Custom servers", exact: true }).click();
+  const servers = page.getByRole("textbox", { name: "Upstream DNS servers", exact: true });
+  await expect(servers).toContainText("8.8.8.8:53");
+  await servers.fill("192.168.40.53");
+  await page.getByRole("button", { name: "Host · this PC", exact: true }).click();
+  await expect(page.getByLabel("LAN listener address", { exact: true })).not.toBeVisible();
+  await expect(servers).toHaveValue("192.168.40.53");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => data.document.config.dns.mode).toBe("host");
+  expect(data.document.config.dns.system).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

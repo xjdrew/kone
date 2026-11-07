@@ -261,7 +261,7 @@ test("diagnostic history keeps 20 recent unique targets and round-trips test par
   expect(history.filter((entry) => entry.target === "host20.example:443")).toHaveLength(1);
   history = rememberDiagnostic(history, {
     mode: "dns",
-    target: "192.168.1.1:53",
+    target: "Internal.EXAMPLE.",
     tls: false,
     dnsName: "Internal.EXAMPLE.",
     dnsType: "AAAA",
@@ -272,6 +272,22 @@ test("diagnostic history keeps 20 recent unique targets and round-trips test par
   expect(readDiagnosticHistory('[{"mode":"dns","target":"secret@host:53","tls":false}]')).toEqual(
     [],
   );
+  expect(
+    readDiagnosticHistory(
+      JSON.stringify([
+        { mode: "dns", target: "192.168.1.1:53", tls: false, dnsName: "example.com", dnsType: "A" },
+      ]),
+    ),
+  ).toEqual([]);
+  for (const [input, expected] of [
+    ["example.com", "example.com:80"],
+    ["192.0.2.1", "192.0.2.1:80"],
+    ["::1", "[::1]:80"],
+    ["[::1]:8443", "[::1]:8443"],
+    ["example.com:0", "example.com:0"],
+    ["[::1]:0", "[::1]:0"],
+  ])
+    expect(diagnosticRequest(input!, "direct", "tcp", false, "", "").target).toBe(expected);
   expect(diagnosticElapsed(0)).toBe("<1 ms");
   expect(diagnosticElapsed(125)).toBe("125 ms");
   expect(diagnosticElapsed(undefined)).toBe("—");

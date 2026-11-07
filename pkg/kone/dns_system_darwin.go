@@ -50,7 +50,7 @@ func darwinSCRead(ctx context.Context, script string) ([]byte, error) {
 }
 
 func CheckSystemDNS(ctx context.Context, cfg DNSConfig) error {
-	if !cfg.System {
+	if !cfg.SystemEnabled() {
 		return nil
 	}
 	servers := append([]string(nil), cfg.Servers...)
@@ -89,7 +89,7 @@ func (n systemNetwork) ConfigureSystemDNS(ctx context.Context, device Device, co
 }
 
 func (n systemNetwork) ConfigureSystemDNSLease(ctx context.Context, device Device, core CoreConfig, cfg DNSConfig) (Cleanup, <-chan error, error) {
-	if !cfg.System {
+	if !cfg.SystemEnabled() {
 		return nil, nil, nil
 	}
 	if err := CheckSystemDNS(ctx, cfg); err != nil {

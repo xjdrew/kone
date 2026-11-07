@@ -378,6 +378,15 @@ func NewDns(one *One, cfg DNSConfig) (*Dns, error) {
 	d.server, d.tcpServer = makeServer("udp"), makeServer("tcp")
 	configureDNSListenerFamilies(d)
 	d.ipv6 = d.ipv6Servers(cfg)
+	if cfg.Mode == "gate" {
+		address := net.JoinHostPort(cfg.ListenAddress, strconv.Itoa(int(cfg.ListenPort)))
+		d.server.Addr, d.tcpServer.Addr = address, address
+		d.server.Net, d.tcpServer.Net = "udp4", "tcp4"
+		if net.ParseIP(cfg.ListenAddress).To4() == nil {
+			d.server.Net, d.tcpServer.Net = "udp6", "tcp6"
+		}
+		d.ipv6 = nil // Gate binds the explicitly selected LAN address, not a TUN address.
+	}
 	client := dns.Client{UDPSize: cfg.PacketSize, Timeout: time.Duration(cfg.ReadTimeout+cfg.WriteTimeout) * time.Second, ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
 	udpClient, tcpClient := client, client
 	udpClient.Net, tcpClient.Net = "udp", "tcp"

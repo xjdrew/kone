@@ -1,3 +1,4 @@
+import { ResolverFields } from "./resolvers";
 import { AccessSettings } from "./access";
 import { useEffect, useState } from "react";
 import { Link, useBlocker, useNavigate, useSearch } from "@tanstack/react-router";
@@ -102,8 +103,6 @@ function Configuration({ initial, section }: { initial: Document; section: strin
     dns = draft.config.dns;
   const changeCore = (key: string, value: string | boolean) =>
     setDraft({ ...draft, config: { ...draft.config, core: { ...core, [key]: value } } });
-  const changeDNS = (key: string, value: string | number | boolean | string[]) =>
-    setDraft({ ...draft, config: { ...draft.config, dns: { ...dns, [key]: value } } });
   async function save() {
     setBusy(true);
     setError(null);
@@ -143,7 +142,9 @@ function Configuration({ initial, section }: { initial: Document; section: strin
         <h2>{t(`settings.${section}`)}</h2>
         <span className="mono muted">v{base.version}</span>
       </div>
-      <p className="inlineNote">{t("settings.captureHint")}</p>
+      <p className="inlineNote">
+        {t(section === "resolvers" ? "resolvers.saveHint" : "settings.captureHint")}
+      </p>
       <fieldset disabled={!context.admin || busy} className={styles.fieldset}>
         {section === "capture" ? (
           <>
@@ -241,138 +242,10 @@ function Configuration({ initial, section }: { initial: Document; section: strin
             )}
           </>
         ) : (
-          <div className="formStack">
-            <Toggle
-              checked={dns.system}
-              onChange={(value) => changeDNS("system", value)}
-              label={t("settings.systemDNS")}
-            />
-            <Field label={t("settings.servers")} help={t("settings.serversHint")}>
-              <textarea
-                className="mono"
-                value={(dns.servers ?? []).join("\n")}
-                onChange={(event) => changeDNS("servers", event.target.value.split("\n"))}
-              />
-            </Field>
-            <div className="formGrid">
-              {(
-                [
-                  "listen-port",
-                  "read-timeout",
-                  "write-timeout",
-                  "ttl",
-                  "packet-size",
-                  "history-limit",
-                  "history-retention",
-                  "cache-limit",
-                ] as const
-              ).map((key) => (
-                <Field key={key} label={t(`settings.dns.${key}`)}>
-                  <input
-                    type="number"
-                    min="0"
-                    value={dns[key]}
-                    onChange={(event) => changeDNS(key, Number(event.target.value))}
-                  />
-                </Field>
-              ))}
-            </div>
-            <h3>{t("settings.privateDNS")}</h3>
-            {(dns.rules ?? []).map((rule, index) => (
-              <div key={index} className={styles.dnsRule}>
-                <Field label={t("rules.pattern")}>
-                  <input
-                    value={rule.suffix}
-                    onChange={(event) =>
-                      setDraft({
-                        ...draft,
-                        config: {
-                          ...draft.config,
-                          dns: {
-                            ...dns,
-                            rules: dns.rules!.map((item, i) =>
-                              i === index ? { ...item, suffix: event.target.value } : item,
-                            ),
-                          },
-                        },
-                      })
-                    }
-                  />
-                </Field>
-                <Field label={t("settings.servers")}>
-                  <input
-                    className="mono"
-                    value={rule.servers.join(",")}
-                    onChange={(event) =>
-                      setDraft({
-                        ...draft,
-                        config: {
-                          ...draft.config,
-                          dns: {
-                            ...dns,
-                            rules: dns.rules!.map((item, i) =>
-                              i === index
-                                ? {
-                                    ...item,
-                                    servers: event.target.value.split(","),
-                                  }
-                                : item,
-                            ),
-                          },
-                        },
-                      })
-                    }
-                  />
-                </Field>
-                <Field label={t("settings.interface")}>
-                  <input
-                    value={rule.interface ?? ""}
-                    onChange={(event) =>
-                      setDraft({
-                        ...draft,
-                        config: {
-                          ...draft.config,
-                          dns: {
-                            ...dns,
-                            rules: dns.rules!.map((item, i) =>
-                              i === index ? { ...item, interface: event.target.value } : item,
-                            ),
-                          },
-                        },
-                      })
-                    }
-                  />
-                </Field>
-                <Button
-                  tone="danger"
-                  onClick={() =>
-                    setDraft({
-                      ...draft,
-                      config: {
-                        ...draft.config,
-                        dns: { ...dns, rules: dns.rules!.filter((_, i) => i !== index) },
-                      },
-                    })
-                  }
-                >
-                  {t("common.delete")}
-                </Button>
-              </div>
-            ))}
-            <Button
-              onClick={() =>
-                setDraft({
-                  ...draft,
-                  config: {
-                    ...draft.config,
-                    dns: { ...dns, rules: [...(dns.rules ?? []), { suffix: "", servers: [] }] },
-                  },
-                })
-              }
-            >
-              {t("common.add")}
-            </Button>
-          </div>
+          <ResolverFields
+            dns={dns}
+            onChange={(value) => setDraft({ ...draft, config: { ...draft.config, dns: value } })}
+          />
         )}
       </fieldset>
       <ErrorNotice error={error} />

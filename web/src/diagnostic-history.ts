@@ -1,4 +1,5 @@
 import { targetHost } from "./domain";
+import { connectionTarget } from "./diagnostic-request";
 
 export interface DiagnosticHistoryEntry {
   mode: "connection" | "dns";
@@ -6,6 +7,7 @@ export interface DiagnosticHistoryEntry {
   tls: boolean;
   dnsName?: string;
   dnsType?: "A" | "AAAA";
+  dnsComparison?: boolean;
 }
 
 export const diagnosticHistoryKey = "kone.diagnostic-history.v1";
@@ -25,15 +27,17 @@ export function rememberDiagnostic(
 ): DiagnosticHistoryEntry[] {
   const next = {
     ...entry,
-    target: normalizedTarget(entry.target),
+    target: normalizedTarget(
+      entry.mode === "connection" ? connectionTarget(entry.target) : entry.target,
+    ),
     ...(entry.mode === "dns"
-      ? { dnsName: entry.dnsName?.trim().toLowerCase().replace(/\.$/, "") }
+      ? { dnsName: entry.target.trim().toLowerCase().replace(/\.$/, ""), dnsComparison: true }
       : {}),
   };
   const identity = (item: DiagnosticHistoryEntry) =>
     JSON.stringify([
       item.mode,
-      normalizedTarget(item.target),
+      normalizedTarget(item.mode === "connection" ? connectionTarget(item.target) : item.target),
       item.mode === "dns" ? item.dnsName : "",
       item.mode === "dns" ? item.dnsType : "",
     ]);
@@ -56,7 +60,8 @@ export function readDiagnosticHistory(raw: string | null): DiagnosticHistoryEntr
           !/[\s/@?#\\]/.test(item.target) &&
           typeof item.tls === "boolean" &&
           (item.mode !== "dns" ||
-            (typeof item.dnsName === "string" &&
+            (item.dnsComparison === true &&
+              typeof item.dnsName === "string" &&
               item.dnsName.length <= 253 &&
               ["A", "AAAA"].includes(item.dnsType))),
       );
