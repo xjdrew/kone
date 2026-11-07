@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/xjdrew/kone/pkg/control"
-	"golang.org/x/sys/windows"
 )
 
 const routeConsoleTraceEnvironment = "KONE_TEST_ROUTE_CONSOLE_TRACE"
@@ -22,25 +20,11 @@ func init() {
 	if trace == "" || !strings.EqualFold(filepath.Base(os.Args[0]), "route.exe") {
 		return
 	}
-	// This copied test binary stands in for route.exe. It never queries or
-	// changes the host route table, and reports its own actual console state.
-	if len(os.Args) != 3 || os.Args[1] != "print" || os.Args[2] != "-4" {
-		os.Exit(2)
-	}
-	window, _, _ := windows.NewLazySystemDLL("kernel32.dll").NewProc("GetConsoleWindow").Call()
-	previous, _ := os.ReadFile(trace)
-	file, err := os.OpenFile(trace, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-	if err != nil {
+	// A PATH sentinel: periodic inspection must use GetIpForwardTable2,
+	// never a subprocess that can create a console window.
+	if err := os.WriteFile(trace, []byte("route.exe invoked"), 0600); err != nil {
 		os.Exit(3)
 	}
-	_, err = fmt.Fprintf(file, "%t\n", window != 0)
-	closeErr := file.Close()
-	if err != nil || closeErr != nil {
-		os.Exit(4)
-	}
-	// The second read changes only this simulated result, so the real watcher
-	// emits a route change and exits after exercising its periodic command.
-	fmt.Fprintf(os.Stdout, "simulated-route-generation-%d\n", len(previous))
 	os.Exit(0)
 }
 
@@ -60,19 +44,24 @@ func TestWindowsPeriodicNetworkInspectionDoesNotCreateConsole(t *testing.T) {
 	trace := filepath.Join(directory, "console-states.txt")
 	t.Setenv(routeConsoleTraceEnvironment, trace)
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
-	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 2200*time.Millisecond)
 	defer cancel()
 	changes := control.WatchNetworkChanges(ctx, "", time.Second)
-	select {
-	case change, open := <-changes:
-		require.True(t, open, "the periodic route inspection must run")
-		require.Equal(t, "environment_changed", change.Kind)
-		require.Contains(t, change.Changed, "routes")
-		require.Empty(t, change.Error)
-	case <-ctx.Done():
-		t.Fatal("periodic network inspection did not finish")
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case change, open := <-changes:
+			if !open {
+				_, err := os.Stat(trace)
+				require.ErrorIs(t, err, os.ErrNotExist, "native inspection must not execute route.exe")
+				return
+			}
+			// A real host change may end the watcher early; failed native reads
+			// are still failures, not permission to substitute shell commands.
+			require.Equal(t, "environment_changed", change.Kind)
+			require.Empty(t, change.Error)
+		case <-deadline:
+			t.Fatal("periodic network inspection did not stop after cancellation")
+		}
 	}
-	states, err := os.ReadFile(trace)
-	require.NoError(t, err)
-	require.Equal(t, "false\nfalse\n", string(states), "initial and periodic inspection must both have no console")
 }

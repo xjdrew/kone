@@ -5,7 +5,7 @@
 .graph svg {
   display: block;
   width: 100%;
-  min-width: 700px;
+  min-width: 1080px;
   max-height: 560px;
 }
 .heading {
@@ -29,7 +29,7 @@
 }
 .node text {
   fill: var(--text);
-  font: 11px var(--mono);
+  font: 12px var(--mono);
   paint-order: stroke;
   stroke: var(--bg);
   stroke-width: 3px;

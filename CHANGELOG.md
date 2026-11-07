@@ -14,6 +14,8 @@
 
 ## Bugfixes
 
+- Keep graph labels readable on narrow screens and inspect Windows route changes without launching console commands.
+
 - Preserve the helper's final cleanup logs when stopping capture.
 
 ## Changes
