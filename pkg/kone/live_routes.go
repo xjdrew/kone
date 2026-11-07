@@ -28,6 +28,11 @@ func captureRoutes(cfg CoreConfig, rule *Rule) []string {
 		if !ok || rule.OutboundType(p.Proxy()) == OutboundDirect {
 			continue
 		}
+		if slices.ContainsFunc(rule.protected, func(protected netip.Prefix) bool {
+			return protected.Bits() <= p.prefix.Bits() && protected.Contains(p.prefix.Addr())
+		}) {
+			continue
+		}
 		if p.prefix.Addr().Is6() && cfg.IPv6Network == "" {
 			continue
 		}

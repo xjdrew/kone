@@ -153,7 +153,10 @@ func NewOutbounds(config []OutboundConfig) (*Outbounds, error) {
 func (p *Outbounds) bypassEndpoints(rule *Rule) {
 	for _, entry := range p.entries {
 		if entry.kind == OutboundProxy && !entry.disabled {
-			rule.DirectDomain(entry.proxy.Url.Hostname())
+			// The proxy's transport bypasses capture through its bound dialer.
+			// Bootstrap DNS needs real addresses; unrelated business connections
+			// to this host still follow the user's ordered routing rules.
+			rule.endpointDNS[normalizeDomain(entry.proxy.Url.Hostname())] = true
 		}
 	}
 }

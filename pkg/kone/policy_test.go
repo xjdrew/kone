@@ -32,24 +32,46 @@ func TestBasePolicyValidationAndLegacyRecognition(t *testing.T) {
 	require.NoError(t, cfg.ValidatePolicy(), "legacy configurations retain existing behavior")
 }
 
-func TestPolicyProtectsLANBeforeUserRulesWithoutMistakingFakeIP(t *testing.T) {
+func TestPolicyProtectsHostsButAllowsExplicitPrivateProxyRules(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Policy.Mode = "proxy-first"
-	cfg.Rule = []RuleConfig{{Schema: "IP-CIDR", Pattern: "192.168.0.0/16", Outbound: "proxy"}, {Schema: "FINAL", Outbound: "proxy"}}
-	rule := NewRule(cfg.Rule, []OutboundConfig{{Name: "proxy", URL: "http://127.0.0.1:7078"}})
+	outbounds := []OutboundConfig{{Name: "proxy", URL: "http://127.0.0.1:7078"}}
+	cfg.Rule = []RuleConfig{{Schema: "IP-CIDR", Pattern: "192.168.0.0/16", Outbound: "proxy"}}
+	cfg.Rule = append(cfg.Rule, DefaultLANRules(cfg.Core)...)
+	cfg.Rule = append(cfg.Rule, RuleConfig{Schema: "FINAL", Outbound: "proxy"})
+	rule := NewRule(cfg.Rule, outbounds)
 	rule.protectPolicy(cfg)
-	for _, address := range []string{"127.0.0.1", "192.168.2.9", "172.20.0.8", "169.254.1.1", "fd00::5", "fe80::1"} {
+	for _, address := range []string{"127.0.0.1", "::1"} {
 		decision := rule.Decide(net.ParseIP(address), "tcp", 443)
-		require.True(t, decision.Protected, address)
+		require.True(t, decision.Protected)
 		require.Equal(t, BuiltinDirect, decision.Outbound)
 	}
-	decision := rule.Decide(net.ParseIP("10.192.0.5"), "tcp", 443)
-	require.False(t, decision.Protected, "virtual pool must be restored before classifying the business destination")
-	require.Equal(t, "proxy", rule.Decide(net.ParseIP("149.154.167.50"), "tcp", 443).Outbound)
+	for _, address := range []string{"192.168.2.9", "149.154.167.50"} {
+		decision := rule.Decide(net.ParseIP(address), "tcp", 443)
+		require.False(t, decision.Protected)
+		require.Equal(t, "proxy", decision.Outbound)
+	}
+	for _, address := range []string{"172.20.0.8", "169.254.1.1", "fd00::5", "fe80::1"} {
+		decision := rule.Decide(net.ParseIP(address), "tcp", 443)
+		require.False(t, decision.Protected)
+		require.Equal(t, BuiltinDirect, decision.Outbound)
+		require.Equal(t, "policy-lan", decision.RuleSource)
+	}
 	message := &dns.Msg{Answer: []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: "printer.local.", Rrtype: dns.TypeA}, A: net.ParseIP("192.168.2.9")}}}
-	decision = rule.DecideDNS("printer.local", message, "tcp", 443)
-	require.True(t, decision.Protected)
-	require.Equal(t, BuiltinDirect, decision.Outbound)
+	require.Equal(t, "proxy", rule.DecideDNS("printer.local", message, "tcp", 443).Outbound)
+	rule = NewRule([]RuleConfig{{Schema: "FINAL", Outbound: "proxy"}}, outbounds)
+	rule.protectPolicy(cfg)
+	for _, address := range []string{"192.168.2.9", "172.20.0.8", "fd00::5", "10.192.0.5"} {
+		require.Equal(t, "proxy", rule.Decide(net.ParseIP(address), "tcp", 443).Outbound, "deleting a direct rule must take effect")
+	}
+}
+
+func TestLANRuleTemplateDeduplicatesOverlappingNetworks(t *testing.T) {
+	rules := lanRules([]string{"192.168.1.2/24", "192.168.0.0/16", "192.168.1.0/24", "fd00::/64", "fc00::/7"})
+	require.Len(t, rules, 2)
+	require.Equal(t, "192.168.0.0/16", rules[0].Pattern)
+	require.Equal(t, "fc00::/7", rules[1].Pattern)
+	require.Equal(t, "IP-CIDR6", rules[1].Schema)
 }
 
 func TestExplicitPolicyRejectsBrokenDefaultsAndRetainsLegacyIntent(t *testing.T) {

@@ -23,6 +23,10 @@ type routeNode struct {
 type routeIndex struct{ nodes []routeNode }
 
 func newRouteIndex(routes []policyRoute) *routeIndex {
+	return newRouteIndexWithDefault(routes, false)
+}
+
+func newRouteIndexWithDefault(routes []policyRoute, includeDefault bool) *routeIndex {
 	index := &routeIndex{nodes: make([]routeNode, 3)} // zero is absent, 1 IPv4, 2 IPv6
 	// The lowest metric wins when several routes have the same prefix.
 	slices.SortStableFunc(routes, func(a, b policyRoute) int {
@@ -42,7 +46,7 @@ func newRouteIndex(routes []policyRoute) *routeIndex {
 			route.Prefix = netip.PrefixFrom(route.Prefix.Addr().Unmap(), route.Prefix.Bits()-96)
 		}
 		address := route.Prefix.Addr().Unmap()
-		if !route.Prefix.IsValid() || route.Prefix.Bits() == 0 {
+		if !route.Prefix.IsValid() || route.Prefix.Bits() == 0 && !includeDefault {
 			continue
 		}
 		root, offset := 2, 0
@@ -70,7 +74,7 @@ func (index *routeIndex) device(address netip.Addr) int {
 	if address.Is4() {
 		root, offset, bits = 1, 96, 32
 	}
-	bytes, selected := address.As16(), 0
+	bytes, selected := address.As16(), index.nodes[root].device
 	for bit := 0; bit < bits; bit++ {
 		root = index.nodes[root].children[(bytes[(bit+offset)/8]>>(7-(bit+offset)%8))&1]
 		if root == 0 {
@@ -87,9 +91,6 @@ func (index *routeIndex) device(address netip.Addr) int {
 // real route's interface; proxy transports keep the explicit physical uplink.
 // Lookups allocate nothing and are bounded by address width, not table size.
 func policyDirectDialer(base *net.Dialer, cfg *KoneConfig) (*net.Dialer, error) {
-	if cfg.Policy.Mode == "" || cfg.Policy.Mode == "custom" {
-		return nil, nil
-	}
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil, fmt.Errorf("inspect policy interfaces: %w", err)
@@ -100,11 +101,17 @@ func policyDirectDialer(base *net.Dialer, cfg *KoneConfig) (*net.Dialer, error) 
 		if device.Flags&net.FlagUp == 0 || device.Name == cfg.Core.Tun {
 			continue
 		}
-		devices[device.Index] = device
 		addresses, err := device.Addrs()
 		if err != nil {
 			return nil, fmt.Errorf("inspect policy addresses: %w", err)
 		}
+		if slices.ContainsFunc(addresses, func(address net.Addr) bool {
+			prefix, err := netip.ParsePrefix(address.String())
+			return err == nil && isSyntheticPrefix(prefix, cfg.Core)
+		}) {
+			continue
+		}
+		devices[device.Index] = device
 		for _, address := range addresses {
 			if prefix, err := netip.ParsePrefix(address.String()); err == nil {
 				hosts[prefix.Addr().Unmap()] = true
@@ -122,7 +129,7 @@ func policyDirectDialer(base *net.Dialer, cfg *KoneConfig) (*net.Dialer, error) 
 		_, exists := devices[route.Interface]
 		return !exists || isSyntheticPrefix(route.Prefix, cfg.Core)
 	})
-	index := newRouteIndex(routes)
+	index := newRouteIndexWithDefault(routes, base.Control == nil)
 	dialer := *base
 	dialer.Control = func(network, address string, connection syscall.RawConn) error {
 		host, _, _ := net.SplitHostPort(address)
@@ -133,6 +140,9 @@ func policyDirectDialer(base *net.Dialer, cfg *KoneConfig) (*net.Dialer, error) 
 			}
 			if device, exists := devices[index.device(ip)]; exists {
 				return control.BindToInterface0(nil, connection, network, address, device.Name, device.Index, false)
+			}
+			if base.Control == nil {
+				return fmt.Errorf("no native route to %s before capture", ip)
 			}
 		}
 		if base.Control != nil {

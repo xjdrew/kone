@@ -607,7 +607,14 @@ kbd {
     display: none;
   }
   .workspaceNav {
-    gap: 16px;
+    gap: 24px;
+    order: 3;
+    flex-basis: 100%;
+    min-height: 38px;
+  }
+  .topbar {
+    row-gap: 0;
+    padding-top: 6px;
   }
   .topActions {
     gap: 6px;

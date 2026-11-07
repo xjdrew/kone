@@ -109,7 +109,8 @@ export function Shell() {
       id: view,
       label: t(`nav.${view}`),
       run: () => {
-        void navigate({ to: "/policy", search: { view } });
+        if (view === "outbounds") void navigate({ to: "/outbounds" });
+        else void navigate({ to: "/policy", search: { view: "rules" } });
       },
     })),
     {
@@ -199,6 +200,12 @@ export function Shell() {
             aria-current={location.pathname === "/policy" ? "page" : undefined}
           >
             {t("nav.policy")}
+          </Link>
+          <Link
+            to="/outbounds"
+            aria-current={location.pathname === "/outbounds" ? "page" : undefined}
+          >
+            {t("nav.outbounds")}
           </Link>
         </nav>
         <div className="hostIdentity">

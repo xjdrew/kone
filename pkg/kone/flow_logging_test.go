@@ -61,6 +61,7 @@ func TestUDPWriteFailureIsNotReplacedByAReadSideEOF(t *testing.T) {
 	one.policy.Load().outbounds.dial = func(context.Context, string, string) (net.Conn, error) {
 		return &udpWriteFailureThenEOF{written: make(chan struct{}), failure: failure}, nil
 	}
+	one.policy.Load().outbounds.directDial = one.policy.Load().outbounds.dial
 	incoming, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	require.NoError(t, err)
 	defer incoming.Close()
@@ -123,6 +124,7 @@ func TestActualTCPFlowFailuresAreVisibleAtInfoAndNeverExposeCredentials(t *testi
 				}
 				return &flowLogTransport{reader: strings.NewReader(scenario.response), fail: scenario.transferError}, nil
 			}
+			one.policy.Load().outbounds.directDial = one.policy.Load().outbounds.dial
 			record := one.dnsTable.Set("example.com", "mono")
 			client, accepted := net.Pipe()
 			defer client.Close()
@@ -172,6 +174,7 @@ func TestActualUDPAssociationAndTransferFailuresAreVisibleAtInfo(t *testing.T) {
 			}
 			return nil, failure
 		}
+		one.policy.Load().outbounds.directDial = one.policy.Load().outbounds.dial
 		incoming, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 		require.NoError(t, err)
 		one.flows.NewPacketConnectionEx(t.Context(), bufio.NewPacketConn(incoming), M.ParseSocksaddr("192.0.2.2:40000"), M.ParseSocksaddr("192.0.2.9:443"), nil)

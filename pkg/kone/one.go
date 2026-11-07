@@ -105,6 +105,14 @@ func cloneConfig(cfg *KoneConfig) *KoneConfig {
 			enabled := *value
 			copy.Outbounds[i].Enabled = &enabled
 		}
+		if value := copy.Outbounds[i].CheckEnabled; value != nil {
+			checkEnabled := *value
+			copy.Outbounds[i].CheckEnabled = &checkEnabled
+		}
+		if value := copy.Outbounds[i].CheckTLS; value != nil {
+			checkTLS := *value
+			copy.Outbounds[i].CheckTLS = &checkTLS
+		}
 	}
 	copy.Rule = slices.Clone(cfg.Rule)
 	for i := range copy.Rule {
@@ -214,6 +222,13 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	direct, err := policyDirectDialer(dialer, cfg)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.Core.OutboundInterface == "" && direct != nil {
+		// Snapshot native egress before installing selective capture routes.
+		// A rule may now proxy a private address or a configured endpoint; our
+		// own proxy and DNS sockets must still bypass those new TUN routes.
+		one.dns.setDialer(direct)
+		p.dial = one.endpointDialer(direct)
 	}
 	if direct != nil {
 		p.directDial = one.endpointDialer(direct)

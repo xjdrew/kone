@@ -58,6 +58,9 @@ export interface Outbound {
   url: string;
   enabled?: boolean;
   "udp-fallback"?: string;
+  "check-enabled"?: boolean;
+  "check-target"?: string;
+  "check-tls"?: boolean;
 }
 export interface CoreConfig {
   tun: string;
@@ -135,6 +138,9 @@ export interface Validation {
   issues: Notice[];
 }
 export interface Operation {
+  target?: string;
+  outbounds?: string[];
+  protocol?: string;
   id: string;
   kind: string;
   status: string;
@@ -312,6 +318,7 @@ export interface PolicyPlan extends Validation {
   udp: string;
   protection: PolicyState["protection"];
   preserved_rules: number;
+  added_rules?: number;
 }
 export interface LogEntry {
   id: string;
@@ -359,7 +366,11 @@ export interface OutboundHealth {
   stage: string;
   message: string;
   connect_latency_ms?: number;
-  expires?: string;
+  checked_at?: string;
+  expires_at?: string;
+  duration_ms?: number;
+  target?: string;
+  automatic?: boolean;
   host?: Json;
   protocols?: Json;
   progress?: Json;

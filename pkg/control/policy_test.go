@@ -2,11 +2,46 @@ package control
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"github.com/xjdrew/kone/pkg/kone"
 )
+
+func TestGlobalPolicyMigratesLANRulesOnceAndHonorsDeletion(t *testing.T) {
+	directory := t.TempDir()
+	cfg := kone.DefaultConfig()
+	cfg.Policy = kone.PolicyConfig{Mode: "proxy-first", IPv4Only: true}
+	cfg.Core.AutoRoute, cfg.Core.OutboundInterface = true, "fixture-uplink"
+	cfg.Outbounds = []kone.OutboundConfig{{ID: "upstream", Name: "upstream", URL: "socks5://127.0.0.1:1080"}}
+	cfg.Rule = []kone.RuleConfig{{ID: "fallback", Schema: "FINAL", Outbound: "upstream"}}
+	before := Document{Version: 7, Config: cfg, Inbound: Inbound{ID: "tun-main", Name: "TUN", Enabled: true}}
+	require.NoError(t, writeDocument(filepath.Join(directory, "settings.json"), before))
+	c := testController(t, Options{Directory: directory})
+	require.Equal(t, uint64(8), c.doc.Version)
+	require.True(t, c.doc.Config.Policy.LANDefaults)
+	require.Greater(t, len(c.doc.Config.Rule), 1)
+	require.Equal(t, "fallback", c.doc.Config.Rule[len(c.doc.Config.Rule)-1].ID)
+	backup, err := readDocument(c.settingsPath() + ".previous")
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), backup.Version)
+	require.Len(t, backup.Config.Rule, 1)
+	r := currentRequest(c)
+	r.Config["rules"] = []any{map[string]any{"id": "fallback", "type": "FINAL", "outbound": "upstream"}}
+	_, err = c.Save(r)
+	require.NoError(t, err)
+	version := c.doc.Version
+	require.NoError(t, c.Close())
+	reopened := testController(t, Options{Directory: directory})
+	require.Equal(t, version, reopened.doc.Version)
+	require.Len(t, reopened.doc.Config.Rule, 1, "deleted defaults must not return after restart")
+	save, err := preparePolicy(policyRequest{BaseVersion: version, Mode: "proxy-first", Outbound: "upstream", Interface: "fixture-uplink", IPv4Only: true}, reopened.doc)
+	require.NoError(t, err)
+	prepared, err := prepareDocument(save, reopened.doc)
+	require.NoError(t, err)
+	require.Len(t, prepared.Config.Rule, 1, "editing the base policy must not recreate removed defaults")
+}
 
 func TestPolicyPreviewApplyConflictAndPausedMigration(t *testing.T) {
 	c := testController(t, Options{})
@@ -36,8 +71,8 @@ func TestPolicyPreviewApplyConflictAndPausedMigration(t *testing.T) {
 	require.Equal(t, "proxy-first", c.doc.Config.Policy.Mode)
 	require.True(t, c.doc.Config.Core.AutoRoute)
 	require.Equal(t, "exception", c.doc.Config.Rule[0].ID)
-	require.Equal(t, "fallback", c.doc.Config.Rule[1].ID)
-	require.Equal(t, "upstream", c.doc.Config.Rule[1].Outbound)
+	require.Equal(t, "fallback", c.doc.Config.Rule[len(c.doc.Config.Rule)-1].ID)
+	require.Equal(t, "upstream", c.doc.Config.Rule[len(c.doc.Config.Rule)-1].Outbound)
 	require.Equal(t, 409, request(t, c, token, "PUT", "/api/v1/policy", input).Code)
 	input.BaseVersion = c.doc.Version
 	input.RejectUDP = true
@@ -54,7 +89,7 @@ func TestPolicyPreviewApplyConflictAndPausedMigration(t *testing.T) {
 	require.Equal(t, 200, request(t, c, token, "PUT", "/api/v1/policy", input).Code)
 	require.False(t, c.doc.Config.Core.AutoRoute)
 	require.Equal(t, "exception", c.doc.Config.Rule[0].ID)
-	require.Equal(t, kone.BuiltinDirect, c.doc.Config.Rule[1].Outbound)
+	require.Equal(t, kone.BuiltinDirect, c.doc.Config.Rule[len(c.doc.Config.Rule)-1].Outbound)
 }
 
 func TestPolicyRejectsMalformedIntentWithoutMutation(t *testing.T) {
@@ -92,7 +127,7 @@ func TestPolicyProtectionDescribesTransportsWithoutCredentialsOrQueries(t *testi
 	cfg.Policy.Mode = "custom"
 	require.Equal(t, items, policyProtection(cfg))
 	cfg.Policy.Mode = "direct-first"
-	require.Contains(t, policyProtection(cfg), kone.ProtectedNetwork{Prefix: "127.0.0.0/8", Kind: "local_network"})
+	require.Contains(t, policyProtection(cfg), kone.ProtectedNetwork{Prefix: "127.0.0.0/8", Kind: "loopback"})
 }
 
 func TestPolicyCustomConversionAndNativeUDPScope(t *testing.T) {

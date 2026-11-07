@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -14,6 +15,7 @@ type PolicyConfig struct {
 	Mode         string `toml:"mode,omitempty" json:"mode"`
 	IPv4Only     bool   `toml:"ipv4-only,omitempty" json:"ipv4_only"`
 	UDPException bool   `toml:"udp-exception,omitempty" json:"udp_exception"`
+	LANDefaults  bool   `toml:"lan-defaults-initialized,omitempty" json:"lan_defaults_initialized,omitempty"`
 }
 
 type ProtectedNetwork struct {
@@ -86,9 +88,10 @@ func (cfg *KoneConfig) ValidatePolicy() error {
 
 func PolicyProtection(core CoreConfig) []ProtectedNetwork {
 	result := []ProtectedNetwork{}
-	for _, value := range []string{"127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "224.0.0.0/4", "255.255.255.255/32", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"} {
-		result = append(result, ProtectedNetwork{Prefix: value, Kind: "local_network"})
+	for _, value := range []string{"127.0.0.0/8", "::1/128"} {
+		result = append(result, ProtectedNetwork{Prefix: value, Kind: "loopback"})
 	}
+	seen := map[string]bool{}
 	interfaces, _ := net.Interfaces()
 	for _, iface := range interfaces {
 		if iface.Flags&net.FlagUp == 0 || iface.Name == core.Tun {
@@ -97,17 +100,70 @@ func PolicyProtection(core CoreConfig) []ProtectedNetwork {
 		addresses, _ := iface.Addrs()
 		for _, value := range addresses {
 			prefix, err := netip.ParsePrefix(value.String())
-			if err != nil || isSyntheticPrefix(prefix, core) {
+			if err != nil || isSyntheticPrefix(prefix, core) || prefix.Addr().IsLoopback() {
 				continue
 			}
-			result = append(result, ProtectedNetwork{Prefix: netip.PrefixFrom(prefix.Addr(), prefix.Addr().BitLen()).String(), Interface: iface.Name, Kind: "host"})
-			// Only connected routes, never a physical interface's default route.
-			if prefix.Bits() > 0 && prefix.Bits() < prefix.Addr().BitLen() {
-				result = append(result, ProtectedNetwork{Prefix: prefix.Masked().String(), Interface: iface.Name, Kind: "connected"})
+			address := prefix.Addr().Unmap()
+			if !seen[address.String()] {
+				seen[address.String()] = true
+				result = append(result, ProtectedNetwork{Prefix: netip.PrefixFrom(address, address.BitLen()).String(), Interface: iface.Name, Kind: "host"})
 			}
 		}
 	}
 	return result
+}
+
+// DefaultLANRules is a template, not a routing override. Once materialized,
+// these rules are ordinary ordered rules and may be changed or removed.
+func DefaultLANRules(core CoreConfig) []RuleConfig {
+	values := []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "224.0.0.0/4", "255.255.255.255/32", "fc00::/7", "fe80::/10", "ff00::/8"}
+	interfaces, _ := net.Interfaces()
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || iface.Name == core.Tun {
+			continue
+		}
+		addresses, _ := iface.Addrs()
+		for _, value := range addresses {
+			prefix, err := netip.ParsePrefix(value.String())
+			if err == nil && prefix.Bits() > 0 && prefix.Bits() < prefix.Addr().BitLen() && !isSyntheticPrefix(prefix, core) {
+				values = append(values, prefix.Masked().String())
+			}
+		}
+	}
+	return lanRules(values)
+}
+
+func lanRules(values []string) []RuleConfig {
+	prefixes := []netip.Prefix{}
+	for _, value := range values {
+		if prefix, err := netip.ParsePrefix(value); err == nil {
+			prefixes = append(prefixes, prefix.Masked())
+		}
+	}
+	slices.SortFunc(prefixes, func(a, b netip.Prefix) int {
+		if a.Bits() != b.Bits() {
+			return a.Bits() - b.Bits()
+		}
+		return a.Addr().Compare(b.Addr())
+	})
+	kept := []netip.Prefix{}
+	for _, prefix := range prefixes {
+		if !slices.ContainsFunc(kept, func(parent netip.Prefix) bool {
+			return parent.Contains(prefix.Addr()) && parent.Bits() <= prefix.Bits()
+		}) {
+			kept = append(kept, prefix)
+		}
+	}
+	slices.SortFunc(kept, func(a, b netip.Prefix) int { return a.Addr().Compare(b.Addr()) })
+	rules := make([]RuleConfig, 0, len(kept))
+	for _, prefix := range kept {
+		schema := "IP-CIDR"
+		if prefix.Addr().Is6() {
+			schema = "IP-CIDR6"
+		}
+		rules = append(rules, RuleConfig{ID: "rule-lan-" + strings.NewReplacer("/", "-", ":", "-").Replace(prefix.String()), Source: "policy-lan", Schema: schema, Pattern: prefix.String(), Outbound: BuiltinDirect})
+	}
+	return rules
 }
 
 func isSyntheticPrefix(prefix netip.Prefix, core CoreConfig) bool {
@@ -120,9 +176,6 @@ func isSyntheticPrefix(prefix netip.Prefix, core CoreConfig) bool {
 }
 
 func (rule *Rule) protectPolicy(cfg *KoneConfig) {
-	if cfg.Policy.Mode == "" || cfg.Policy.Mode == "custom" {
-		return
-	}
 	for _, item := range PolicyProtection(cfg.Core) {
 		if prefix, err := netip.ParsePrefix(item.Prefix); err == nil {
 			rule.protected = append(rule.protected, prefix)

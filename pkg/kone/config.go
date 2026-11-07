@@ -79,11 +79,14 @@ const (
 )
 
 type OutboundConfig struct {
-	ID          string `toml:"id,omitempty"`
-	Enabled     *bool  `toml:"enabled,omitempty"`
-	Name        string `toml:"name"`
-	URL         string `toml:"url"`
-	UDPFallback string `toml:"udp-fallback,omitempty"`
+	ID           string `toml:"id,omitempty"`
+	Enabled      *bool  `toml:"enabled,omitempty"`
+	Name         string `toml:"name"`
+	URL          string `toml:"url"`
+	UDPFallback  string `toml:"udp-fallback,omitempty"`
+	CheckEnabled *bool  `toml:"check-enabled,omitempty"`
+	CheckTarget  string `toml:"check-target,omitempty"`
+	CheckTLS     *bool  `toml:"check-tls,omitempty"`
 }
 
 func builtinOutbounds() map[string]OutboundType {
@@ -264,6 +267,11 @@ func validateOutbounds(config []OutboundConfig) (map[string]OutboundType, error)
 		// unsupported proxy or a cycle.
 		if o.UDPFallback != "" && o.UDPFallback != BuiltinDirect && o.UDPFallback != BuiltinReject {
 			return nil, fail("udp-fallback must be direct or reject")
+		}
+		if o.CheckTarget != "" {
+			if err := ValidateDiagnosticTarget(o.CheckTarget); err != nil {
+				return nil, fail("check-target requires a valid domain/IP and port")
+			}
 		}
 		types[o.Name] = OutboundProxy
 	}

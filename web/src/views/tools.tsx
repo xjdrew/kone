@@ -11,6 +11,7 @@ import {
   Empty,
   ErrorNotice,
   Field,
+  KeyValues,
   Status,
   Toggle,
 } from "../components/ui";
@@ -49,10 +50,7 @@ export function Tools() {
 function Diagnostics() {
   const { t } = useTranslation();
   const context = useConsole();
-  const [target, setTarget] = useWorkspaceState(
-    "tools.target",
-    context.diagnosticTarget || "www.google.com:443",
-  );
+  const [target, setTarget] = useWorkspaceState("tools.target", context.diagnosticTarget || "");
   const [outbound, setOutbound] = useWorkspaceState(
     "tools.outbound",
     context.document?.config.outbounds.find((item) => item.enabled !== false)?.name ?? "direct",
@@ -102,36 +100,36 @@ function Diagnostics() {
           void submit();
         }}
       >
-        <div className="actions">
-          <Button
-            tone="quiet"
-            onClick={() => {
-              setTarget("www.google.com:443");
-              setProtocol("tcp");
-              setTLS(true);
-            }}
-          >
-            {t("diagnostics.google")}
-          </Button>
-          <Button
-            tone="quiet"
-            onClick={() => {
-              setTarget("149.154.167.50:443");
-              setProtocol("tcp");
-              setTLS(false);
-            }}
-          >
-            {t("diagnostics.telegram")}
-          </Button>
-        </div>
+        <h2 className={styles.diagnosticTitle}>{t("diagnostics.title")}</h2>
         <Field label={t("diagnostics.target")}>
           <input
             className="mono"
             value={target}
+            placeholder="example.com:443"
             required
             onChange={(event) => setTarget(event.target.value)}
           />
         </Field>
+        <select
+          aria-label={t("diagnostics.presets")}
+          value=""
+          onChange={(event) => {
+            if (event.target.value === "google") {
+              setTarget("www.google.com:443");
+              setProtocol("tcp");
+              setTLS(true);
+            }
+            if (event.target.value === "telegram") {
+              setTarget("149.154.167.50:443");
+              setProtocol("tcp");
+              setTLS(false);
+            }
+          }}
+        >
+          <option value="">{t("diagnostics.presets")}</option>
+          <option value="google">{t("diagnostics.google")}</option>
+          <option value="telegram">{t("diagnostics.telegram")}</option>
+        </select>
         <div className="formGrid">
           <Field label={t("common.protocol")}>
             <select value={protocol} onChange={(event) => setProtocol(event.target.value)}>
@@ -172,6 +170,12 @@ function Diagnostics() {
         <ErrorNotice error={error || tasks.error} />
       </form>
       <div className={styles.results}>
+        <div className={styles.resultsHeading}>
+          <span>{t("diagnostics.target")}</span>
+          <span>{t("common.outbound")}</span>
+          <span>{t("diagnostics.latency")}</span>
+          <span>{t("common.status")}</span>
+        </div>
         {!operations.length ? (
           <Empty title={t("diagnostics.empty")} description={t("diagnostics.notApplication")} />
         ) : (
@@ -198,15 +202,28 @@ function DiagnosticTask({ operation, onCancel }: { operation: Operation; onCance
   const { t } = useTranslation();
   const { admin } = useConsole();
   const result = operation.result;
-  const rows = Array.isArray(result)
+  const rawRows = Array.isArray(result)
     ? result
     : result && typeof result === "object" && "results" in result && Array.isArray(result.results)
       ? result.results
       : [];
+  const rows: Json[] = operation.outbounds?.length
+    ? operation.outbounds.map(
+        (name) =>
+          rawRows.find(
+            (row) => row && typeof row === "object" && !Array.isArray(row) && row.outbound === name,
+          ) ?? {
+            target: operation.target ?? "",
+            outbound: name,
+            protocol: operation.protocol ?? "tcp",
+            status: operation.status === "running" ? "pending" : "not_run",
+            stage: operation.stage,
+          },
+      )
+    : rawRows;
   return (
     <article className={styles.task}>
       <header>
-        <Status value={operation.status} />
         <span className="muted">{timestamp(operation.started_at)}</span>
         {operation.status === "running" && (
           <Button onClick={onCancel} disabled={!admin}>
@@ -220,7 +237,6 @@ function DiagnosticTask({ operation, onCancel }: { operation: Operation; onCance
         ) : null,
       )}
       {operation.error && <Details value={{ error: operation.error }} />}
-      <small className="muted">{t("diagnostics.notApplication")}</small>
     </article>
   );
 }
@@ -228,22 +244,62 @@ function DiagnosticResult({ result }: { result: Record<string, Json> }) {
   const { t } = useTranslation();
   const target = String(result.target ?? "");
   const actions = useTargetActions(target, String(result.protocol ?? "tcp"));
+  const running = result.status === "running" || result.status === "testing";
+  const pending = running || result.status === "pending";
+  const protocols =
+    result.protocols && typeof result.protocols === "object" && !Array.isArray(result.protocols)
+      ? result.protocols
+      : {};
   return (
-    <div className={styles.result}>
-      <div>
-        <span className="mono">{target}</span>
-        <OutboundName name={String(result.outbound ?? "")} />
-        <Status value={String(result.status ?? "unknown")} />
-        <span className="mono">
-          {result.duration_ms === undefined ? "—" : `${result.duration_ms} ms`}
+    <details className={styles.result}>
+      <summary className={styles.resultSummary} aria-busy={running}>
+        <span className={styles.target}>
+          <code>{target || "—"}</code>
+          <small>{String(result.protocol || "tcp").toUpperCase()}</small>
         </span>
-        <ActionMenu actions={actions} />
+        <OutboundName name={String(result.outbound ?? "")} />
+        <span className="mono numeric">
+          {pending || result.connect_latency_ms == null ? "—" : `${result.connect_latency_ms} ms`}
+        </span>
+        <span className={styles.resultState}>
+          {running && <span className={styles.spinner} aria-hidden="true" />}
+          <Status value={String(result.status ?? "unknown")} />
+        </span>
+      </summary>
+      <div className={styles.resultDetails}>
+        <div className="actions">
+          <strong>{t(`stage.${result.stage}`, { defaultValue: t("common.details") })}</strong>
+          <span className="spacer" />
+          <ActionMenu actions={actions} />
+        </div>
+        <KeyValues
+          entries={[
+            [
+              t("diagnostics.elapsed"),
+              result.duration_ms == null ? "—" : `${result.duration_ms} ms`,
+            ],
+            [t("outbounds.endpoint"), String(result.remote_address || "—")],
+            [t("common.version"), String(result.config_version ?? "—")],
+          ]}
+        />
+        <div className={styles.protocolChecks}>
+          {Object.entries(protocols).map(([name, value]) => {
+            const check = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+            return (
+              <div key={name}>
+                <span className="mono">{name.toUpperCase()}</span>
+                <Status value={String(check.status ?? "unknown")} />
+                <span className="muted">
+                  {t(check.tested ? "diagnostics.measured" : "diagnostics.notMeasured")}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        {result.message && <p className={styles.technicalMessage}>{String(result.message)}</p>}
+        <Details value={result} />
       </div>
-      <div className="muted">
-        {t(`stage.${result.stage}`, { defaultValue: t("common.details") })}
-      </div>
-      <Details value={result} />
-    </div>
+    </details>
   );
 }
 function Logs() {

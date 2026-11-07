@@ -7,7 +7,7 @@ const legacy: Record<string, string> = {
   traffic: "/traffic?view=connections",
   dns: "/traffic?view=dns",
   rules: "/policy?view=rules",
-  outbounds: "/policy?view=outbounds",
+  outbounds: "/outbounds",
   settings: "/settings?section=capture",
   diagnostics: "/traffic?view=overview",
   logs: "/traffic?view=overview",

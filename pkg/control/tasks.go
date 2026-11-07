@@ -214,7 +214,23 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 		c.diagnosticRate.count += len(outbounds)
 		return nil
 	}
-	return c.beginOperationAdmitted("diagnostics", key, 20*time.Second, func(ctx context.Context) (any, error) {
+	gate := make(chan struct{})
+	operationID := ""
+	operation, operationErr := c.beginOperationAdmitted("diagnostics", key, 20*time.Second, func(ctx context.Context) (any, error) {
+		<-gate
+		rows := make([]ProbeResult, len(outbounds))
+		for i, name := range outbounds {
+			rows[i] = ProbeResult{Target: target, Outbound: name, Protocol: options.Protocol, Status: "pending", Stage: "queued"}
+		}
+		publish := func() {
+			snapshot := append([]ProbeResult(nil), rows...)
+			c.mu.Lock()
+			if op := c.operations[operationID]; op != nil && op.Status == "running" {
+				op.Result = map[string]any{"target": target, "protocol": options.Protocol, "results": snapshot, "automatic_rule": false}
+			}
+			c.mu.Unlock()
+		}
+		publish()
 		select {
 		case c.probeSlots <- struct{}{}:
 		default:
@@ -228,11 +244,18 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 			}
 			return results, cause
 		}
-		for _, name := range outbounds {
+		for index, name := range outbounds {
 			if err := ctx.Err(); err != nil {
 				return partial(err)
 			}
+			rows[index].Status, rows[index].Stage = "running", "connect"
+			publish()
 			probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			probeCtx = kone.WithDiagnosticProgress(probeCtx, func(progress kone.DiagnosticResult) {
+				progress.Target, progress.Outbound, progress.Protocol, progress.Status = target, name, options.Protocol, "running"
+				rows[index] = progress
+				publish()
+			})
 			var result ProbeResult
 			var probeErr error
 			if options.Protocol == "udp" {
@@ -255,6 +278,9 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 				result.ConfigVersion = doc.Version
 			}
 			cancel()
+			result.Target, result.Outbound, result.Protocol = target, name, options.Protocol
+			rows[index] = result
+			publish()
 			results = append(results, result)
 			if probeErr != nil {
 				return partial(probeErr)
@@ -273,4 +299,17 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 		}
 		return map[string]any{"target": target, "protocol": options.Protocol, "results": results, "suggest_proxy": suggested, "automatic_rule": false}, nil
 	}, admit)
+	operationID = operation.ID
+	if operation.ID != "" {
+		c.mu.Lock()
+		if op := c.operations[operation.ID]; op != nil {
+			if op.Target == "" {
+				op.Target, op.Outbounds, op.Protocol = target, append([]string(nil), outbounds...), options.Protocol
+			}
+			operation = *op
+		}
+		c.mu.Unlock()
+	}
+	close(gate)
+	return operation, operationErr
 }

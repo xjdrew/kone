@@ -16,7 +16,7 @@ func TestPolicyDirectDialerKeepsLocalConnectionsAndPhysicalFallback(t *testing.T
 	base := &net.Dialer{Control: func(string, string, syscall.RawConn) error { baseCalls++; return net.ErrClosed }}
 	dialer, err := policyDirectDialer(base, cfg)
 	require.NoError(t, err)
-	require.Nil(t, dialer, "legacy profiles retain their existing dialer")
+	require.NotNil(t, dialer, "all profiles keep native egress outside selective capture")
 	cfg.Policy.Mode = "direct-first"
 	dialer, err = policyDirectDialer(base, cfg)
 	require.NoError(t, err)
@@ -34,6 +34,18 @@ func TestPolicyDirectDialerKeepsLocalConnectionsAndPhysicalFallback(t *testing.T
 	snapshot, err := PolicyRouteSnapshot(cfg.Core.Tun)
 	require.NoError(t, err)
 	require.NotNil(t, snapshot)
+}
+
+func TestNativeTransportRouteIndexIncludesDefaultsAndSpecificNetworks(t *testing.T) {
+	index := newRouteIndexWithDefault([]policyRoute{
+		{Prefix: netip.MustParsePrefix("0.0.0.0/0"), Interface: 2, Metric: 100},
+		{Prefix: netip.MustParsePrefix("0.0.0.0/0"), Interface: 3, Metric: 200},
+		{Prefix: netip.MustParsePrefix("10.8.0.0/16"), Interface: 4},
+		{Prefix: netip.MustParsePrefix("::/0"), Interface: 5},
+	}, true)
+	require.Equal(t, 2, index.device(netip.MustParseAddr("192.0.2.7")))
+	require.Equal(t, 4, index.device(netip.MustParseAddr("10.8.1.9")))
+	require.Equal(t, 5, index.device(netip.MustParseAddr("2001:db8::7")))
 }
 
 func TestPolicyRouteIndexUsesSpecificVPNAndLowestMetric(t *testing.T) {

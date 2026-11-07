@@ -43,6 +43,7 @@ func TestDiagnosticSeparatesDNSConnectAuthenticationAndPolicy(t *testing.T) {
 	require.Equal(t, "policy", DiagnosticStage(err))
 	want := errors.New("connection refused")
 	one.policy.Load().outbounds.dial = func(context.Context, string, string) (net.Conn, error) { return nil, want }
+	one.policy.Load().outbounds.directDial = one.policy.Load().outbounds.dial
 	_, err = one.DialDiagnostic(context.Background(), BuiltinDirect, "192.0.2.1:443")
 	require.ErrorIs(t, err, want)
 	require.Equal(t, "connect", DiagnosticStage(err))

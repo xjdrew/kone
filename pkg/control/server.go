@@ -559,6 +559,9 @@ func (c *Controller) Serve(ctx context.Context, address string, ready func(strin
 		}
 		ready(access)
 	}
+	monitorCtx, stopMonitor := context.WithCancel(c.ctx)
+	defer stopMonitor()
+	go c.monitorOutbounds(monitorCtx, outboundHealthTTL)
 	err = server.Serve(listener)
 	closeErr := c.Close()
 	if errors.Is(err, http.ErrServerClosed) {

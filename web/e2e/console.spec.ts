@@ -167,7 +167,7 @@ test("DNS context stays unscoped and Telegram comparison disables TLS", async ({
   await expect(dialog.getByLabel("Ports", { exact: true })).toBeEmpty();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
-  await page.getByRole("button", { name: "Telegram MTProto · TCP 443", exact: true }).click();
+  await page.getByLabel("Optional preset…", { exact: true }).selectOption("telegram");
   await expect(page.getByLabel("Verify target TLS")).toBeDisabled();
   await page.getByRole("button", { name: "Start comparison" }).click();
   await expect
@@ -339,5 +339,76 @@ test("@compat remote access sets a password first and preserves listener drafts 
   await page.getByRole("button", { name: "Stop listener", exact: true }).click();
   await expect(page.getByRole("button", { name: "Enable listener", exact: true })).toBeVisible();
   await expect(page.getByText(/Pairing code|Create pairing/)).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("@compat generic diagnostics keep per-outbound progress and expand one result at a time", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  const target = "10.23.4.5:8443";
+  const rows = [
+    {
+      target,
+      outbound: "direct",
+      protocol: "tcp",
+      status: "reachable",
+      stage: "connect",
+      duration_ms: 4,
+      connect_latency_ms: 3,
+    },
+    {
+      target,
+      outbound: "Local HTTP",
+      protocol: "tcp",
+      status: "running",
+      stage: "proxy_handshake",
+      duration_ms: 0,
+      connect_latency_ms: 0,
+    },
+  ];
+  data.operations.push({
+    id: "progress",
+    kind: "diagnostics",
+    status: "running",
+    stage: "connect",
+    started_at: "2026-11-07T09:30:00Z",
+    target,
+    outbounds: ["direct", "Local HTTP", "queued-outbound"],
+    protocol: "tcp",
+    result: { results: rows },
+  });
+  await page.goto("/#/outbounds");
+  await expect(page.getByRole("navigation", { name: "KONE" }).getByRole("link")).toHaveCount(3);
+  await expect(page.getByRole("heading", { name: "Outbounds", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Connection diagnostics", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Optional preset…")).toHaveValue("");
+  await expect(page.getByLabel("Target · domain or IP:port", { exact: true })).toHaveValue("");
+  const summaries = page.locator("summary").filter({ hasText: target });
+  await expect(summaries).toHaveCount(3);
+  await expect(summaries.nth(2)).toContainText("Pending");
+  await expect(summaries.nth(1)).toHaveAttribute("aria-busy", "true");
+  await expect(summaries.nth(0).locator("..")).not.toHaveAttribute("open");
+  await summaries.nth(0).click();
+  await expect(summaries.nth(0).locator("..")).toHaveAttribute("open", "");
+  await expect(summaries.nth(1).locator("..")).not.toHaveAttribute("open");
+  await page
+    .getByLabel("Target · domain or IP:port", { exact: true })
+    .fill("internal.example:9443");
+  await expect(summaries).toHaveCount(3);
+  rows[1] = {
+    ...rows[1]!,
+    status: "reachable",
+    stage: "connect",
+    duration_ms: 19,
+    connect_latency_ms: 12,
+  };
+  data.operations[0]!.status = "canceled";
+  await expect(summaries.nth(1)).toHaveAttribute("aria-busy", "false");
+  await expect(summaries.nth(1)).toContainText("12 ms");
+  await expect(summaries.nth(2)).toContainText("Not run");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

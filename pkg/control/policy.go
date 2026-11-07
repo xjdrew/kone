@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 
 	"github.com/xjdrew/kone/pkg/kone"
 )
@@ -22,10 +23,7 @@ type policyRequest struct {
 
 // Describe transport bypasses without resolving endpoints or exposing URL credentials.
 func policyProtection(cfg *kone.KoneConfig) []kone.ProtectedNetwork {
-	items := []kone.ProtectedNetwork{}
-	if cfg.Policy.Mode == "direct-first" || cfg.Policy.Mode == "proxy-first" {
-		items = kone.PolicyProtection(cfg.Core)
-	}
+	items := kone.PolicyProtection(cfg.Core)
 	for _, outbound := range cfg.Outbounds {
 		if endpoint, err := url.Parse(outbound.URL); err == nil && outbound.IsEnabled() {
 			items = append(items, kone.ProtectedNetwork{Prefix: endpoint.Host, Kind: "proxy_endpoint"})
@@ -39,7 +37,12 @@ func policyProtection(cfg *kone.KoneConfig) []kone.ProtectedNetwork {
 			items = append(items, kone.ProtectedNetwork{Prefix: server, Interface: route.Interface, Kind: "dns_transport"})
 		}
 	}
-	return items
+	seen := map[kone.ProtectedNetwork]bool{}
+	return slices.DeleteFunc(items, func(item kone.ProtectedNetwork) bool {
+		duplicate := seen[item]
+		seen[item] = true
+		return duplicate
+	})
 }
 
 func (c *Controller) policyState() map[string]any {
@@ -77,7 +80,7 @@ func preparePolicy(request policyRequest, current Document) (SaveRequest, error)
 		final.ID = cfg.Rule[len(cfg.Rule)-1].ID
 		cfg.Rule = cfg.Rule[:len(cfg.Rule)-1]
 	}
-	cfg.Policy = kone.PolicyConfig{Mode: request.Mode, IPv4Only: request.IPv4Only, UDPException: request.UDPException}
+	cfg.Policy = kone.PolicyConfig{Mode: request.Mode, IPv4Only: request.IPv4Only, UDPException: request.UDPException, LANDefaults: cfg.Policy.LANDefaults}
 	if request.Mode == "proxy-first" {
 		final.Outbound = request.Outbound
 		cfg.Core.AutoRoute = true
@@ -87,6 +90,7 @@ func preparePolicy(request policyRequest, current Document) (SaveRequest, error)
 		}
 
 		cfg.Core.AutoRoute6 = cfg.Core.IPv6Network != "" && !request.IPv4Only
+		initializeLANRules(cfg)
 		for i := range cfg.Outbounds {
 			if cfg.Outbounds[i].Name == request.Outbound {
 				u, _ := url.Parse(cfg.Outbounds[i].URL)
@@ -176,5 +180,28 @@ func (c *Controller) policyRoute(w http.ResponseWriter, r *http.Request, apply b
 		preserved--
 	}
 	validation["preserved_rules"] = preserved
+	validation["added_rules"] = len(candidate.Config.Rule) - preserved - 1
 	writeJSON(w, 200, validation)
+}
+
+func initializeLANRules(cfg *kone.KoneConfig) bool {
+	if cfg.Policy.Mode != "proxy-first" || cfg.Policy.LANDefaults {
+		return false
+	}
+	cfg.Policy.LANDefaults = true
+	for _, rule := range kone.DefaultLANRules(cfg.Core) {
+		if rule.Schema == "IP-CIDR6" && cfg.Core.IPv6Network == "" {
+			continue
+		}
+		if slices.ContainsFunc(cfg.Rule, func(existing kone.RuleConfig) bool {
+			return existing.Schema == rule.Schema && existing.Pattern == rule.Pattern && existing.Outbound == rule.Outbound && existing.Protocol == "" && len(existing.Ports) == 0 && existing.ExpiresAt == ""
+		}) {
+			continue
+		}
+		if slices.ContainsFunc(cfg.Rule, func(existing kone.RuleConfig) bool { return existing.ID == rule.ID }) {
+			rule.ID = randomID("rule-lan")
+		}
+		cfg.Rule = append(cfg.Rule, rule)
+	}
+	return true
 }

@@ -102,8 +102,11 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
         interfaces: ["eth0", "wlan0"],
         ipv6_available: false,
         protection: [
-          { prefix: "127.0.0.0/8", kind: "local_network" },
-          { prefix: "192.168.1.0/24", interface: "eth0", kind: "connected" },
+          { prefix: "127.0.0.0/8", kind: "loopback" },
+          { prefix: "::1/128", kind: "loopback" },
+          { prefix: "192.168.40.2/32", interface: "eth0", kind: "host" },
+          { prefix: "127.0.0.1:7078", kind: "proxy_endpoint" },
+          { prefix: "192.168.40.1:53", kind: "dns_transport" },
         ],
       });
     if (path === "/policy/preview" || (path === "/policy" && method === "PUT")) {
@@ -124,7 +127,8 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
           base_version: input.base_version,
           mode: input.mode,
           udp: "direct_exception",
-          protection: [{ prefix: "127.0.0.0/8", kind: "local_network" }],
+          protection: [{ prefix: "127.0.0.0/8", kind: "loopback" }],
+          added_rules: input.mode === "proxy-first" ? 4 : 0,
           preserved_rules: config.rules.length - 1,
         });
       data.document = { ...data.document, config, version: data.document.version + 1 };

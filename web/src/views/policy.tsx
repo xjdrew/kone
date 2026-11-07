@@ -1,6 +1,6 @@
+import { Link } from "@tanstack/react-router";
 import { newID } from "../browser";
 import { useState } from "react";
-import { Link, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useConsole, useWorkspaceState } from "../context";
@@ -18,7 +18,6 @@ import {
   ActionMenu,
   Empty,
 } from "../components/ui";
-import { OutboundsView } from "./outbounds";
 import type { Config, Document, PolicyPlan, PolicyRequest, Rule } from "../model";
 import styles from "./policy.module.css";
 
@@ -70,7 +69,6 @@ export function OutboundName({ name }: { name: string }) {
 
 export function PolicyView() {
   const { t } = useTranslation();
-  const { view } = useSearch({ from: "/policy" });
   const context = useConsole();
   const policy = useQuery({
     queryKey: ["policy", context.document?.version],
@@ -98,50 +96,46 @@ export function PolicyView() {
           </Button>
         </div>
       </header>
-      <nav className="viewTabs">
-        <Link
-          to="/policy"
-          search={{ view: "rules" }}
-          aria-current={view === "rules" ? "page" : undefined}
-        >
-          {t("nav.rules")}
-        </Link>
-        <Link
-          to="/policy"
-          search={{ view: "outbounds" }}
-          aria-current={view === "outbounds" ? "page" : undefined}
-        >
-          {t("nav.outbounds")}
-        </Link>
-      </nav>
       <ErrorNotice error={policy.error} />
-      {view === "outbounds" ? (
-        <OutboundsView />
-      ) : (
-        <>
-          <details className={styles.protection}>
-            <summary>
-              {t("policy.protection")}
-              <span>
-                {t(
-                  policy.data?.explicit && policy.data.mode !== "custom"
-                    ? "policy.protectedHint"
-                    : "policy.legacyHint",
+      <details className={styles.protection}>
+        <summary>
+          {t("policy.protection")}
+          <span>{t("policy.protectedHint")}</span>
+        </summary>
+        <div className={styles.protectionList}>
+          {[
+            { key: "local", kinds: ["loopback", "host"] },
+            { key: "proxy", kinds: ["proxy_endpoint"] },
+            { key: "dns", kinds: ["dns_transport"] },
+          ].map((group) => {
+            const entries = (policy.data?.protection ?? []).filter((item) =>
+              group.kinds.includes(item.kind),
+            );
+            return (
+              <section key={group.key}>
+                <h3>
+                  {t(`policy.protection.${group.key}`)} <span>{entries.length}</span>
+                </h3>
+                <p>{t(`policy.protection.${group.key}Hint`)}</p>
+                {entries.length ? (
+                  entries.map((item) => (
+                    <div
+                      className={styles.protectionEntry}
+                      key={`${item.kind}:${item.prefix}:${item.interface}`}
+                    >
+                      <code>{item.prefix}</code>
+                      <span>{item.interface || t(`policy.${item.kind}`)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p>{t(group.key === "dns" ? "policy.protection.autoDNS" : "common.none")}</p>
                 )}
-              </span>
-            </summary>
-            <div className={styles.protectionList}>
-              {policy.data?.protection.map((item) => (
-                <div key={`${item.prefix}:${item.interface}`}>
-                  <code>{item.prefix}</code>
-                  <span>{item.interface || t(`policy.${item.kind}`)}</span>
-                </div>
-              ))}
-            </div>
-          </details>
-          <RulesView onPolicy={() => setChangePolicy(true)} />
-        </>
-      )}
+              </section>
+            );
+          })}
+        </div>
+      </details>
+      <RulesView onPolicy={() => setChangePolicy(true)} />
       {changePolicy && policy.data && (
         <PolicyEditor
           initial={{
@@ -296,6 +290,7 @@ function PolicyEditor({
                   ],
                   [t("policy.udp"), t(`policy.${plan.udp}`)],
                   [t("policy.preserved"), plan.preserved_rules],
+                  [t("policy.added"), plan.added_rules ?? 0],
                   [t("policy.protection"), plan.protection.length],
                 ]}
               />
@@ -484,6 +479,9 @@ function RulesView({ onPolicy }: { onPolicy: () => void }) {
                   >
                     {rule.pattern}
                   </button>
+                  {rule.source === "policy-lan" && (
+                    <span className="pill">{t("policy.lanDefault")}</span>
+                  )}
                   {rule["expires-at"] && (
                     <span className="pill">
                       {t("rules.expires")} {rule["expires-at"]}

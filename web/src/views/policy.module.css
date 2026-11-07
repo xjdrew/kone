@@ -21,7 +21,7 @@
   max-height: 230px;
   overflow: auto;
 }
-.protectionList > div {
+.protectionEntry {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -56,4 +56,27 @@
     padding: 10px 12px;
     gap: 12px;
   }
+}
+
+.protectionList section {
+  min-width: 0;
+}
+.protectionList h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.protectionList h3 span {
+  color: var(--muted);
+  font-weight: 400;
+}
+.protectionList p {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+.protectionEntry {
+  padding: 4px 0;
+}
+.protectionEntry code {
+  overflow-wrap: anywhere;
 }

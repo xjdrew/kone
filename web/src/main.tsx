@@ -8,12 +8,14 @@ import {
   createHashHistory,
   RouterProvider,
   Navigate,
+  useSearch,
 } from "@tanstack/react-router";
 import "./i18n";
 import "./theme.css";
 import { Providers } from "./context";
 import { Shell } from "./shell";
 import { TrafficView } from "./views/traffic";
+import { OutboundsView } from "./views/outbounds";
 import { PolicyView } from "./views/policy";
 import { SettingsView } from "./views/settings";
 
@@ -65,7 +67,18 @@ const policy = createRoute({
   validateSearch: (search: Record<string, unknown>) => ({
     view: search.view === "outbounds" ? "outbounds" : "rules",
   }),
-  component: PolicyView,
+  component: function PolicyRoute() {
+    return useSearch({ from: "/policy" }).view === "outbounds" ? (
+      <Navigate to="/outbounds" replace />
+    ) : (
+      <PolicyView />
+    );
+  },
+});
+const outbounds = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/outbounds",
+  component: OutboundsView,
 });
 const settings = createRoute({
   getParentRoute: () => rootRoute,
@@ -80,7 +93,7 @@ const settings = createRoute({
   component: SettingsView,
 });
 const router = createRouter({
-  routeTree: rootRoute.addChildren([home, traffic, policy, settings]),
+  routeTree: rootRoute.addChildren([home, traffic, policy, outbounds, settings]),
   history: createHashHistory(),
   defaultPreload: "intent",
 });

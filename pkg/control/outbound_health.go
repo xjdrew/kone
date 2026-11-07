@@ -39,6 +39,7 @@ type OutboundHealth struct {
 	Host             kone.DiagnosticHost      `json:"host"`
 	Protocols        kone.DiagnosticProtocols `json:"protocols"`
 	Progress         kone.DiagnosticProgress  `json:"progress"`
+	Automatic        bool                     `json:"automatic"`
 }
 type outboundHealthEntry struct {
 	status     OutboundHealth
@@ -50,11 +51,14 @@ type outboundHealthStore struct {
 	sequence uint64
 }
 type OutboundTestDraft struct {
-	ID          string `json:"id,omitempty"`
-	Name        string `json:"name"`
-	URL         string `json:"url"`
-	Enabled     *bool  `json:"enabled,omitempty"`
-	UDPFallback string `json:"udp-fallback,omitempty"`
+	ID           string `json:"id,omitempty"`
+	Name         string `json:"name"`
+	URL          string `json:"url"`
+	Enabled      *bool  `json:"enabled,omitempty"`
+	UDPFallback  string `json:"udp-fallback,omitempty"`
+	CheckEnabled *bool  `json:"check-enabled,omitempty"`
+	CheckTarget  string `json:"check-target,omitempty"`
+	CheckTLS     *bool  `json:"check-tls,omitempty"`
 }
 type OutboundTestRequest struct {
 	BaseVersion      uint64             `json:"base_version"`
@@ -69,11 +73,13 @@ func outboundIdentity(cfg *kone.KoneConfig, outbound kone.OutboundConfig) string
 	// Credential-bearing hashes stay private; clients receive a random token,
 	// so the health API cannot become an offline password guessing oracle.
 	data, _ := json.Marshal(struct {
-		URL     string
-		Enabled bool
-		Core    kone.CoreConfig
-		DNS     kone.DNSConfig
-	}{outbound.URL, outbound.Enabled == nil || *outbound.Enabled, cfg.Core, cfg.DNS})
+		URL         string
+		Enabled     bool
+		Core        kone.CoreConfig
+		DNS         kone.DNSConfig
+		CheckTarget string
+		CheckTLS    bool
+	}{outbound.URL, outbound.Enabled == nil || *outbound.Enabled, cfg.Core, cfg.DNS, outbound.CheckTarget, outbound.CheckTLS == nil || *outbound.CheckTLS})
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])
 }
@@ -194,6 +200,15 @@ func prepareOutboundTest(request OutboundTestRequest, current Document) (Documen
 	if draft.UDPFallback != "" {
 		value["udp-fallback"] = draft.UDPFallback
 	}
+	if draft.CheckEnabled != nil {
+		value["check-enabled"] = *draft.CheckEnabled
+	}
+	if draft.CheckTarget != "" {
+		value["check-target"] = draft.CheckTarget
+	}
+	if draft.CheckTLS != nil {
+		value["check-tls"] = *draft.CheckTLS
+	}
 	configuration["outbounds"] = []any{value}
 	configuration["rules"] = []any{}
 	action := request.CredentialAction
@@ -248,14 +263,10 @@ func (c *Controller) testOutboundRoute(w http.ResponseWriter, r *http.Request, k
 }
 
 func (c *Controller) TestOutbound(request OutboundTestRequest, key string) (Operation, error) {
-	target := "example.com:443"
-	if request.Target != nil {
-		target = *request.Target
-	}
-	if err := validTarget(target); err != nil {
-		return Operation{}, err
-	}
-	withTLS := request.TLS == nil || *request.TLS
+	return c.testOutbound(request, key, false)
+}
+
+func (c *Controller) testOutbound(request OutboundTestRequest, key string, automatic bool) (Operation, error) {
 	c.mu.Lock()
 	current := cloneDocument(c.doc)
 	engine := c.engine
@@ -267,6 +278,20 @@ func (c *Controller) TestOutbound(request OutboundTestRequest, key string) (Oper
 			return Operation{}, err
 		}
 		return Operation{}, outboundTestError(err, request, current.Config)
+	}
+	target := outbound.CheckTarget
+	if target == "" {
+		target = "example.com:443"
+	}
+	if request.Target != nil {
+		target = *request.Target
+	}
+	if err := validTarget(target); err != nil {
+		return Operation{}, err
+	}
+	withTLS := outbound.CheckTLS == nil || *outbound.CheckTLS
+	if request.TLS != nil {
+		withTLS = *request.TLS
 	}
 	identity := outboundIdentity(current.Config, outbound)
 	if key != "" {
@@ -283,7 +308,11 @@ func (c *Controller) TestOutbound(request OutboundTestRequest, key string) (Oper
 	}
 	gate := make(chan struct{})
 	operationID := ""
-	operation := c.beginOperation("outbound_test", key, 12*time.Second, func(ctx context.Context) (any, error) {
+	kind := "outbound_test"
+	if automatic {
+		kind = "outbound_check"
+	}
+	operation := c.beginOperation(kind, key, 12*time.Second, func(ctx context.Context) (any, error) {
 		<-gate
 		now := c.now()
 		c.mu.Lock()
@@ -297,6 +326,7 @@ func (c *Controller) TestOutbound(request OutboundTestRequest, key string) (Oper
 		status.Status, status.Stage, status.Message = "testing", "connect", "Testing the selected proxy protocol and target"
 		status.Target, status.TLS, status.OperationID = target, withTLS, operationID
 		status.ConfigVersion = current.Version
+		status.Automatic = automatic
 		status.Stale = false
 		status.CheckedAt, status.ExpiresAt, status.ConnectLatencyMS = nil, nil, nil
 		status.DurationMS = 0

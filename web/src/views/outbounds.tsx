@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { useConsole } from "../context";
 import { api } from "../api/endpoints";
 import { request } from "../api/client";
-import { renamedOutbound } from "../domain";
+import { renamedOutbound, timestamp } from "../domain";
 import {
   Button,
   Details,
@@ -42,11 +42,11 @@ export function OutboundsView() {
   const context = useConsole();
   const [editor, setEditor] = useState<Outbound | null>(null);
   const [error, setError] = useState<unknown>();
-  const [target, setTarget] = useState("www.google.com:443");
   const health = useQuery({
     queryKey: ["health", context.document?.version],
     queryFn: api.health,
-    refetchInterval: context.operation?.status === "running" ? 1500 : false,
+    refetchInterval: (query) =>
+      query.state.data?.statuses.some((status) => status.status === "testing") ? 1000 : 5000,
   });
   const outbounds = context.document?.config.outbounds || [];
   async function test(outbound: Outbound) {
@@ -59,8 +59,8 @@ export function OutboundsView() {
           body: {
             base_version: context.document.version,
             outbound_id: outbound.id,
-            target,
-            tls: target !== "149.154.167.50:443",
+            target: outbound["check-target"] || "example.com:443",
+            tls: outbound["check-tls"] !== false,
           },
         }),
       );
@@ -82,9 +82,15 @@ export function OutboundsView() {
     }
   }
   return (
-    <>
+    <section className="view">
+      <header className="viewHeader">
+        <div>
+          <h1>{t("outbounds.title")}</h1>
+          <p>{t("outbounds.subtitle")}</p>
+        </div>
+      </header>
       <div className="toolbar">
-        <span className="muted">{t("outbounds.subtitle")}</span>
+        <span className="muted">{t("outbounds.autoSummary")}</span>
         <span className="spacer" />
         <Button
           tone="primary"
@@ -102,21 +108,6 @@ export function OutboundsView() {
           {t("outbounds.add")}
         </Button>
       </div>
-      <div className="toolbar">
-        <label htmlFor="outbound-target">{t("outbounds.target")}</label>
-        <input
-          id="outbound-target"
-          className="mono"
-          value={target}
-          onChange={(event) => setTarget(event.target.value)}
-        />
-        <Button tone="quiet" onClick={() => setTarget("149.154.167.50:443")}>
-          {t("diagnostics.telegram")}
-        </Button>
-        {target === "149.154.167.50:443" && (
-          <small className="muted">{t("diagnostics.telegramHint")}</small>
-        )}
-      </div>
       <ErrorNotice error={error || health.error} />
       <div className="tableWrap">
         <table className="dataTable">
@@ -127,6 +118,7 @@ export function OutboundsView() {
               <th>{t("outbounds.udpFallback")}</th>
               <th>{t("common.status")}</th>
               <th>{t("outbounds.latency")}</th>
+              <th>{t("outbounds.checked")}</th>
               <th>{t("common.actions")}</th>
             </tr>
           </thead>
@@ -178,6 +170,12 @@ export function OutboundsView() {
                       ? "—"
                       : `${status.connect_latency_ms} ms`}
                   </td>
+                  <td>
+                    <time dateTime={status?.checked_at}>{timestamp(status?.checked_at)}</time>
+                    <small className="muted mono" style={{ display: "block" }}>
+                      {status?.target || outbound["check-target"] || "example.com:443"}
+                    </small>
+                  </td>
                   <td aria-label={t("common.actions")}>
                     <div className="actions">
                       <Button
@@ -194,6 +192,27 @@ export function OutboundsView() {
                         disabled={!context.admin}
                       >
                         {t("common.edit")}
+                      </Button>
+                      <Button
+                        tone="quiet"
+                        disabled={!context.admin}
+                        title={t("outbounds.disableHint")}
+                        onClick={() => {
+                          const doc = context.document!;
+                          setError(null);
+                          void context
+                            .save(doc, {
+                              ...doc.config,
+                              outbounds: doc.config.outbounds.map((item) =>
+                                item.id === outbound.id
+                                  ? { ...item, enabled: outbound.enabled === false }
+                                  : item,
+                              ),
+                            })
+                            .catch(setError);
+                        }}
+                      >
+                        {t(outbound.enabled === false ? "outbounds.enable" : "outbounds.disable")}
                       </Button>
                       <Button
                         tone="quiet"
@@ -238,7 +257,7 @@ export function OutboundsView() {
         </div>
       </div>
       {editor && <OutboundEditor initial={editor} onClose={() => setEditor(null)} />}
-    </>
+    </section>
   );
 }
 function OutboundEditor({ initial, onClose }: { initial: Outbound; onClose: () => void }) {
@@ -283,8 +302,8 @@ function OutboundEditor({ initial, onClose }: { initial: Outbound; onClose: () =
               base_version: base.version,
               draft: outbound,
               credential_action: credentials,
-              target: "www.google.com:443",
-              tls: true,
+              target: outbound["check-target"] || "example.com:443",
+              tls: outbound["check-tls"] !== false,
             },
           }),
         );
@@ -363,23 +382,52 @@ function OutboundEditor({ initial, onClose }: { initial: Outbound; onClose: () =
             />
           </Field>
           <div className="wide">
-            <Field label={t("outbounds.credentials")}>
-              <select
-                value={credentials.action}
-                onChange={(event) =>
-                  setCredentials({
-                    ...credentials,
-                    action: event.target.value as Credentials["action"],
-                  })
-                }
-              >
-                {base.credential_state?.[initial.name]?.configured && (
-                  <option value="preserve">{t("outbounds.preserve")}</option>
+            {base.credential_state?.[initial.name]?.configured ? (
+              <div className="actions">
+                <span className="muted">
+                  {t(
+                    credentials.action === "preserve"
+                      ? "outbounds.authSaved"
+                      : credentials.action === "clear"
+                        ? "outbounds.authRemoved"
+                        : "outbounds.authChanging",
+                  )}
+                </span>
+                <Button
+                  tone="quiet"
+                  onClick={() =>
+                    setCredentials({
+                      original_name: initial.name,
+                      action: credentials.action === "preserve" ? "replace" : "preserve",
+                      ...(endpoint.scheme === "ss" ? { username: "aes-256-gcm" } : {}),
+                    })
+                  }
+                >
+                  {t(credentials.action === "preserve" ? "outbounds.changeAuth" : "common.cancel")}
+                </Button>
+                {endpoint.scheme !== "ss" && credentials.action === "preserve" && (
+                  <Button
+                    tone="quiet"
+                    onClick={() => setCredentials({ original_name: initial.name, action: "clear" })}
+                  >
+                    {t("outbounds.removeAuth")}
+                  </Button>
                 )}
-                <option value="replace">{t("outbounds.replace")}</option>
-                {endpoint.scheme !== "ss" && <option value="clear">{t("outbounds.clear")}</option>}
-              </select>
-            </Field>
+              </div>
+            ) : (
+              endpoint.scheme !== "ss" && (
+                <Toggle
+                  checked={credentials.action === "replace"}
+                  label={t("outbounds.requiresAuth")}
+                  onChange={(value) =>
+                    setCredentials({
+                      action: value ? "replace" : "clear",
+                      original_name: initial.name,
+                    })
+                  }
+                />
+              )
+            )}
           </div>
           {credentials.action === "replace" && (
             <>
@@ -410,6 +458,7 @@ function OutboundEditor({ initial, onClose }: { initial: Outbound; onClose: () =
               <Field label={t("outbounds.password")}>
                 <input
                   type="password"
+                  required={endpoint.scheme === "ss"}
                   autoComplete="new-password"
                   value={credentials.password ?? ""}
                   onChange={(event) =>
@@ -428,11 +477,28 @@ function OutboundEditor({ initial, onClose }: { initial: Outbound; onClose: () =
               <option value="direct">{t("outbounds.directUDP")}</option>
             </select>
           </Field>
-          <Toggle
-            checked={draft.enabled !== false}
-            onChange={(enabled) => setDraft({ ...draft, enabled })}
-            label={t("common.enabled")}
-          />
+          <details className="wide">
+            <summary>{t("outbounds.autoSettings")}</summary>
+            <p className="inlineNote">{t("outbounds.autoHelp")}</p>
+            <Toggle
+              checked={draft["check-enabled"] !== false}
+              onChange={(value) => setDraft({ ...draft, "check-enabled": value })}
+              label={t("outbounds.autoEnabled")}
+            />
+            <Field label={t("outbounds.target")}>
+              <input
+                className="mono"
+                placeholder="example.com:443"
+                value={draft["check-target"] || ""}
+                onChange={(event) => setDraft({ ...draft, "check-target": event.target.value })}
+              />
+            </Field>
+            <Toggle
+              checked={draft["check-tls"] !== false}
+              onChange={(value) => setDraft({ ...draft, "check-tls": value })}
+              label={t("diagnostics.tls")}
+            />
+          </details>
           <div className="wide inlineNote">{t("outbounds.testHint")}</div>
         </div>
         <ErrorNotice error={error} />

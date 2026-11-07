@@ -57,7 +57,7 @@ export function ReadinessDialog({
         );
       if (check.page === "outbounds")
         return (
-          <Link to="/policy" search={{ view: "outbounds" }} onClick={onClose}>
+          <Link to="/outbounds" onClick={onClose}>
             {t("readiness.openOutbounds")}
           </Link>
         );

@@ -88,6 +88,7 @@ type Controller struct {
 	configureLogging              func(kone.GeneralConfig) error
 	logs                          *logstore.Store
 	health                        *outboundHealthStore
+	healthWake                    chan struct{}
 	geoIPCache                    geoIPStatusCache
 	credentials                   *passwordCredentials
 }
@@ -108,15 +109,18 @@ type State struct {
 	CaptureLocked    bool           `json:"capture_locked"`
 }
 type Operation struct {
-	ID       string     `json:"id"`
-	Kind     string     `json:"kind"`
-	Status   string     `json:"status"`
-	Stage    string     `json:"stage"`
-	Started  time.Time  `json:"started_at"`
-	Finished *time.Time `json:"finished_at,omitempty"`
-	Result   any        `json:"result,omitempty"`
-	Error    string     `json:"error,omitempty"`
-	cancel   context.CancelFunc
+	Target    string     `json:"target,omitempty"`
+	Outbounds []string   `json:"outbounds,omitempty"`
+	Protocol  string     `json:"protocol,omitempty"`
+	ID        string     `json:"id"`
+	Kind      string     `json:"kind"`
+	Status    string     `json:"status"`
+	Stage     string     `json:"stage"`
+	Started   time.Time  `json:"started_at"`
+	Finished  *time.Time `json:"finished_at,omitempty"`
+	Result    any        `json:"result,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	cancel    context.CancelFunc
 }
 
 func New(options Options) (*Controller, error) {
@@ -161,6 +165,7 @@ func New(options Options) (*Controller, error) {
 	c := &Controller{directory: options.Directory, version: options.Version, factory: options.Factory, preflight: options.Preflight, probe: options.Probe, now: options.Now, state: "paused", bootstrap: randomToken(), bootstrapExpiry: options.Now().Add(5 * time.Minute), sessions: map[string]*Session{}, operations: map[string]*Operation{}, requestKeys: map[string]string{}, probeSlots: make(chan struct{}, 4), ctx: ctx, cancel: cancel}
 	c.inspectSystemDNSRecovery, c.recoverSystemDNS = options.InspectSystemDNSRecovery, options.RecoverSystemDNS
 	c.probeUDP = options.ProbeUDP
+	c.healthWake = make(chan struct{}, 1)
 	if err := c.initAuthentication(); err != nil {
 		cancel()
 		return nil, err
@@ -187,6 +192,32 @@ func New(options Options) (*Controller, error) {
 				doc = fallback
 				c.configError = "Saved settings need repair; showing the last valid backup while preserving the original file"
 			}
+		}
+	}
+	// Convert the old implicit LAN bypass into visible, editable rules once.
+	// Keep the previous profile and keep the unconditional fallback last.
+	if c.configError == "" && doc.Config.Policy.Mode == "proxy-first" && !doc.Config.Policy.LANDefaults {
+		if doc.Version == ^uint64(0) {
+			cancel()
+			return nil, errors.New("configuration revision limit reached; cannot migrate LAN rules")
+		}
+		before := cloneDocument(doc)
+		final := doc.Config.Rule[len(doc.Config.Rule)-1]
+		doc.Config.Rule = doc.Config.Rule[:len(doc.Config.Rule)-1]
+		initializeLANRules(doc.Config)
+		doc.Config.Rule = append(doc.Config.Rule, final)
+		if err := doc.Config.Validate(); err != nil {
+			cancel()
+			return nil, err
+		}
+		doc.Version++
+		if err := writeDocument(c.settingsPath()+".previous", before); err != nil {
+			cancel()
+			return nil, err
+		}
+		if err := writeDocument(c.settingsPath(), doc); err != nil {
+			cancel()
+			return nil, err
 		}
 	}
 	c.doc = doc
@@ -352,6 +383,7 @@ func (c *Controller) saveLocked(request SaveRequest) (result map[string]any, res
 	c.doc = next
 	c.configError = ""
 	c.mu.Unlock()
+	c.wakeOutboundMonitor()
 	c.logEvent(slog.LevelInfo, "Settings saved", slog.String("stage", "save"), slog.Uint64("saved_version", next.Version))
 	value := c.Document()
 	value["applied"] = false

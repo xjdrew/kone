@@ -62,6 +62,7 @@ func (rule *Rule) ProxyDNS(domain string, msg *dns.Msg) string {
 type Rule struct {
 	now           func() time.Time
 	directDomains map[string]bool // always direct connect for proxy domain
+	endpointDNS   map[string]bool // bootstrap proxy names keep real DNS answers
 	patterns      []Pattern
 	outbounds     map[string]OutboundType
 	decisions     []decisionRule
@@ -113,9 +114,9 @@ func (rule *Rule) Decide(val any, protocol string, port uint16) (decision Routin
 	}
 	if endpoint != "" {
 		if rule.protectedAddress(endpoint) {
-			return RoutingDecision{RuleID: "protected:local", RuleType: "PROTECTED", RuleName: "Local network protection", RuleSource: "protected", Outbound: BuiltinDirect, Protocol: protocol, Port: port, Protected: true, Reason: "local_network"}
+			return RoutingDecision{RuleID: "protected:local", RuleType: "PROTECTED", RuleName: "Local host protection", RuleSource: "protected", Outbound: BuiltinDirect, Protocol: protocol, Port: port, Protected: true, Reason: "local_host"}
 		}
-		if rule.directDomains[endpoint] {
+		if rule.directDomains[endpoint] || protocol == "" && rule.endpointDNS[endpoint] {
 			return RoutingDecision{RuleID: "protected:endpoint", RuleType: "PROTECTED", RuleName: "Proxy endpoint bypass", RuleSource: "protected", Outbound: BuiltinDirect, Protocol: protocol, Port: port, Protected: true, Reason: "proxy endpoint bypass"}
 		}
 	}
@@ -213,6 +214,7 @@ func NewRuleWithGeoIP(rcs []RuleConfig, outbounds []OutboundConfig, database *ge
 	}
 	rule := &Rule{
 		directDomains: map[string]bool{},
+		endpointDNS:   map[string]bool{},
 		outbounds:     map[string]OutboundType{},
 		geoIP:         database,
 	}

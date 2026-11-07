@@ -56,7 +56,7 @@ func TestSystemLifecycleGlobalPolicyAndPausedTransition(t *testing.T) {
 	transport := &http.Transport{Proxy: nil, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
-	for _, target := range []string{"http://203.0.113.10/", "http://[2001:db8:123::10]/"} {
+	for _, target := range []string{"http://203.0.113.10/", "http://[2001:db8:123::10]/", "http://10.87.0.10/", "http://[fd00:1234::10]/"} {
 		response, err := client.Get(target)
 		require.NoError(t, err, target)
 		body, err := io.ReadAll(response.Body)

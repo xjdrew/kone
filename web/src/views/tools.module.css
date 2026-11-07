@@ -65,20 +65,97 @@
   gap: 16px;
   font-size: 11px;
 }
-.result {
-  margin: 12px 0;
+.diagnosticTitle {
+  font-size: 14px;
+  margin: 0 0 2px;
 }
-.result > div:first-child {
+.resultsHeading,
+.resultSummary {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.5fr) minmax(90px, 1fr) 70px minmax(90px, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+.resultsHeading {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.result {
+  border-bottom: 1px solid var(--line);
+}
+.resultSummary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-size: 12px;
+  list-style: none;
+}
+.resultSummary::-webkit-details-marker {
+  display: none;
+}
+.resultSummary:hover {
+  background: var(--hover);
+}
+.target {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.target::before {
+  content: "▸";
+  color: var(--muted);
+  margin-inline-end: 6px;
+}
+.result[open] .target::before {
+  content: "▾";
+}
+.target small {
+  color: var(--muted);
+  margin-inline-start: 8px;
+  font-size: 10px;
+}
+.resultState {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 6px;
+}
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--muted);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: progress-spin 0.8s linear infinite;
+  flex: none;
+}
+@keyframes progress-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+.resultDetails {
+  padding: 4px 0 12px;
+}
+.technicalMessage {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.protocolChecks {
+  display: flex;
   flex-wrap: wrap;
+  gap: 8px 20px;
+  font-size: 12px;
 }
-.result > div:first-child > span:first-child {
-  flex: 1;
-}
-.result details {
-  margin-top: 4px;
+.protocolChecks > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .logView {
   display: flex;
@@ -125,5 +202,15 @@
   }
   .logView {
     min-height: 400px;
+  }
+}
+
+@media (max-width: 1000px) {
+  .resultSummary {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 14px;
+  }
+  .resultsHeading {
+    display: none;
   }
 }

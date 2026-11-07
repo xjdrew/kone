@@ -50,6 +50,31 @@ func healthStatuses(t *testing.T, c *Controller) []OutboundHealth {
 	return c.outboundStatuses(cfg)
 }
 
+func TestOutboundTestDefaultsToSavedCheckTargetAndAllowsOverride(t *testing.T) {
+	observed := make(chan string, 2)
+	c := testController(t, Options{Probe: func(_ context.Context, _ *kone.KoneConfig, _, target string, tls bool) ProbeResult {
+		observed <- fmt.Sprintf("%s:%t", target, tls)
+		return ProbeResult{Status: "reachable", Stage: "connect"}
+	}})
+	outbound := savedHealthOutbound(t, c, "socks5://127.0.0.1:1080")
+	r := currentRequest(c)
+	row := r.Config["outbounds"].([]any)[0].(map[string]any)
+	row["check-target"], row["check-tls"] = "149.154.167.50:443", false
+	_, err := c.Save(r)
+	require.NoError(t, err)
+	request := OutboundTestRequest{BaseVersion: c.doc.Version, OutboundID: outbound.ID}
+	op, err := c.TestOutbound(request, "")
+	require.NoError(t, err)
+	healthResult(t, c, op)
+	require.Equal(t, "149.154.167.50:443:false", <-observed)
+	target, tls := "example.com:443", true
+	request.Target, request.TLS = &target, &tls
+	op, err = c.TestOutbound(request, "")
+	require.NoError(t, err)
+	healthResult(t, c, op)
+	require.Equal(t, "example.com:443:true", <-observed)
+}
+
 func TestOutboundHealthExpiresAndChangesInvalidateWithoutCredentialHashes(t *testing.T) {
 	var clock atomic.Int64
 	clock.Store(time.Now().Unix())
