@@ -33,7 +33,7 @@ test("settings refresh keeps menu and action identities while updating summaries
   current.link.onclick = () => clicked++;
   current.action.onclick = () => clicked++;
   const original = [current.link, current.action, current.summary, current.access];
-  const fresh = makeRoot("DEBUG", true, "当前为只读会话", "请先暂停接管");
+  const fresh = makeRoot("DEBUG", true, "当前为只读会话", "请先停用代理");
   updateSettingsRoot(current.root, fresh.root);
   assert.deepEqual([current.link, current.action, current.summary, current.access], original);
   assert.equal(current.summary.textContent, "DEBUG");
@@ -42,7 +42,7 @@ test("settings refresh keeps menu and action identities while updating summaries
   assert.equal(current.action.disabled, true);
   assert.equal(current.action.hasAttribute("disabled"), true);
   assert.equal(current.access.textContent, "当前为只读会话");
-  assert.equal(current.footer.textContent, "请先暂停接管");
+  assert.equal(current.footer.textContent, "请先停用代理");
   current.link.onclick(); current.action.onclick();
   assert.equal(clicked, 2, "polling retains the original handlers");
   updateSettingsRoot(current.root, makeRoot("WARN", false, "", "可以重置").root);
@@ -91,7 +91,7 @@ test("all configuration landing pages show saved resources without editable form
     model, h, card: (title, description, ...children) => h("section", {}, title, description, ...children),
     note: text => h("p", {}, text), button: (text, onclick, kind, disabled) => h("button", { onclick, disabled }, text),
     badge: text => h("span", {}, text), detailPairs: pairs => h("dl", {}, ...pairs.flat()), empty: text => h("p", {}, text), readonlyNote: () => null, time: String,
-    canManage: () => true, runtime: () => "running", stateLabel: () => "正在接管", edit: noop, addOutbound: noop, addRule: noop, deleteOutbound: noop, deleteRule: noop, moveRule: noop, outboundDetails: noop, testOutbound: noop, refreshHealth: noop, preflight: noop, simulateRules: noop,
+    canManage: () => true, runtime: () => "running", stateLabel: () => "正在代理", edit: noop, addOutbound: noop, addRule: noop, deleteOutbound: noop, deleteRule: noop, moveRule: noop, outboundDetails: noop, testOutbound: noop, refreshHealth: noop, preflight: noop, simulateRules: noop,
     dnsObservations: () => [h("section", {}, "DNS observations")], settingsObservations: () => [h("section", {}, "Settings status")],
   };
   const views = createConfigurationPages(ui);
@@ -217,7 +217,7 @@ test("an absent FINAL is shown as built-in direct and stays protected for read-o
   const render = () => descendants(createConfigurationPages(ui).rules());
   let nodes = render();
   assert.equal(nodes.filter(node => Object.hasOwn(node.attrs, "data-rule-row")).length, 0);
-  assert.match(JSON.stringify(nodes.find(node => Object.hasOwn(node.attrs, "data-rule-final"))), /内置直连/);
+  assert.match(JSON.stringify(nodes.find(node => Object.hasOwn(node.attrs, "data-rule-final"))), /其余流量 → direct/);
   nodes.find(node => Object.hasOwn(node.attrs, "data-rule-final-edit")).attrs.onclick();
   assert.deepEqual(calls, [["FINAL"]]);
   ui.canManage = () => false;

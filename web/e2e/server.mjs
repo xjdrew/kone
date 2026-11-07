@@ -24,7 +24,7 @@ http
         "Content-Type": types[extname(file)] || "application/octet-stream",
         "Cache-Control": "no-store",
         "Content-Security-Policy":
-          "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'",
       });
       res.end(data);
     } catch {

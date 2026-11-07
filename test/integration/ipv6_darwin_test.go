@@ -337,7 +337,7 @@ func TestSystemDarwinIPv6(t *testing.T) {
 			t.Cleanup(func() { one.Close() })
 			done := make(chan error, 1)
 			go func() { done <- one.Run(t.Context()) }()
-			require.ErrorContains(t, darwinWait(t, done), "add IPv6 route "+foreign.String())
+			require.ErrorContains(t, darwinWait(t, done), "add route "+foreign.String())
 			require.NoError(t, one.Close())
 			darwinAssertOwnedGone(t, one)
 			require.Empty(t, darwinIPv6Routes(t, owned))

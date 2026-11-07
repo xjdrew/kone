@@ -7,7 +7,7 @@ export const settingsSections = {
   logs: ["日志设置", "调整底层运行日志的采集级别与输出格式。"],
   geoip: ["GeoIP 数据", "查看数据来源，更新或回退地址归属数据。"],
   lan: ["手机与平板访问", "管理局域网入口、设备授权与会话。"],
-  account: ["管理密码", "更改本机管理密码，保护你的管理会话。"],
+  account: ["管理密码", "设置远程访问所需的管理密码。"],
   configuration: ["配置管理", "查看配置版本，导入、应用或撤销变更。"],
   privacy: ["记录与隐私", "了解本机记录，导出配置或清空观察数据。"],
   network: ["网络维护", "查看自动恢复说明，处理需要人工维护的网络状态。"],
@@ -70,14 +70,14 @@ export function createConfigurationPages(ui) {
   function inbounds() {
     const core = saved().core || {};
     const inbound = model.config?.inbound || {};
-    return [readonlyNote(), versions(), card("TUN 接管入口", "入口设置和实际运行状态分别显示；接管不会因查看或编辑而启动。",
+    return [readonlyNote(), versions(), card("TUN 代理入口", "入口设置和实际运行状态分别显示；代理不会因查看或编辑而启动。",
       detailPairs([
         ["名称", inbound.name || "TUN"], ["已保存入口", inbound.enabled ? "已启用" : "未启用"],
         ["运行状态", ui.stateLabel()], ["设备", model.state.device || core.tun || "启动时自动分配"],
         ["协议栈", core.stack || "system"], ["IPv4 网段", core.network || "10.192.0.1/16"],
-        ["IPv6 网段", core["ipv6-network"] || "关闭"], ["真实出口", core["outbound-interface"] || "系统选择"],
-        ["接管范围", core["auto-route"] ? "全部 IPv4（更具体路由优先）" : "Fake-IP 与显式规则"],
-      ]), locked() && note("接管运行或切换期间，TUN、出口、协议栈和 DNS 设置已锁定；请先暂停接管再编辑。", "warning"),
+        ["IPv6 网段", core["ipv6-network"] || "关闭"], ["主机 IPv6", model.state.capabilities?.ipv6_available ? "可用" : "未检测到可用地址"], ["真实出口", core["outbound-interface"] || "系统选择"],
+        ["代理范围", core["auto-route"] ? "全部 IPv4（更具体路由优先）" : "Fake-IP 与显式规则"],
+      ]), locked() && note("代理运行或切换期间，TUN、出口、协议栈和 DNS 设置已锁定；请先停用代理再编辑。", "warning"),
       actions(button("编辑入站", () => ui.edit("inbounds"), "primary", !ui.canManage() || locked())),
     )];
   }
@@ -93,10 +93,10 @@ export function createConfigurationPages(ui) {
         h("div", { class: "resource-main" }, h("h3", {}, `${index + 1}. ${rule.type} ${rule.pattern || ""}`), h("p", {}, `→ ${rule.outbound || "direct"} · ${ruleScope(rule)}`), rule["expires-at"] && h("small", {}, `到期 ${time(rule["expires-at"])}`)),
         actions(button("编辑", () => ui.edit("rule", index)), button("↑", () => ui.moveRule(index, -1), "ghost", !ui.canManage() || index === 0, { "aria-label": `将规则 ${index + 1} 上移` }), button("↓", () => ui.moveRule(index, 1), "ghost", !ui.canManage() || index === values.length - 1 || values[index + 1]?.type === "FINAL", { "aria-label": `将规则 ${index + 1} 下移` }), button("删除", () => ui.deleteRule(index), "danger")),
       ))) : empty("尚无普通规则", "添加一条规则，为特定域名或 IP 选择出站。"),
-    ), h("section", { class: "rule-final", "data-rule-final": "" }, card("最终规则 FINAL", "始终放在最后，处理没有命中前面规则的流量。",
+    ), h("section", { class: "rule-final", "data-rule-final": "" }, card("最终规则", "",
       h("div", { class: "resource-item" },
         h("div", { class: "resource-main" }, h("h3", {}, `其余流量 → ${final?.outbound || "direct"}`),
-          h("p", {}, final ? final.protocol || final.ports?.length ? `旧版范围：${ruleScope(final)}；范围外仍直连。` : "全部未匹配流量" : "内置直连；编辑并保存后成为显式 FINAL 规则。")),
+          (final?.protocol || final?.ports?.length) && h("p", {}, `${ruleScope(final)}；范围外直连`)),
         actions(button("编辑", () => final ? ui.edit("rule", finalIndex) : ui.addRule("FINAL"), "", !ui.canManage(), { "data-rule-final-edit": "" })),
       ),
     ))];
@@ -106,7 +106,7 @@ export function createConfigurationPages(ui) {
     const config = saved().dns || {};
     return [readonlyNote(), card("DNS 设置", "此处显示已保存设置；下方为实际运行的解析范围和查询记录。",
       detailPairs([["上游", config.servers?.length ? config.servers.join(", ") : "自动发现系统 DNS"], ["系统引导", config.system ? "启用（仍需平台检查）" : "关闭"], ["手工解析规则", `${config.rules?.length || 0} 条`], ["监听端口", config["listen-port"] || 53]]),
-      locked() && note("DNS 设置需要先暂停接管再编辑。", "warning"),
+      locked() && note("DNS 设置需要先停用代理再编辑。", "warning"),
       actions(button("编辑 DNS 设置", () => ui.edit("dns"), "primary", !ui.canManage() || locked())),
     ), ...ui.dnsObservations()];
   }
@@ -125,10 +125,10 @@ export function createConfigurationPages(ui) {
     return [h("div", { class: "settings-root", "data-settings-root": "" }, h("div", { "data-settings-root-access": "" }, readonlyNote()),
       group("about", "", link("about", model.state.version || model.state.build?.version || "开发版本")),
       group("application", "应用设置", link("logs", (general["log-level"] || "info").toUpperCase()), link("geoip", model.geoip?.saved?.version || "查看数据")),
-      group("security", "访问与安全", link("lan", model.lan.enabled ? "已开启" : "未开启"), link("account", "修改密码")),
+      group("security", "访问与安全", link("lan", model.lan.enabled ? "已开启" : "未开启"), link("account", model.state.password_configured === false ? "设置密码" : "修改密码")),
       group("maintenance", "数据维护", link("configuration", `版本 ${model.config?.version ?? "—"}`), link("privacy", "本机处理"), link("network", "自动恢复")),
-      group("actions", "", danger("reset", "重置所有配置", ui.resetConfiguration, !ui.canManage() || resetLocked || Boolean(model.state.remote_session)), danger("logout", "退出登录", ui.logout, !model.online || model.authBusy || model.busy)),
-      h("p", { class: "settings-footnote" }, resetLocked ? "接管运行期间无法重置配置，请先暂停接管。" : model.state.remote_session ? "重置所有配置需要在 KONE 主机本机操作。" : "重置配置会保留管理密码与本机登录。"),
+      group("actions", "", danger("reset", "重置所有配置", ui.resetConfiguration, !ui.canManage() || resetLocked || Boolean(model.state.remote_session)), !model.state.local_access && danger("logout", "退出登录", ui.logout, !model.online || model.authBusy || model.busy)),
+      h("p", { class: "settings-footnote" }, resetLocked ? "代理运行期间无法重置配置，请先停用代理。" : model.state.remote_session ? "重置所有配置需要在 KONE 主机本机操作。" : "重置配置会保留管理密码与本机登录。"),
     )];
   }
   return { inbounds, outbounds, rules, dns, settings };

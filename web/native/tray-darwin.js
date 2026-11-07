@@ -158,8 +158,8 @@ function run(argv) {
     entry("status", "KONE · 状态未知", "");
     menu.addItem($.NSMenuItem.separatorItem);
     entry("open", "打开管理界面", "open:");
-    entry("start", "启用接管", "start:");
-    entry("pause", "暂停接管", "pause:");
+    entry("start", "启用代理", "start:");
+    entry("pause", "停用代理", "pause:");
     entry("diagnostics", "打开诊断", "diagnostics:");
     menu.addItem($.NSMenuItem.separatorItem);
     entry("exit", "退出 KONE", "exit:");
@@ -187,7 +187,7 @@ function run(argv) {
     function update(input) {
       state = normalizeTrayState(input);
       var labels = {
-        running: "已接管",
+        running: "已代理",
         paused: "已暂停",
         starting: "启动中",
         stopping: "暂停中",

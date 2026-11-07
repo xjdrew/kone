@@ -242,7 +242,8 @@ func (h *flowHandler) startObservation(s *runtimeSnapshot, protocol string, sour
 
 func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	var result error
-	s := h.one.policy.Load()
+	s, releaseRoutes := h.one.flowSnapshot(destination.Addr)
+	defer releaseRoutes()
 	stage, outbound, destinationText := "resolve", "", destination.String()
 	observation := h.startObservation(s, "tcp", source, destination)
 	defer func() {
@@ -308,7 +309,8 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 // destination resolution or socket creation, and never silently bypass a proxy.
 func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
 	var result error
-	s := h.one.policy.Load()
+	s, releaseRoutes := h.one.flowSnapshot(destination.Addr)
+	defer releaseRoutes()
 	stage, outbound, destinationText := "resolve", "", destination.String()
 	observation := h.startObservation(s, "udp", source, destination)
 	defer func() {

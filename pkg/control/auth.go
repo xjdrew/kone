@@ -20,6 +20,7 @@ type Session struct {
 	Created time.Time `json:"created_at"`
 	Expires time.Time `json:"expires"`
 	Remote  bool      `json:"remote"`
+	Local   bool      `json:"local_access,omitempty"`
 	csrf    string
 }
 type Pairing struct {
@@ -144,6 +145,7 @@ func (c *Controller) pair(role string) (Pairing, error) {
 }
 
 func (c *Controller) authorize(r *http.Request) (*Session, bool) {
+	local := c.localAccess(r)
 	token := ""
 	bearer := false
 	if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
@@ -158,7 +160,7 @@ func (c *Controller) authorize(r *http.Request) (*Session, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	session := c.sessions[tokenHash(token)]
-	if session == nil || c.now().After(session.Expires) {
+	if session == nil || c.now().After(session.Expires) || session.Local && !local {
 		return nil, false
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead && !bearer && r.Header.Get("X-CSRF-Token") != session.csrf {
@@ -241,4 +243,29 @@ func (c *Controller) sessionList() []Session {
 		}
 	}
 	return out
+}
+
+// Local sessions are bound to the loopback listener, never to forwarded headers.
+func (c *Controller) localAccess(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.Host)
+	address, parseErr := netip.ParseAddr(host)
+	return err == nil && parseErr == nil && address.IsLoopback() && r.TLS == nil && localRemote(r) && c.validOrigin(r)
+}
+
+func (c *Controller) localSession(w http.ResponseWriter, r *http.Request) {
+	c.mu.Lock()
+	for key, session := range c.sessions {
+		if !c.now().Before(session.Expires) {
+			delete(c.sessions, key)
+		}
+	}
+	if c.closed || len(c.sessions) >= 32 {
+		c.mu.Unlock()
+		apiError(w, 429, "session_limit", "Session unavailable; revoke an old session or retry later")
+		return
+	}
+	token, session := c.newSession("admin", false)
+	session.Local = true
+	c.mu.Unlock()
+	writeSession(w, r, token, session)
 }

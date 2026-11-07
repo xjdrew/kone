@@ -111,7 +111,7 @@ func (c *Controller) Handler() http.Handler {
 			c.setupPassword(w, r, session)
 			return
 		}
-		if !c.passwordConfigured() || session.Role == "setup" {
+		if (!c.passwordConfigured() && !session.Local) || session.Role == "setup" {
 			apiError(w, 403, "setup_required", "Set the management password from the local tray before using the console")
 			return
 		}
@@ -162,7 +162,7 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		c.changePassword(w, r, session)
 	case path == "state" && r.Method == http.MethodGet:
 		state := c.State()
-		writeJSON(w, 200, map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role, "remote_session": session.Remote, "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf, "capture_locked": state.CaptureLocked})
+		writeJSON(w, 200, map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role, "remote_session": session.Remote, "local_access": session.Local, "password_configured": c.passwordConfigured(), "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf, "capture_locked": state.CaptureLocked})
 	case path == "readiness" && r.Method == http.MethodGet:
 		writeJSON(w, 200, c.Readiness(r.Context()))
 	case path == "outbounds/health" && r.Method == http.MethodGet:

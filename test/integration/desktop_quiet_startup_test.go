@@ -29,7 +29,7 @@ func (output quietStartupOutput) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func TestQuietManagementStartupServesFirstSetupWithoutCaptureOrNativeUI(t *testing.T) {
+func TestQuietManagementStartupServesLocalAccessWithoutCaptureOrNativeUI(t *testing.T) {
 	previous := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	// Use the public console entry with both UI surfaces disabled, including
@@ -63,9 +63,10 @@ func TestQuietManagementStartupServesFirstSetupWithoutCaptureOrNativeUI(t *testi
 		defer response.Body.Close()
 		var auth struct {
 			SetupRequired bool `json:"setup_required"`
+			LocalAccess   bool `json:"local_access"`
 			Authenticated bool `json:"authenticated"`
 		}
-		return response.StatusCode == http.StatusOK && json.NewDecoder(response.Body).Decode(&auth) == nil && auth.SetupRequired && !auth.Authenticated
+		return response.StatusCode == http.StatusOK && json.NewDecoder(response.Body).Decode(&auth) == nil && auth.LocalAccess && !auth.SetupRequired && !auth.Authenticated
 	}, 5*time.Second, 25*time.Millisecond)
 	response, err := client.Get(base)
 	require.NoError(t, err)
@@ -84,6 +85,6 @@ func TestQuietManagementStartupServesFirstSetupWithoutCaptureOrNativeUI(t *testi
 	require.NoError(t, err)
 	for _, name := range []string{"capture.json", "auth.json"} {
 		_, err = os.Stat(filepath.Join(directory, name))
-		require.True(t, os.IsNotExist(err), "viewing first setup cannot start capture or create a management password")
+		require.True(t, os.IsNotExist(err), "viewing local access cannot start capture or create a management password")
 	}
 }

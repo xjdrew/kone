@@ -43,7 +43,7 @@ export function createDiagnosticsPage(ui) {
   const table = h("table", { class: "log-table", "data-log-table": "" },
     h("thead", {}, h("tr", {}, ["时间", "级别", "来源", "消息", "结构化字段"].map(title => h("th", { scope: "col" }, title)))), body);
   const viewport = h("div", { class: "runtime-logs", id: "runtime-logs", tabindex: 0, "aria-label": "运行日志列表" }, table);
-  const empty = h("div", { class: "log-empty", hidden: true }, h("strong", {}, "暂无匹配的运行日志"), h("p", {}, "管理服务启动、接管启停与失败过程会记录在这里。可调整筛选查看。"));
+  const empty = h("div", { class: "log-empty", hidden: true }, h("strong", {}, "暂无匹配的运行日志"), h("p", {}, "管理服务启动、代理启停与失败过程会记录在这里。可调整筛选查看。"));
   const older = button("较旧", ui.older, "ghost compact", true, { "data-log-older": "" });
   const newer = button("较新", ui.newer, "ghost compact", true, { "data-log-newer": "" });
   const latest = button("回到最新", ui.latest, "ghost compact", false, { "data-log-latest": "" });

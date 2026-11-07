@@ -217,6 +217,7 @@ func (c *Controller) settingsPath() string { return filepath.Join(c.directory, "
 
 func managementDefaults() *kone.KoneConfig {
 	cfg := kone.DefaultConfig()
+	cfg.Core.IPv6Network = kone.DefaultIPv6Network()
 	cfg.Rule = []kone.RuleConfig{{ID: "rule-default-direct", Source: "default", Schema: "FINAL", Outbound: kone.BuiltinDirect}}
 	cfg.DNS.System = kone.SupportsSystemDNS()
 	return cfg
@@ -257,7 +258,7 @@ func (c *Controller) State() State {
 	capabilities := map[string]any{
 		"inbounds": []string{"tun"}, "stacks": kone.SupportedStacks(),
 		"tcp": true, "udp_direct": true, "udp_proxy": true, "proxy_udp_schemes": []string{"socks5", "ss"},
-		"ipv6": kone.SupportsIPv6Capture(), "ipv6_enabled": c.doc.Config.Core.IPv6Network != "",
+		"ipv6": kone.SupportsIPv6Capture(), "ipv6_available": kone.DefaultIPv6Network() != "", "ipv6_enabled": c.doc.Config.Core.IPv6Network != "",
 		"system_dns": kone.SupportsSystemDNS(), "system_dns_enabled": c.doc.Config.DNS.System,
 		"process_attribution": process.Supported(), "process_scope": "best effort for local IPv4 sockets; IPv6 and unverified owners remain unknown; remote sources remain remote",
 		"tls_lan": true, "persistent_config": true, "statistics": "business payload bytes", "temporary_rules": true, "temporary_rule_scope": "domain rules only",
@@ -297,20 +298,7 @@ func (c *Controller) Validate(request SaveRequest) (map[string]any, error) {
 }
 
 func restartRequired(next, current Document) bool {
-	return next.Inbound != current.Inbound || !reflect.DeepEqual(next.Config.Core, current.Config.Core) || !reflect.DeepEqual(next.Config.DNS, current.Config.DNS) || !reflect.DeepEqual(next.Config.General, current.Config.General) || next.Config.GeoIP != current.Config.GeoIP || cidrChanges(next.Config, current.Config)
-}
-
-func cidrChanges(a, b *kone.KoneConfig) bool {
-	routes := func(cfg *kone.KoneConfig) []kone.RuleConfig {
-		var rules []kone.RuleConfig
-		for _, r := range cfg.Rule {
-			if r.Schema == "IP-CIDR" || r.Schema == "IP-CIDR6" {
-				rules = append(rules, r)
-			}
-		}
-		return rules
-	}
-	return !reflect.DeepEqual(routes(a), routes(b))
+	return next.Inbound != current.Inbound || !reflect.DeepEqual(next.Config.Core, current.Config.Core) || !reflect.DeepEqual(next.Config.DNS, current.Config.DNS) || !reflect.DeepEqual(next.Config.General, current.Config.General) || next.Config.GeoIP != current.Config.GeoIP
 }
 
 func (c *Controller) Save(request SaveRequest) (map[string]any, error) {

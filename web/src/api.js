@@ -9,19 +9,19 @@ export class ApiError extends Error {
 
 export function explainError(message) {
   return {
-    "enable the TUN inbound before starting capture": "请先在“入站”启用 TUN 入口并保存，再启用接管。",
+    "enable the TUN inbound before starting capture": "请先在“入站”启用 TUN 入口并保存，再启用代理。",
     "Current management password is incorrect": "当前管理密码不正确，请重新输入。",
-    "Could not restore the previous capture automatically; check the host network and runtime logs, then retry": "无法启用接管，请查看运行日志后重试。",
+    "Could not restore the previous capture automatically; check the host network and runtime logs, then retry": "无法启用代理，请查看运行日志后重试。",
     "Management session or password changed; sign in again": "管理会话或密码已变更，请重新登录。",
     "Use matching passwords of at least 8 characters and at most 128 UTF-8 bytes": "两次密码需一致，至少 8 个字符，UTF-8 长度不超过 128 字节。",
     "Clear the interrupted startup record, then run preflight before enabling capture": "上次启动在配置网络前中断。请前往“设置与恢复”点击“检查并恢复”，清除中断记录后重新预检。",
-    "Clear the completed recovery record, then run preflight before enabling capture": "上次接管的 TUN 已不存在。请前往“设置与恢复”点击“检查并恢复”，确认清除恢复记录后重新预检。",
-    "Startup stopped before device ownership was recorded; no capture network settings were applied": "上次启动在记录设备所有权前中断，尚未应用接管网络设置。",
-    "The recorded transient interface is absent": "上次接管记录的临时 TUN 设备已不存在。",
-    "Device-scoped capture routes were released with the absent transient interface": "依附于该临时 TUN 的接管路由已随设备释放。",
-    "A program-scoped firewall exception may remain; it is preserved because its ownership cannot be verified and does not capture traffic without the absent TUN": "可能仍有程序防火墙例外。因无法验证所有权，KONE 会保留它；TUN 已不存在，该例外不会接管流量。",
-    "Inspect the remaining interface and external network changes on this host before retrying": "接管记录对应的设备名称或索引仍存在，请先检查本机设备与网络变更，再重试恢复。",
-    "Inspect the previous capture on this host; KONE will not delete an interface with uncertain ownership": "无法确认旧接管设备的所有权，请先检查本机设备；KONE 不会删除所有权不明的接口。",
+    "Clear the completed recovery record, then run preflight before enabling capture": "上次代理的 TUN 已不存在。请前往“设置与恢复”点击“检查并恢复”，确认清除恢复记录后重新预检。",
+    "Startup stopped before device ownership was recorded; no capture network settings were applied": "上次启动在记录设备所有权前中断，尚未应用代理网络设置。",
+    "The recorded transient interface is absent": "上次代理记录的临时 TUN 设备已不存在。",
+    "Device-scoped capture routes were released with the absent transient interface": "依附于该临时 TUN 的代理路由已随设备释放。",
+    "A program-scoped firewall exception may remain; it is preserved because its ownership cannot be verified and does not capture traffic without the absent TUN": "可能仍有程序防火墙例外。因无法验证所有权，KONE 会保留它；TUN 已不存在，该例外不会代理流量。",
+    "Inspect the remaining interface and external network changes on this host before retrying": "代理记录对应的设备名称或索引仍存在，请先检查本机设备与网络变更，再重试恢复。",
+    "Inspect the previous capture on this host; KONE will not delete an interface with uncertain ownership": "无法确认旧代理设备的所有权，请先检查本机设备；KONE 不会删除所有权不明的接口。",
   }[message] || message;
 }
 
@@ -140,12 +140,14 @@ export async function bootstrap() {
   const token = params.get("token");
   if (token) {
     const page = params.get("page") === "diagnostics" ? "diagnostics" : "home";
-    // Remove bootstrap credentials before creating links or making requests.
-    history.replaceState(
-      null,
-      "",
-      `${location.pathname}${location.search}#${page}`,
-    );
+    history.replaceState(null, "", `${location.pathname}${location.search}#${page}`);
+  }
+  const auth = await request("/auth");
+  if (auth.local_access) {
+    if (!auth.local_session) await request("/session", "POST", {});
+    return request("/state");
+  }
+  if (token) {
     bearer = token;
     try {
       const session = await request("/session", "POST", { token });

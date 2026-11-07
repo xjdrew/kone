@@ -8,7 +8,7 @@ export function createOutboundsPage(ui) {
   const references = (rules, name) => {
     const count = outboundRuleReferences(rules, name).length;
     return h("span", { class: "outbound-reference-count", "data-outbound-references": name,
-      title: "已保存规则的引用数量，包含显式 FINAL；不计内置默认兜底。" }, `${count} 条规则`);
+      title: "引用此出站的规则数量" }, `${count} 条规则`);
   };
   function builtin(name, label, description, rules) {
     const refs = outboundRuleReferences(rules, name);
@@ -19,9 +19,9 @@ export function createOutboundsPage(ui) {
         references(rules, name), h("span", { class: "builtin-outbound-view", "aria-hidden": true }, "查看 ›")),
       h("div", { class: "builtin-outbound-detail" },
         h("p", {}, description),
-        name === "direct" && !rules.some(rule => rule.type === "FINAL") && h("p", {}, "没有显式 FINAL 时，内置默认兜底仍使用直连。"),
+        name === "direct" && !rules.some(rule => rule.type === "FINAL") && h("p", {}, "其余流量默认直连"),
         refs.length ? h("ul", { "aria-label": "引用规则" }, refs.map(rule => h("li", {},
-          `${rule.order}. ${rule.type}${rule.pattern ? " " + rule.pattern : ""}${rule["expires-at"] && Date.parse(rule["expires-at"]) <= Date.now() ? " · 已到期" : ""}`)))
+          `${rule.type === "FINAL" ? "其余流量" : `${rule.order}. ${rule.type}${rule.pattern ? " " + rule.pattern : ""}`}${rule["expires-at"] && Date.parse(rule["expires-at"]) <= Date.now() ? " · 已到期" : ""}`)))
           : h("p", { class: "muted" }, "没有已保存规则引用。"),
       ),
     );

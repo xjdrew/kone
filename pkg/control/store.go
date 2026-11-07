@@ -21,7 +21,7 @@ import (
 )
 
 var ErrConflict = errors.New("configuration changed; reload the latest version before saving")
-var ErrCaptureLocked = errors.New("capture is running; pause capture before changing TUN, core, DNS or capture routes")
+var ErrCaptureLocked = errors.New("capture is running; pause capture before changing TUN, core or DNS settings")
 
 type Inbound struct {
 	ID      string `json:"id"`

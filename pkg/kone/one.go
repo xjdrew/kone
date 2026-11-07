@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"reflect"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -42,6 +41,10 @@ type One struct {
 	ip                   net.IP
 	subnet               *net.IPNet
 	policy               atomic.Pointer[runtimeSnapshot]
+	routeReferences      map[string]int
+	routeDevice          Device
+	captureRoutes        map[string]Cleanup
+	routeRemainders      undoStack
 	reloadMu             sync.Mutex
 	mu                   sync.Mutex
 	started, closed      bool
@@ -232,22 +235,8 @@ func (one *One) ReloadVersion(cfg *KoneConfig, revision uint64) error {
 		return errors.New("engine is closed")
 	}
 	old := one.policy.Load()
-	type routeRule struct {
-		RuleConfig
-		Kind OutboundType
-	}
-	cidrs := func(config *KoneConfig) []routeRule {
-		var result []routeRule
-		types, _ := validateOutbounds(config.Outbounds)
-		for _, r := range config.Rule {
-			if strings.EqualFold(r.Schema, "IP-CIDR") || strings.EqualFold(r.Schema, "IP-CIDR6") {
-				result = append(result, routeRule{r, types[r.Outbound]})
-			}
-		}
-		return result
-	}
-	if !reflect.DeepEqual(cfg.Core, old.cfg.Core) || !reflect.DeepEqual(cfg.DNS, old.cfg.DNS) || cfg.General != old.cfg.General || cfg.GeoIP != old.cfg.GeoIP || !reflect.DeepEqual(cidrs(cfg), cidrs(old.cfg)) {
-		return errors.New("changes to general/core/dns/geoip or IP-CIDR routes require restart")
+	if !reflect.DeepEqual(cfg.Core, old.cfg.Core) || !reflect.DeepEqual(cfg.DNS, old.cfg.DNS) || cfg.General != old.cfg.General || cfg.GeoIP != old.cfg.GeoIP {
+		return errors.New("changes to general/core/dns/geoip require restart")
 	}
 	p, err := NewOutbounds(cfg.Outbounds)
 	if err != nil {
@@ -256,6 +245,9 @@ func (one *One) ReloadVersion(cfg *KoneConfig, revision uint64) error {
 	p.dial = old.outbounds.dial
 	rule := NewRuleWithGeoIP(cfg.Rule, cfg.Outbounds, old.geoIP)
 	p.bypassEndpoints(rule)
+	if err := one.reloadCaptureRoutes(cfg.Core, rule); err != nil {
+		return err
+	}
 	one.policy.Store(&runtimeSnapshot{version: old.version + 1, configVersion: revision, cfg: cfg, rule: rule, outbounds: p, geoIP: old.geoIP, previousGeoIP: old.previousGeoIP})
 	one.clearDirectDNSCaches()
 	return nil
@@ -345,6 +337,7 @@ func (one *One) Run(parent context.Context) (result error) {
 		if one.dns.tcpStarted.Load() {
 			cleanup = append(cleanup, one.dns.tcpServer.ShutdownContext(cleanupCtx))
 		}
+		cleanup = append(cleanup, one.restoreCaptureRoutes(cleanupCtx))
 		cleanup = append(cleanup, undo.restore(cleanupCtx))
 		if device != nil {
 			cleanup = append(cleanup, device.Close())
@@ -426,44 +419,9 @@ func (one *One) Run(parent context.Context) (result error) {
 	if err := one.dns.openIPv6Listeners(ctx, lc); err != nil {
 		return err
 	}
-	seen := make(map[string]bool)
-	if cfg.Core.AutoRoute {
-		for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
-			_, subnet, _ := net.ParseCIDR(cidr)
-			cleanup, err := one.network.AddRoute(ctx, device, subnet)
-			undo.add("capture route "+cidr, cleanup)
-			if err != nil {
-				return fmt.Errorf("add route %s: %w", cidr, err)
-			}
-			seen[cidr] = true
-		}
-	}
-	for _, pattern := range one.policy.Load().rule.patterns {
-		if p, ok := pattern.(IPCIDRPattern); ok && p.prefix.Addr().Is4() && one.policy.Load().rule.OutboundType(p.Proxy()) != OutboundDirect && !seen[p.prefix.String()] {
-			_, subnet, _ := net.ParseCIDR(p.prefix.String())
-			routes := []*net.IPNet{subnet}
-			if p.prefix.Bits() == 0 {
-				routes = nil
-				for _, cidr := range []string{"0.0.0.0/1", "128.0.0.0/1"} {
-					_, subnet, _ := net.ParseCIDR(cidr)
-					routes = append(routes, subnet)
-				}
-			}
-			for _, route := range routes {
-				if seen[route.String()] {
-					continue
-				}
-				cleanup, err := one.network.AddRoute(ctx, device, route)
-				undo.add("route "+route.String(), cleanup)
-				if err != nil {
-					return fmt.Errorf("add route %s: %w", route, err)
-				}
-				seen[route.String()] = true
-			}
-			seen[p.prefix.String()] = true
-		}
-	}
-	if err := one.addIPv6Routes(ctx, device, cfg.Core, &undo); err != nil {
+	one.routeDevice = device
+	one.captureRoutes = make(map[string]Cleanup)
+	if err := one.updateCaptureRoutes(ctx, captureRoutes(cfg.Core, one.policy.Load().rule)); err != nil {
 		return err
 	}
 	if ctx.Err() != nil {

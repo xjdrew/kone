@@ -103,25 +103,21 @@ async function openManagement(browser, manager, ownedContexts, password = "brows
     }
   }, { origin: manager.url.origin, fragment: manager.url.hash });
   await page.goto(manager.url.origin + "/");
-  const secretInput = page.locator("#setup-password, #login-password").first();
-  await expect(secretInput).toBeVisible();
-  if (await page.locator("#setup-password").isVisible()) {
-    await page.reload(); // The one-use URL is gone; the limited setup cookie must resume safely.
-    await expect(page.locator("#setup-password")).toBeVisible();
-    await page.locator("#setup-password").fill(password);
-    await page.locator("#setup-password-confirm").fill(password);
-    await page.getByRole("button", { name: "设置管理密码", exact: true }).click();
-  } else {
-    if (rejectedPassword) {
-      await page.locator("#login-password").fill(rejectedPassword);
-      const rejected = page.waitForResponse(response => new URL(response.url()).pathname === "/api/v1/session" && response.request().method() === "POST");
-      await page.getByRole("button", { name: "登录管理", exact: true }).click();
-      expect((await rejected).status()).toBe(401);
-      await expect(page.locator("#auth-error")).not.toHaveText("");
-      await expect(page.locator("#login-password")).toBeVisible();
-    }
-    await page.locator("#login-password").fill(password);
-    await page.getByRole("button", { name: "登录管理", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
+  await expect(page.locator("#setup-password, #login-password")).toHaveCount(0);
+  const configured = await page.evaluate(async () => (await (await fetch("/api/v1/state")).json()).password_configured);
+  if (!configured) {
+    await page.locator(".nav-link[data-page=settings]").click();
+    await page.locator('[data-settings-link="account"]').click();
+    await page.locator("#new-password").fill(password);
+    await page.locator("#confirm-new-password").fill(password);
+    await page.getByRole("button", { name: "确认设置密码", exact: true }).click();
+    await expect(page.locator("#current-password")).toBeVisible();
+    await page.locator(".nav-link[data-page=home]").click();
+  }
+  if (rejectedPassword) {
+    const status = await page.evaluate(async password => (await fetch("/api/v1/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password }) })).status, rejectedPassword);
+    expect(status).toBe(401);
   }
   await expect(page.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
   await expect(page).toHaveURL(/(?:\/|#home)$/);
@@ -297,19 +293,10 @@ test("@real genuine management cookie, password rotation, save, reload and resta
     contexts.push(retiredContext);
     await retiredContext.addCookies([originalCookie]);
     const retiredPage = await retiredContext.newPage();
-    let retiredWrite = false;
-    await retiredPage.route("**/api/v1/**", route => {
-      const request = route.request();
-      if (request.method() !== "GET" || new URL(request.url()).searchParams.has("token")) {
-        retiredWrite = true;
-        return route.abort("blockedbyclient");
-      }
-      return route.continue();
-    });
+    expect((await retiredContext.request.get(manager.url.origin + "/api/v1/state")).status()).toBe(401);
     await retiredPage.goto(manager.url.origin + "/");
-    await expect(retiredPage.locator("#login-password")).toBeVisible();
-    expect(await retiredPage.evaluate(async () => (await fetch("/api/v1/state", { credentials: "same-origin" })).status)).toBe(401);
-    expect(retiredWrite).toBe(false);
+    await expect(retiredPage.getByRole("heading", { name: "首页", exact: true })).toBeVisible();
+    await expect(retiredPage.locator("#login-password")).toHaveCount(0);
     await retiredContext.close();
     await ui.context.close();
     ui = await openManagement(browser, { ...manager, url: new URL(manager.url.origin + "/") }, contexts, replacementPassword, originalPassword);

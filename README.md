@@ -9,13 +9,13 @@ Its original [K1 dial mark](docs/development/development.md#6-维护资产与提
 
 ## Features
 
-- **Transparent capture:** Selectively route application or LAN traffic through TUN, with optional IPv6 support.
+- **TUN proxy:** Selectively route application or LAN traffic through TUN, with optional IPv6 support.
 - **Flexible policies:** Route by domain, IP or country, and update rules live without interrupting established connections.
 - **Proxy support:** HTTP/HTTPS CONNECT for TCP, SOCKS5 and Shadowsocks AEAD for TCP/UDP, plus direct and reject policies.
 - **Network-aware DNS:** Fake-IP routing, system resolver discovery and private DNS support for LAN and VPN environments.
 - **Traffic insights:** Live flow visualization, connection details, DNS history and runtime logs.
 - **Actionable diagnostics:** Compare connectivity, simulate routing and turn observed connections into precise rules.
-- **Easy management:** A password-protected Web console, desktop tray controls and optional paired mobile access, alongside TOML and CLI operation.
+- **Easy management:** Automatic local management, password-protected remote access, desktop tray controls and optional paired mobile access, alongside TOML and CLI operation.
 - **Safe lifecycle:** Startup checks, failure rollback and network restoration, with management available while capture is paused.
 - **Built-in choices:** Runtime-selectable system, gVisor and mixed stacks, plus offline and importable GeoIP data.
 
@@ -30,8 +30,9 @@ Windows uses ZIP, macOS PKG and Linux DEB, for amd64 and arm64.
 See [installation and platform notes](docs/user/usage.md) for checksums, permissions and package trust.
 On Windows, double-click `kone.exe`; on macOS, open `Kone.app`.
 They open management in your browser and keep a tray/menu icon **without a terminal**.
-Set a password, configure the needed outbounds/rules,
-then review the checks and explicitly start capture. Capture starts **paused**.
+Open the numeric loopback address without a password, configure the needed outbounds/rules,
+then review the checks and explicitly enable the proxy. It starts **paused**.
+Set a management password in Settings before enabling remote access.
 See the [desktop setup guide](docs/user/usage.md#2-首次配置) for setup steps and daily operation.
 Use `kone-cli.exe` / `kone-cli` for terminal commands; Linux keeps the `kone` CLI.
 Use `-no-browser` with the desktop entrypoint for quiet tray startup.

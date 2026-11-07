@@ -14,22 +14,24 @@
 # TUN 的 IPv4 主机地址/前缀，也是 Fake-IP 地址池；避免与现有网络冲突。
 # 当前支持 /8.. /30，并为 TUN 地址后的协议栈地址保留空间。
 # network = "10.192.0.1/16"
-# 可选 Linux/macOS/Windows IPv6 TUN/Fake-IP 网段；空字符串关闭。
+# 可选 Linux/macOS/Windows IPv6 TUN/Fake-IP 网段；文件模式默认关闭。
+# 首次管理配置按主机 IPv6 能力自动填写不冲突的网段，已有设置不会被改写。
+# 空字符串显式关闭；检测到 IPv6 地址不等于真实出口可达。
 # 启用时指定不冲突的 ULA 主机/前缀（/64.. /120），例如 fd7a:203::1/120。
 # ipv6-network = ""
-# IPv6 全局接管；需要非空 ipv6-network 和真实出口 outbound-interface。
-# false 仅接管 IPv6 Fake-IP 子网及显式 IP-CIDR6 路由；不影响 IPv4 设置。
+# IPv6 全局代理；需要非空 ipv6-network 和真实出口 outbound-interface。
+# false 仅代理 IPv6 Fake-IP 子网及显式 IP-CIDR6 路由；不影响 IPv4 设置。
 # auto-route6 = false
 # 同一安装包包含三种协议栈，运行时选择，无需另行编译。
 # system：系统 TCP + sing-tun UDP；gvisor：gVisor TCP + UDP；mixed：系统 TCP + gVisor UDP。
 # 协议栈选择不改变代理协议能力；IPv6 需另外显式配置，支持 Linux/macOS/Windows。
 # 显式选择协议栈；省略时也默认为 system。修改后需要重启。
 stack = "system"
-# true 添加两条 /1 路由接管 IPv4；保留原默认路由，更具体路由仍优先。
+# true 添加两条 /1 路由代理 IPv4；保留原默认路由，更具体路由仍优先。
 # 开启时必须设置 outbound-interface，网关还需自行配置 forwarding/DHCP/防火墙。
 # auto-route = false
 # 代理、直连和上游 DNS 使用的真实出口接口；空字符串使用普通系统路由。
-# 全局接管时请设置为实际接口，例如 eth0、en0 或 Ethernet，不能与 TUN 同名。
+# 全局代理时请设置为实际接口，例如 eth0、en0 或 Ethernet，不能与 TUN 同名。
 # 本机回环代理/DNS stub 仍使用回环路径；改变出口接口需要重启。
 # outbound-interface = ""
 
@@ -43,7 +45,7 @@ stack = "system"
 # system = false
 # 上游 DNS 地址；省略或 [] 使用系统 DNS，不内置公共 DNS 作为回退。
 # 可指定 IPv4/IPv6 地址和端口，例如 ["1.1.1.1", "[2001:4860:4860::8888]:53"]。
-# 不得指向 KONE 虚拟网段；IPv6 上游地址不代表支持 IPv6 流量接管。
+# 不得指向 KONE 虚拟网段；IPv6 上游地址不代表支持 IPv6 流量代理。
 # servers = []
 # KONE DNS 的 UDP/TCP 端口；Linux/Windows 使用 TUN 地址，macOS 使用回环入口。
 # 普通系统客户端使用 53；macOS 系统引导也支持显式配置其他空闲端口。
@@ -125,8 +127,8 @@ url = "http://127.0.0.1:8080"
 # 已建立连接保留原决定，Fake-IP 映射不会在失效时改指其他域名。
 # expires-at = ""
 # 按业务协议/目标端口限定；省略或空值表示全部 TCP/UDP、全部端口。
-# 域名规则先保留 Fake-IP 接管入口，再按实际协议和端口作最终决定。
-# 未启用 IPv6 接管时，需接管域名的 AAAA 返回空结果，避免使用真实 IPv6 绕过。
+# 域名规则先保留 Fake-IP 代理入口，再按实际协议和端口作最终决定。
+# 未启用 IPv6 代理时，需代理域名的 AAAA 返回空结果，避免使用真实 IPv6 绕过。
 # 启用 core.ipv6-network 后，同域名的 A/AAAA 分别使用对应 Fake-IP。
 # protocol = ""
 # ports = []

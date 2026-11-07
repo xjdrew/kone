@@ -181,6 +181,7 @@ test("bootstrap removes URL token before exchange and uses cookie/CSRF after exc
     },
   };
   globalThis.fetch = async (path, options) => {
+    if (path === "/api/v1/auth") return new Response("{}");
     assert.equal(removed, true);
     calls.push({ path, ...options });
     return new Response(
@@ -228,6 +229,7 @@ test("first-time bootstrap keeps only setup authorization and never reads manage
   globalThis.history = { replaceState: () => {} };
   const calls = [];
   globalThis.fetch = async (path, options) => {
+    if (path === "/api/v1/auth") return new Response("{}");
     calls.push({ path, ...options });
     assert.equal(path, "/api/v1/session");
     return new Response(JSON.stringify({ role: "setup", setup_required: true, csrf_token: "setup-csrf" }), { status: 200 });
@@ -255,6 +257,7 @@ test("diagnostic bootstrap strips credentials before exchange and only navigates
     },
   };
   globalThis.fetch = async (path, options) => {
+    if (path === "/api/v1/auth") return new Response("{}");
     assert.equal(globalThis.location.hash, "#diagnostics");
     calls.push({ path, ...options });
     return new Response(JSON.stringify({ role: "admin", csrf_token: "diagnostic-csrf" }), { status: 200 });
@@ -281,6 +284,7 @@ test("an expired bootstrap token cannot override a later pairing session cookie"
   globalThis.history = { replaceState: () => {} };
   const calls = [];
   globalThis.fetch = async (path, options) => {
+    if (path === "/api/v1/auth") return new Response("{}");
     calls.push(options.headers);
     return new Response(
       JSON.stringify(
@@ -329,4 +333,21 @@ test("redacted TOML export is read as text while API errors stay structured", as
     request("/export", "GET", undefined, { responseType: "text" }),
     (error) => error.message === "Not authorized",
   );
+});
+
+test("loopback bootstrap automatically obtains a local admin session without setup", async () => {
+ globalThis.location = { hash: "", pathname: "/", search: "" };
+ const calls = [];
+ globalThis.fetch = async (path, options) => {
+  calls.push({ path, ...options });
+  if (path.endsWith("/auth")) return new Response(JSON.stringify({ local_access: true, setup_required: true }));
+  if (path.endsWith("/session")) return new Response(JSON.stringify({ role: "admin", csrf_token: "local-csrf" }));
+  return new Response(JSON.stringify({ role: "admin", local_access: true, state: "paused" }));
+ };
+ const state = await bootstrap();
+ assert.equal(state.role, "admin");
+ assert.equal(state.local_access, true);
+ assert.equal(calls[1].body, "{}");
+ assert.equal(calls[1].method, "POST");
+ assert.equal(calls[2].headers.Authorization, undefined);
 });

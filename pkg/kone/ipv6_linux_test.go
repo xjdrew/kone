@@ -57,9 +57,10 @@ func TestLinuxIPv6RouteCommandsAndPolicyCaptureRollback(t *testing.T) {
 	snapshot := *one.policy.Load()
 	snapshot.rule = NewRule([]RuleConfig{{Schema: "IP-CIDR6", Pattern: "::/0", Outbound: BuiltinReject}, {Schema: "IP-CIDR6", Pattern: "2001:db8::/64", Outbound: BuiltinReject}}, nil)
 	one.policy.Store(&snapshot)
-	var undo undoStack
-	require.NoError(t, one.addIPv6Routes(context.Background(), memory.device, CoreConfig{IPv6Network: "fd7a:203::1/120", AutoRoute6: true}, &undo))
+	one.routeDevice = memory.device
+	one.captureRoutes = map[string]Cleanup{}
+	require.NoError(t, one.updateCaptureRoutes(context.Background(), captureRoutes(CoreConfig{IPv6Network: "fd7a:203::1/120", AutoRoute6: true}, snapshot.rule)))
 	require.Len(t, memory.routes, 3, "auto-route6 and default CIDR6 must not duplicate the /1 routes")
-	require.NoError(t, undo.restore(context.Background()))
+	require.NoError(t, one.restoreCaptureRoutes(context.Background()))
 	require.Empty(t, memory.routes)
 }
