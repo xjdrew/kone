@@ -4,7 +4,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -39,40 +38,23 @@ func TestUnauthenticatedManagementHTMLStartsWithAnIsolatedShell(t *testing.T) {
 		return "", false
 	}
 	var walk func(*html.Node)
-	protected := map[string]bool{}
-	var main *html.Node
+	roots, modules := 0, 0
 	walk = func(node *html.Node) {
 		if node.Type == html.ElementNode {
 			id, _ := attribute(node, "id")
-			class, _ := attribute(node, "class")
-			label := ""
-			switch {
-			case id == "main":
-				main = node
-			case id == "navigation", id == "lifecycle-toggle", id == "sidebar", id == "toast-region":
-				label = id
-			case node.Data == "footer":
-				label = "footer"
-			case strings.Contains(" "+class+" ", " skip-link "):
-				label = "skip-link"
+			if id == "root" {
+				roots++
+				require.Nil(t, node.FirstChild, "no private content may be embedded before authentication")
 			}
-			if label != "" {
-				protected[label] = true
-				isolated := false
-				for parent := node; parent != nil; parent = parent.Parent {
-					if _, marked := attribute(parent, "data-management-shell"); !marked {
-						continue
-					}
-					_, hidden := attribute(parent, "hidden")
-					_, inert := attribute(parent, "inert")
-					isolated = hidden && inert
-					break
-				}
-				require.True(t, isolated, "%s must start inside a hidden, inert management boundary", label)
-			}
-			if node.Data == "dialog" {
-				_, open := attribute(node, "open")
-				require.False(t, open, "management dialogs must not be open before authentication")
+			switch node.Data {
+			case "button", "input", "nav", "dialog", "table":
+				t.Errorf("management element %s rendered before authentication", node.Data)
+			case "script":
+				kind, _ := attribute(node, "type")
+				source, _ := attribute(node, "src")
+				require.Equal(t, "module", kind)
+				require.True(t, len(source) > 8 && source[:8] == "/assets/", "offline module must be served by the management host")
+				modules++
 			}
 		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
@@ -80,14 +62,8 @@ func TestUnauthenticatedManagementHTMLStartsWithAnIsolatedShell(t *testing.T) {
 		}
 	}
 	walk(document)
-	require.Len(t, protected, 6, "exercise every management surface in the embedded HTML")
-	require.NotNil(t, main, "the authentication/loading surface must remain available")
-	for node := main; node != nil; node = node.Parent {
-		_, hidden := attribute(node, "hidden")
-		_, inert := attribute(node, "inert")
-		require.False(t, hidden, "initial loading must remain visible")
-		require.False(t, inert, "the authentication surface must remain interactive")
-	}
+	require.Equal(t, 1, roots)
+	require.Equal(t, 1, modules)
 
 	// Public HTML availability does not grant access to management data.
 	response, err = client.Get(server.URL + "/api/v1/state")

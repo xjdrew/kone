@@ -98,7 +98,7 @@ func TestRunningCaptureRejectsNetworkChangesAndHotApplyCanRetryTheSavedVersion(t
 	old := c.State().RunningVersion
 	engine.reloadError = errors.New("injected reload failure")
 	request = currentRequest(c)
-	request.Config["rules"] = []any{map[string]any{"type": "FINAL", "outbound": "reject"}}
+	request.Config["rules"] = []any{map[string]any{"type": "DOMAIN", "pattern": "blocked.example", "outbound": "reject"}, map[string]any{"type": "FINAL", "outbound": "direct"}}
 	result, err := c.Save(request)
 	require.NoError(t, err)
 	require.Equal(t, false, result["applied"])
@@ -122,6 +122,7 @@ func TestRunningCaptureRejectsNetworkChangesAndHotApplyCanRetryTheSavedVersion(t
 func TestProxyToDirectEditNeedsConfirmationBeforeHotApply(t *testing.T) {
 	c := testController(t, Options{})
 	request := currentRequest(c)
+	request.Config["policy"] = map[string]any{"mode": "custom"}
 	request.Config["outbounds"] = []any{map[string]any{"name": "Primary", "url": "http://127.0.0.1:18080"}}
 	request.Config["rules"] = []any{map[string]any{"type": "FINAL", "outbound": "Primary"}}
 	_, err := c.Save(request)

@@ -9,7 +9,7 @@ task_arguments() {
     fmt) description='Format Go source files in place.' ;;
     check-config) description='Validate a TOML configuration through the CLI without enabling capture.'; example='just ci check-config configs/kone.example.toml' ;;
     geoip-convert) description='Convert a local DB-IP CSV using explicit trusted provenance; never download data.'; example='just ci geoip-convert --input dbip-country-lite-2026-10.csv.gz --sha256 "$DBIP_SHA256" --release 2026-10 --retrieved-at 2026-11-01T00:00:00Z --output-dir dist/geoip' ;;
-    web-deps) description='Install locked frontend dependencies with npm ci.' ;;
+    web-deps) description='Install locked frontend dependencies with bun install --frozen-lockfile.' ;;
     web-dev) description='Start the frontend development server.' ;;
     web-preview) description='Serve the built frontend for local review.' ;;
     test-web) description='Run frontend unit tests.' ;;

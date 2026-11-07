@@ -14,6 +14,7 @@ for (const failure of ["missing", "incompatible", "unusable"]) {
           if (failure === "incompatible") return "go version go1.26.0 linux/amd64";
           throw Object.assign(new Error("failure"), { code: failure === "missing" ? "ENOENT" : "EACCES" });
         }
+        if (command === "bun") return "1.4.4";
         if (command === "node") return "v26.13.0";
         if (command === "just") return "just 1.59.0";
         if (args.includes("kone-npm")) throw new Error("npm unavailable");
@@ -32,6 +33,6 @@ for (const failure of ["missing", "incompatible", "unusable"]) {
       unusable: /go: could not check version; check that Go 1.27.3 runs/,
     }[failure]);
     assert.match(output, /npm: unavailable; install npm/);
-    assert.equal(calls.length, 6, "only version probes run, including npm after the Go failure");
+    assert.equal(calls.length, 7, "only version probes run, including npm after the Go failure");
   });
 }

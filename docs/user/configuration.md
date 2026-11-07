@@ -6,6 +6,7 @@
 
 | 对象 | 用途 | 管理模式修改方式 |
 | --- | --- | --- |
+| `[policy]` | 基础模式及明确接受的 IPv4/UDP 范围 | 切换基础模式先暂停、预览，再保存；保留用户规则 |
 | `[general]` | 日志级别与格式 | 暂停后保存，重新启用 |
 | `[core]` | TUN 地址、栈、捕获路由与出口 | 暂停后保存，重新启用 |
 | `[dns]`、`[[dns.rules]]` | 系统引导、上游、缓存、私有解析 | 暂停后保存，重新启用 |
@@ -39,6 +40,21 @@ outbound = "direct"
 ```
 
 替换为真实代理地址，先执行 `kone -check -config config.toml`。`direct`、`reject` 是内置出站，无需声明；纯直连可省略整个出站数组。网段必须与现有 LAN/VPN 不冲突。
+
+### 基础策略
+
+新管理配置采用 `direct-first`，启动保持暂停。在“策略”切换为 `proxy-first` 时，需要可用的默认出站与真实物理出口；预览显示保留规则、IPv4/IPv6 接管、保护和 UDP 行为。HTTP/HTTPS 无原生 UDP：保留直连回退必须明确同意，或改为拒绝 UDP；后一动作会影响引用同一出站的其他规则。
+
+```toml
+[policy]
+mode = "proxy-first"
+ipv4-only = true # 明确仅接管 IPv4；完整 IPv6 需 core 对应网段和 auto-route6
+udp-exception = false # HTTP 的 UDP 直连回退必须显式同意
+```
+
+此片段还需要 `core.auto-route = true`、真实 `outbound-interface`、已启用的代理出站和指向该出站的无条件 FINAL。`direct-first` 的 FINAL 为 `direct`。已有文件省略 `[policy]` 时保持旧行为；有条件 FINAL 或无法无损识别的配置显示自定义，只有确认转换才替换原兜底条件。旧程序会严格拒绝不认识的新字段，回退需恢复旧备份。
+
+显式基础策略先保护回环、本机、私网/链路本地/组播及已连接网段，再判断用户规则。Fake-IP 先还原业务事实；代理和 DNS 的自身传输不送回代理。直连按启动前的原生路由选择 LAN/VPN 接口；复杂 Linux 策略路由表、特殊 VPN 与物理 IPv6 仍需在部署环境验证，不能把任意 VPN 网段自动当作可信 LAN。换网后暂停并重新预检。
 
 ## 3. 出站与规则
 

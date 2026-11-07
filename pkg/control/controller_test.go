@@ -125,6 +125,10 @@ func TestCorruptProfileIsPreservedUntilExplicitRepair(t *testing.T) {
 
 func TestCaptureLifecycleVersionsAndUndo(t *testing.T) {
 	c := testController(t, Options{})
+	legacy := currentRequest(c)
+	legacy.Config["policy"] = map[string]any{"mode": "custom"}
+	_, saveErr := c.Save(legacy)
+	require.NoError(t, saveErr)
 	require.ErrorContains(t, c.Start(context.Background()), "direct-only")
 	enable(t, c)
 	require.NoError(t, c.Start(context.Background()))

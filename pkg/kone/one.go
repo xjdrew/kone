@@ -197,6 +197,7 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 		}
 	}
 	rule := NewRuleWithGeoIP(cfg.Rule, cfg.Outbounds, database)
+	rule.protectPolicy(cfg)
 	p.bypassEndpoints(rule)
 	one.policy.Store(&runtimeSnapshot{version: 1, cfg: cfg, rule: rule, outbounds: p, geoIP: database})
 	one.dnsTable = NewDnsTable(ip, subnet)
@@ -210,6 +211,13 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	}
 	one.dns.setDialer(dialer)
 	p.dial = one.endpointDialer(dialer)
+	direct, err := policyDirectDialer(dialer, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if direct != nil {
+		p.directDial = one.endpointDialer(direct)
+	}
 	return one, nil
 }
 
@@ -235,7 +243,7 @@ func (one *One) ReloadVersion(cfg *KoneConfig, revision uint64) error {
 		return errors.New("engine is closed")
 	}
 	old := one.policy.Load()
-	if !reflect.DeepEqual(cfg.Core, old.cfg.Core) || !reflect.DeepEqual(cfg.DNS, old.cfg.DNS) || cfg.General != old.cfg.General || cfg.GeoIP != old.cfg.GeoIP {
+	if cfg.Policy.Mode != old.cfg.Policy.Mode || !reflect.DeepEqual(cfg.Core, old.cfg.Core) || !reflect.DeepEqual(cfg.DNS, old.cfg.DNS) || cfg.General != old.cfg.General || cfg.GeoIP != old.cfg.GeoIP {
 		return errors.New("changes to general/core/dns/geoip require restart")
 	}
 	p, err := NewOutbounds(cfg.Outbounds)
@@ -243,7 +251,9 @@ func (one *One) ReloadVersion(cfg *KoneConfig, revision uint64) error {
 		return err
 	}
 	p.dial = old.outbounds.dial
+	p.directDial = old.outbounds.directDial
 	rule := NewRuleWithGeoIP(cfg.Rule, cfg.Outbounds, old.geoIP)
+	rule.protectPolicy(cfg)
 	p.bypassEndpoints(rule)
 	if err := one.reloadCaptureRoutes(cfg.Core, rule); err != nil {
 		return err

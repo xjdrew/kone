@@ -17,11 +17,11 @@ func TestAppliedRuleCanBeUndoneWithoutLosingConcurrentEdits(t *testing.T) {
 	enable(t, c)
 	require.NoError(t, c.Start(t.Context()))
 	r := currentRequest(c)
-	r.Config["rules"] = []any{map[string]any{"type": "DOMAIN", "pattern": "example.com", "outbound": "reject"}}
+	r.Config["rules"] = []any{map[string]any{"type": "DOMAIN", "pattern": "example.com", "outbound": "reject"}, map[string]any{"type": "FINAL", "outbound": "direct"}}
 	_, err := c.Save(r)
 	require.NoError(t, err)
 	require.NoError(t, c.Apply(t.Context()))
-	require.Len(t, c.doc.Config.Rule, 1)
+	require.Len(t, c.doc.Config.Rule, 2)
 	_, err = c.Undo(c.doc.Version - 1)
 	require.ErrorIs(t, err, ErrConflict)
 	_, err = c.Undo(c.doc.Version)

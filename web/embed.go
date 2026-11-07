@@ -1,5 +1,5 @@
 // Package web embeds KONE's offline management application.
-// Frontend sources live in web/src; npm run build refreshes dist.
+// Frontend sources live in web/src; bun run build refreshes dist.
 package web
 
 import (

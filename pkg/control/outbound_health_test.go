@@ -23,6 +23,7 @@ import (
 func savedHealthOutbound(t *testing.T, c *Controller, endpoint string) kone.OutboundConfig {
 	t.Helper()
 	r := currentRequest(c)
+	r.Config["policy"] = map[string]any{"mode": "custom"}
 	r.Config["outbounds"] = []any{map[string]any{"id": "outbound-health-test", "name": "office", "url": endpoint}}
 	r.Config["rules"] = []any{map[string]any{"type": "FINAL", "outbound": "office"}}
 	dns := r.Config["dns"].(map[string]any)

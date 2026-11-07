@@ -11,6 +11,9 @@
 *.html text eol=lf
 *.css text eol=lf
 *.js text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.lock text eol=lf
 *.mjs text eol=lf
 *.json text eol=lf
 *.svg text eol=lf

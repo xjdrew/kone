@@ -1,0 +1,59 @@
+.protection {
+  padding: 12px 22px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.protection summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.protection summary span {
+  font-weight: 400;
+  color: var(--muted);
+  margin-inline-start: 18px;
+}
+.protectionList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 8px 22px;
+  margin-top: 16px;
+  max-height: 230px;
+  overflow: auto;
+}
+.protectionList > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+.fallback {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 22px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.fallback > span:first-child {
+  font-weight: 600;
+}
+.fallback > span:nth-child(2) {
+  color: var(--muted);
+}
+.fallback > button {
+  margin-inline-start: auto;
+}
+@media (max-width: 760px) {
+  .protection {
+    padding: 10px 12px;
+  }
+  .protection summary span {
+    display: block;
+    margin: 4px 0 0;
+  }
+  .fallback {
+    padding: 10px 12px;
+    gap: 12px;
+  }
+}

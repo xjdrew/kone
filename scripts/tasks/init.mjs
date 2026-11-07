@@ -7,6 +7,7 @@ export async function initialize(ctx) {
     ["git", ["--version"], () => true, "Git"],
     ["go", ["version"], (value) => /^go version go1\.27\.3\s/.test(value), "Go 1.27.3"],
     ["node", ["--version"], (value) => /^v26\.(\d+)\./.test(value) && Number(value.split(".")[1]) >= 13, "Node 26.13 or later in the 26.x series"],
+    ["bun", ["--version"], (value) => value.trim() === "1.4.4", "Bun 1.4.4"],
     ["just", ["--version"], (value) => /^just 1\.(\d+)/.test(value) && Number(value.split(".")[1]) >= 59, "just 1.59 or later"],
     ["bash", ["--version"], () => true, "Bash (Git Bash on Windows)"],
   ];

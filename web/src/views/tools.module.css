@@ -1,0 +1,129 @@
+.tools {
+  height: 42dvh;
+  min-height: 260px;
+  max-height: 70dvh;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  resize: vertical;
+  overflow: hidden;
+}
+.tools > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+  padding: 0 12px;
+}
+.tools > header > div {
+  display: flex;
+  gap: 18px;
+}
+.tools > header button[role="tab"] {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 10px 0;
+  color: var(--muted);
+}
+.tools > header button[aria-selected="true"] {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.diagnostics {
+  display: flex;
+  min-height: 100%;
+}
+.probeForm {
+  width: 370px;
+  flex: none;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-inline-end: 1px solid var(--line);
+}
+.results {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+.task {
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.task > header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 11px;
+}
+.result {
+  margin: 12px 0;
+}
+.result > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.result > div:first-child > span:first-child {
+  flex: 1;
+}
+.result details {
+  margin-top: 4px;
+}
+.logView {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 250px;
+}
+.message {
+  max-width: 650px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.logView td details {
+  margin: 0;
+}
+.logView th {
+  z-index: 1;
+}
+.logView .toolbar {
+  padding: 8px 12px;
+}
+@media (max-width: 760px) {
+  .tools {
+    height: 60dvh;
+    max-height: 80dvh;
+  }
+  .diagnostics {
+    flex-direction: column;
+  }
+  .probeForm {
+    width: auto;
+    border-inline-end: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 12px;
+  }
+  .results {
+    overflow: visible;
+  }
+  .task {
+    padding: 12px;
+  }
+  .result > div:first-child {
+    gap: 10px;
+  }
+  .logView {
+    min-height: 400px;
+  }
+}

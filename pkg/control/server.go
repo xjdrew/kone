@@ -20,6 +20,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	"github.com/xjdrew/kone/pkg/geoip"
 	"github.com/xjdrew/kone/pkg/kone"
+	"github.com/xjdrew/kone/pkg/locale"
 	web "github.com/xjdrew/kone/web"
 )
 
@@ -30,7 +31,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func apiError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": randomID("request")}})
+	writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "params": map[string]any{}, "message": message, "details": message, "request_id": randomID("request")}})
 }
 
 func writeOperation(w http.ResponseWriter, operation Operation) {
@@ -158,11 +159,31 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		key = session.ID + ":" + key
 	}
 	switch {
+	case path == "policy" && r.Method == http.MethodGet:
+		writeJSON(w, 200, c.policyState())
+	case path == "policy/preview" && r.Method == http.MethodPost:
+		c.policyRoute(w, r, false)
+	case path == "policy" && r.Method == http.MethodPut:
+		c.policyRoute(w, r, true)
 	case path == "auth/password" && r.Method == http.MethodPut:
 		c.changePassword(w, r, session)
 	case path == "state" && r.Method == http.MethodGet:
 		state := c.State()
-		writeJSON(w, 200, map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role, "remote_session": session.Remote, "local_access": session.Local, "password_configured": c.passwordConfigured(), "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf, "capture_locked": state.CaptureLocked})
+		c.mu.Lock()
+		observer := c.observer
+		c.mu.Unlock()
+		value := map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role, "remote_session": session.Remote, "local_access": session.Local, "password_configured": c.passwordConfigured(), "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf, "capture_locked": state.CaptureLocked}
+		if session.Local {
+			value["locale"] = locale.HostLanguage()
+		}
+		if observer != nil {
+			totals := observer.Totals()
+			if state.DataState != "running" {
+				totals.UploadRate, totals.DownloadRate = 0, 0
+			}
+			value["totals"] = totals
+		}
+		writeJSON(w, 200, value)
 	case path == "readiness" && r.Method == http.MethodGet:
 		writeJSON(w, 200, c.Readiness(r.Context()))
 	case path == "outbounds/health" && r.Method == http.MethodGet:

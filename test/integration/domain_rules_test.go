@@ -182,6 +182,7 @@ func TestSavedDomainRuleDefaultsAndSimulationIdentifyFinalOverHTTP(t *testing.T)
 	call("POST", "auth/password", map[string]any{"password": "domain-rules-owner", "confirm_password": "domain-rules-owner"})
 	doc := call("GET", "config", nil)
 	config := doc["config"].(map[string]any)
+	config["policy"] = map[string]any{"mode": "custom"}
 	config["outbounds"] = []map[string]any{{"name": "office", "url": "http://127.0.0.1:8080"}}
 	config["rules"] = []map[string]any{{"id": "explicit-final", "type": "FINAL", "outbound": "reject"}}
 	doc = call("PUT", "config", map[string]any{"base_version": doc["version"], "config": config, "inbound": doc["inbound"]})

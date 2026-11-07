@@ -1,0 +1,430 @@
+import { useEffect, useState } from "react";
+import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
+import { useTranslation } from "react-i18next";
+import { useConsole } from "./context";
+import { api } from "./api/endpoints";
+import { ApiError } from "./api/client";
+import { Button, ErrorNotice, Modal, Status, KeyValues } from "./components/ui";
+import { Tools } from "./views/tools";
+import { RuleComposer } from "./views/policy";
+import { changeLanguage, languages } from "./i18n";
+import { formatBytes } from "./domain";
+import { saveRequest } from "./domain";
+import type { Readiness } from "./model";
+
+export function Shell() {
+  const { t } = useTranslation();
+  const context = useConsole();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { state, admin, connectionError, tool, setTool, toast, notify, operation, ruleDraft } =
+    context;
+  useEffect(() => {
+    if (location.pathname !== "/settings") context.workspace.set("returnHref", location.href);
+  }, [location.pathname, location.href, context.workspace]);
+  const [commands, setCommands] = useState(false);
+  const [search, setSearch] = useState("");
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
+  const [error, setError] = useState<unknown>();
+  const [busy, setBusy] = useState(false);
+  const running = state.data_state === "running" || state.state === "running";
+  const policyMode =
+    context.document?.config.policy?.mode ||
+    (context.document?.config.rules.at(-1)?.outbound === "direct" ? "direct-first" : "custom");
+  async function lifecycle(confirmed = false) {
+    setBusy(true);
+    setError(null);
+    try {
+      if (!running && !confirmed) {
+        const result = await api.readiness();
+        if (!result.ready || (result.direct_only && !result.direct_only_confirmed)) {
+          setReadiness(result);
+          return;
+        }
+      }
+      if (confirmed && context.document) {
+        await api.save({
+          ...saveRequest(context.document, context.document.config),
+          direct_only_confirmed: true,
+        });
+        await context.refresh();
+      }
+      const op = await api.lifecycle(running ? "pause" : "start");
+      context.track(op);
+      setReadiness(null);
+    } catch (caught) {
+      setError(caught);
+      if (caught instanceof ApiError && caught.uncertain) await context.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+  useEffect(() => {
+    function key(event: KeyboardEvent) {
+      if (document.querySelector('[role="dialog"][data-state="open"]')) return;
+      const editing =
+        event.target instanceof HTMLElement &&
+        (event.target.matches("input,textarea,select") || event.target.isContentEditable);
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommands((value) => !value);
+      }
+      if (event.key === "Escape") setTool(null);
+      if (!editing && !event.metaKey && !event.ctrlKey && event.key === "/") {
+        const input = document.querySelector<HTMLInputElement>("[data-search]");
+        if (input) {
+          event.preventDefault();
+          input.focus();
+        }
+      }
+    }
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [setTool]);
+  const actions = [
+    ...["overview", "connections", "dns"].map((view) => ({
+      id: view,
+      label: t(`nav.${view}`),
+      run: () => {
+        void navigate({
+          to: "/traffic",
+          search: {
+            view,
+            target: "",
+            anchor: "",
+            flow_ids: "",
+            path_ids: "",
+            window_start: undefined,
+            window_end: undefined,
+          },
+        });
+      },
+    })),
+    ...["rules", "outbounds"].map((view) => ({
+      id: view,
+      label: t(`nav.${view}`),
+      run: () => {
+        void navigate({ to: "/policy", search: { view } });
+      },
+    })),
+    {
+      id: "settings",
+      label: t("nav.settings"),
+      run: () => {
+        void navigate({ to: "/settings", search: { section: "interface" } });
+      },
+    },
+    { id: "diagnostics", label: t("nav.diagnostics"), run: () => setTool("diagnostics") },
+    { id: "logs", label: t("nav.logs"), run: () => setTool("logs") },
+    ...languages.map((language) => ({
+      id: language.tag,
+      label: language.name,
+      run: () => {
+        void changeLanguage(language.tag);
+      },
+    })),
+    {
+      id: "auto",
+      label: t("common.auto"),
+      run: () => {
+        void changeLanguage("auto");
+      },
+    },
+    ...(admin
+      ? [
+          {
+            id: "lifecycle",
+            label: t(running ? "proxy.pause" : "proxy.enable"),
+            run: () => {
+              void lifecycle();
+            },
+          },
+        ]
+      : []),
+  ].filter((action) => action.label.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+  return (
+    <div className="console">
+      <a
+        className="skipLink"
+        href="#main"
+        onClick={(event) => {
+          event.preventDefault();
+          document.getElementById("main")?.focus();
+        }}
+      >
+        {t("common.skip")}
+      </a>
+      <header className="topbar">
+        <Link
+          className="brand"
+          aria-label="KONE"
+          to="/traffic"
+          search={{
+            view: "overview",
+            target: "",
+            anchor: "",
+            path_ids: "",
+            flow_ids: "",
+            window_start: undefined,
+            window_end: undefined,
+          }}
+        >
+          <img src="/icon.svg" alt="" width="24" height="24" />
+          <span>KONE</span>
+        </Link>
+        <nav className="workspaceNav" aria-label="KONE">
+          <Link
+            to="/traffic"
+            search={{
+              view: "overview",
+              target: "",
+              anchor: "",
+              path_ids: "",
+              flow_ids: "",
+              window_start: undefined,
+              window_end: undefined,
+            }}
+            aria-current={location.pathname === "/traffic" ? "page" : undefined}
+          >
+            {t("nav.traffic")}
+          </Link>
+          <Link
+            to="/policy"
+            search={{ view: "rules" }}
+            aria-current={location.pathname === "/policy" ? "page" : undefined}
+          >
+            {t("nav.policy")}
+          </Link>
+        </nav>
+        <div className="hostIdentity">
+          <span className="mono">{state.host}</span>
+          <small>{t(admin ? "common.admin" : "common.readonly")}</small>
+        </div>
+        <div className="topActions">
+          <Button
+            tone="quiet"
+            onClick={() => {
+              setCommands(true);
+              setSearch("");
+            }}
+            aria-label={t("nav.commands")}
+          >
+            <span className="commandLabel">{t("nav.commands")}</span>
+            <kbd>⌘ K</kbd>
+          </Button>
+          <Link
+            className="iconLink"
+            to="/settings"
+            search={{ section: "capture" }}
+            aria-label={t("nav.settings")}
+            aria-current={location.pathname === "/settings" ? "page" : undefined}
+          >
+            <svg
+              viewBox="0 0 24 24"
+              width="18"
+              height="18"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              aria-hidden="true"
+            >
+              <path d="M4 7h16M4 17h16M8 4v6m8 4v6" />
+            </svg>
+          </Link>
+          {running && (
+            <span className="rates mono" aria-label={t("traffic.rates")}>
+              ↑ {formatBytes(connectionError ? undefined : state.totals?.upload_rate, true)}{" "}
+              <span>
+                ↓ {formatBytes(connectionError ? undefined : state.totals?.download_rate, true)}
+              </span>
+            </span>
+          )}
+          <Status value={connectionError ? "unknown" : state.data_state} />
+          <Button
+            role="switch"
+            aria-checked={running}
+            tone={running ? "normal" : "primary"}
+            disabled={!admin || busy || !!connectionError || operation?.status === "running"}
+            onClick={() => {
+              void lifecycle();
+            }}
+          >
+            {t(running ? "proxy.pause" : "proxy.enable")}
+          </Button>
+        </div>
+      </header>
+      <div className="runtimeStrip">
+        <Link to="/policy" search={{ view: "rules" }}>
+          {t(`policy.${policyMode}`)}
+        </Link>
+        <span className="version mono">
+          v{state.running_version || "—"} / v{state.saved_version}
+        </span>
+        {running && state.running_version !== state.saved_version && (
+          <Button
+            tone="quiet"
+            disabled={!admin || operation?.status === "running"}
+            onClick={() => {
+              void api.apply().then(context.track).catch(setError);
+            }}
+          >
+            {t("common.applySaved")}
+          </Button>
+        )}
+        <span className="scopeLabel">{t("common.scope")}</span>
+      </div>
+      {!!connectionError && (
+        <ErrorNotice
+          error={connectionError}
+          retry={() => {
+            void context.refresh();
+          }}
+        />
+      )}
+      {!!error && <ErrorNotice error={error} />}
+      <ErrorNotice
+        error={context.configError}
+        retry={() => {
+          void context.refresh();
+        }}
+      />
+      {state.config_error && (
+        <div className="inlineNote">
+          <span>{t("errors.config")}</span>{" "}
+          <Link to="/settings" search={{ section: "data" }}>
+            {t("nav.settings")}
+          </Link>
+          <details>
+            <summary>{t("common.details")}</summary>
+            <pre>{state.config_error}</pre>
+          </details>
+        </div>
+      )}
+      <main id="main" tabIndex={-1}>
+        <Outlet />
+      </main>
+      {tool && <Tools />}
+      <footer className="statusbar">
+        <div className="toolTabs">
+          <button
+            onClick={() => setTool(tool === "diagnostics" ? null : "diagnostics")}
+            aria-pressed={tool === "diagnostics"}
+          >
+            {t("nav.diagnostics")}
+          </button>
+          <button
+            onClick={() => setTool(tool === "logs" ? null : "logs")}
+            aria-pressed={tool === "logs"}
+          >
+            {t("nav.logs")}
+          </button>
+        </div>
+        {operation && (
+          <span className="operation">
+            <Status value={operation.status} />
+            <span>{t(`stage.${operation.stage}`, { defaultValue: t("common.details") })}</span>
+            {operation.error && (
+              <button
+                onClick={() => {
+                  setError(
+                    new ApiError("request", 0, { code: "request", details: operation.error }),
+                  );
+                }}
+              >
+                {t("common.details")}
+              </button>
+            )}
+          </span>
+        )}
+        <span className="privacyLabel">{t("common.privacy")}</span>
+      </footer>
+      {toast && (
+        <output className="toast">
+          <div>
+            {t(toast.key)}
+            {toast.details && (
+              <details>
+                <summary>{t("common.details")}</summary>
+                <pre>{toast.details}</pre>
+              </details>
+            )}
+          </div>
+          {toast.undo && (
+            <Button
+              onClick={() => {
+                void toast.undo!().catch(setError);
+              }}
+            >
+              {t("common.undo")}
+            </Button>
+          )}
+          <Button tone="quiet" aria-label={t("common.close")} onClick={() => notify(null)}>
+            ×
+          </Button>
+        </output>
+      )}
+      <Modal open={commands} onClose={() => setCommands(false)} title={t("nav.commands")}>
+        <input
+          className="commandSearch"
+          placeholder={t("command.placeholder")}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          aria-label={t("nav.commands")}
+        />
+        <div className="commandList">
+          {actions.map((action) => (
+            <button
+              key={action.id}
+              onClick={() => {
+                setCommands(false);
+                action.run();
+              }}
+            >
+              {action.label}
+            </button>
+          ))}
+          {!actions.length && <p>{t("command.noResults")}</p>}
+        </div>
+      </Modal>
+      <Modal
+        open={!!readiness}
+        onClose={() => setReadiness(null)}
+        title={t("proxy.preflight")}
+        description={t(readiness?.direct_only ? "proxy.directHint" : "proxy.fix")}
+      >
+        {readiness && (
+          <>
+            <KeyValues
+              entries={readiness.checks.map((check) => [
+                t(`check.${check.code}`, { defaultValue: t("common.warning") }),
+                <div key={check.id}>
+                  <Status value={check.status} />
+                  <details>
+                    <summary>{t("common.details")}</summary>
+                    {check.message}
+                  </details>
+                </div>,
+              ])}
+            />
+            {readiness.direct_only &&
+              readiness.blockers.every((check) => check.code === "direct_only_confirmation") && (
+                <Button
+                  tone="primary"
+                  disabled={busy}
+                  onClick={() => {
+                    void lifecycle(true);
+                  }}
+                >
+                  {t("proxy.directConfirm")}
+                </Button>
+              )}
+            <Link to="/settings" search={{ section: "capture" }} onClick={() => setReadiness(null)}>
+              {t("nav.settings")}
+            </Link>
+          </>
+        )}
+      </Modal>
+      {ruleDraft && <RuleComposer initial={ruleDraft} onClose={() => context.setRuleDraft(null)} />}
+    </div>
+  );
+}

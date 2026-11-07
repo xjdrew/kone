@@ -217,6 +217,7 @@ func (c *Controller) settingsPath() string { return filepath.Join(c.directory, "
 
 func managementDefaults() *kone.KoneConfig {
 	cfg := kone.DefaultConfig()
+	cfg.Policy.Mode = "direct-first"
 	cfg.Core.IPv6Network = kone.DefaultIPv6Network()
 	cfg.Rule = []kone.RuleConfig{{ID: "rule-default-direct", Source: "default", Schema: "FINAL", Outbound: kone.BuiltinDirect}}
 	cfg.DNS.System = kone.SupportsSystemDNS()
@@ -298,7 +299,7 @@ func (c *Controller) Validate(request SaveRequest) (map[string]any, error) {
 }
 
 func restartRequired(next, current Document) bool {
-	return next.Inbound != current.Inbound || !reflect.DeepEqual(next.Config.Core, current.Config.Core) || !reflect.DeepEqual(next.Config.DNS, current.Config.DNS) || !reflect.DeepEqual(next.Config.General, current.Config.General) || next.Config.GeoIP != current.Config.GeoIP
+	return next.Inbound != current.Inbound || next.Config.Policy.Mode != current.Config.Policy.Mode || !reflect.DeepEqual(next.Config.Core, current.Config.Core) || !reflect.DeepEqual(next.Config.DNS, current.Config.DNS) || !reflect.DeepEqual(next.Config.General, current.Config.General) || next.Config.GeoIP != current.Config.GeoIP
 }
 
 func (c *Controller) Save(request SaveRequest) (map[string]any, error) {

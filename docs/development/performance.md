@@ -82,3 +82,9 @@ Fake-IP → TUN → KONE direct → 回环 TCP/UDP 服务 → TUN 回程
 ## 6. 交付性能结论
 
 报告至少包含：问题、基线/候选 SHA、环境、数据与负载、原始样本、差异、正确性结果、结论适用范围。独立实验室仍需覆盖 HTTP/SOCKS5/SS、MTU/分片、长时管理负载和 Raspberry Pi；有硬件基线后再确定性能预算。
+
+## 策略路由查找样本
+
+本轮 Web/基础策略重构增加启动前原生路由快照。直连使用最长前缀、同前缀低 metric 优先的索引；代理传输保持物理出口。查询只读取地址元数据，不探测业务内容。
+
+2026-11-07 本地 Linux amd64、Go 1.27.3、Intel i7-10700：`go test -tags with_gvisor ./pkg/kone -run '^$' -bench '^BenchmarkPolicyRouteLookup$' -benchmem -count=3`，两条 IPv4 路由的最长前缀查找为 38.35–39.70 ns/op、0 B/op、0 allocs/op。样本对应本轮 `codex/web-optimization` 实现；不可替代大路由表、VPN、端到端转发和原生三栈的性能预算。CI 产物的 SHA 为最终复验标识。

@@ -1,0 +1,6 @@
+{
+  "plugins": ["typescript", "react", "jsx-a11y"],
+  "categories": {"correctness": "error"},
+  "rules": {"react/rules-of-hooks": "error", "react/jsx-key": "error"},
+  "ignorePatterns": ["dist/**", "node_modules/**"]
+}

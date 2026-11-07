@@ -2,6 +2,10 @@
 
 ## Features
 
+- Rebuild the Web console around Traffic and Policy workspaces, with contextual rule editing, keyboard commands and persistent diagnostics/log tools.
+- Add editable direct-first and global-proxy policies with local-network protections, country exceptions, IPv6 scope and explicit UDP fallback consent; existing profiles retain their intent.
+- Add offline English and Chinese interfaces, system-language detection and per-client language preferences, including desktop menus and translated operation summaries.
+
 - Open the numeric loopback management address without a password while keeping remote access authenticated.
 - Apply IPv4 and IPv6 CIDR rule changes live while preserving established connections.
 - Automatically choose a non-conflicting IPv6 subnet for new management profiles on capable hosts, preserving existing settings.
@@ -17,7 +21,6 @@
 - Document the two-base-mode design with shared custom rules, routing and cache limitations, proxy-tool comparisons, and Windows/macOS application-rule feasibility.
 - Document proposals for fixed rule layers, consistent dial targets, durable Fake-IP ownership, and optional Smart suggestions for both proxy and direct routing.
 - Reduce contributor wait time for automated checks across supported platforms.
-- Specify editable direct-first and global-proxy base policies and extensible English/Chinese interface localization in the product and design documents.
 - Define Web console design rules around traffic and policy workspaces, contextual tools, dense layouts and efficient keyboard workflows.
 - Use clearer proxy terminology throughout the console, tray and guides.
 - Consolidate user and developer guides, replace historical notes with current instructions, and define product and Web requirements for future redesigns, including transparent routing, performance and payload privacy goals.

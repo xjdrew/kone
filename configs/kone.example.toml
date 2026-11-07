@@ -7,6 +7,13 @@
 # 日志格式：text 或 json，均输出到 stderr。
 # log-format = "text"
 
+# 可选基础策略元数据；省略保持旧配置行为，管理新配置默认 direct-first。
+# [policy]
+# mode = "direct-first" # direct-first / proxy-first / custom；须与无条件 FINAL 一致
+# ipv4-only = false # proxy-first 默认覆盖可用 IPv6；仅 IPv4 时须显式 true
+# udp-exception = false # HTTP/HTTPS 出站的 UDP direct 回退须显式同意
+# 全局代理还须 core.auto-route、真实出口、可用默认代理及相应 IPv6 接管。
+
 [core]
 # 新建的 TUN 名称；空字符串自动分配。macOS 指定时必须使用 utunN。
 # 不得使用已有网卡名称；创建和修改网络需要管理员/root 权限。

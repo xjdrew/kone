@@ -15,6 +15,8 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
+
+	"github.com/xjdrew/kone/pkg/locale"
 )
 
 // The credential version identifies this fixed Argon2id profile. Bump it when
@@ -85,6 +87,9 @@ func (c *Controller) authInformation(w http.ResponseWriter, r *http.Request) {
 	setup := !configured && ok && session.Role == "setup" && !session.Remote && localRemote(r)
 	info := map[string]any{"setup_required": !configured && !local, "password_required": configured && !local, "password_configured": configured,
 		"setup_authorized": setup, "local_access": local, "local_session": ok && session.Local, "authenticated": ok && session.Role != "setup" && (configured || session.Local)}
+	if local {
+		info["locale"] = locale.HostLanguage()
+	}
 	if setup {
 		info["csrf_token"] = session.csrf
 	} // Resume authorized setup after a page reload.

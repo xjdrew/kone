@@ -27,8 +27,9 @@ var ErrOutboundDisabled = fmt.Errorf("outbound is disabled: %w", ErrRejected)
 func (cfg OutboundConfig) IsEnabled() bool { return cfg.Enabled == nil || *cfg.Enabled }
 
 type Outbounds struct {
-	entries map[string]configuredOutbound
-	dial    func(context.Context, string, string) (net.Conn, error)
+	entries    map[string]configuredOutbound
+	dial       func(context.Context, string, string) (net.Conn, error)
+	directDial func(context.Context, string, string) (net.Conn, error)
 }
 
 func (p *Outbounds) CheckEnabled(name string) error {
@@ -48,10 +49,14 @@ func (p *Outbounds) Dial(name, addr string) (net.Conn, error) {
 
 func (p *Outbounds) DialContext(ctx context.Context, name, addr string) (net.Conn, error) {
 	dial := p.dial
+	if name == BuiltinDirect && p.directDial != nil {
+		dial = p.directDial
+	}
 	if observe, ok := ctx.Value(diagnosticTransportKey{}).(diagnosticTransportObserver); ok {
+		transport := dial
 		dial = func(ctx context.Context, network, address string) (net.Conn, error) {
 			start := time.Now()
-			conn, err := p.dial(ctx, network, address)
+			conn, err := transport(ctx, network, address)
 			observe(address, time.Since(start), err)
 			return conn, err
 		}
@@ -118,6 +123,9 @@ func (p *Outbounds) DialUDPContext(ctx context.Context, name, addr string) (net.
 		host, _, _ := net.SplitHostPort(addr)
 		if address, err := netip.ParseAddr(host); err == nil && address.Is6() && !address.Is4In6() {
 			network = "udp6"
+		}
+		if p.directDial != nil {
+			return p.directDial(ctx, network, addr)
 		}
 		return p.dial(ctx, network, addr)
 	}

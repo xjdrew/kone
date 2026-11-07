@@ -7,7 +7,8 @@
 | 工具 | 项目版本或要求 |
 | --- | --- |
 | Go | 1.27.3，与 `go.mod` 一致 |
-| Node.js | 26.13.0，附带 npm |
+| Node.js | 26.13.0，任务与发布脚本使用；附带 npm |
+| Bun | 1.4.4，前端锁文件、开发、构建与快速测试 |
 | just | 1.59.0 |
 | Git、Bash | Windows 使用 Git Bash |
 | C 编译器 / CGO | 执行 race 检查时需要 |
@@ -19,7 +20,7 @@ just init
 just dev
 ```
 
-`init` 检查工具并安装项目依赖；`dev` 构建并打开代理暂停的管理界面。仅调试前端时运行 `just dev web`。单独执行 `just` 查看入口，所有日常命令支持 `--help`。
+`init` 检查工具并安装项目依赖；`dev` 构建并打开代理暂停的管理界面。仅调试前端时运行 `just dev web`。前端使用 Vite、TanStack Router/Query、Radix 无样式交互组件、i18next、CSS Modules；Oxlint/Oxfmt 与 TypeScript 检查位于 `just ci test-web`。单独执行 `just` 查看入口，所有日常命令支持 `--help`。
 
 预期结果：管理页可打开，代理保持暂停。配置与权限检查在用户启用时执行；开发启动不会自动修改系统网络。
 
@@ -42,7 +43,8 @@ flowchart LR
 | `pkg/control/`、`pkg/desktop/` | 持久配置、权限、IPC、启停恢复；控制 API 与助手测试 |
 | `pkg/kone/`、`pkg/proxy/` | 转发、DNS、规则、观察和代理；包内回归及 `test/integration/` |
 | `pkg/geoip/`、`pkg/dnsconfig/`、`pkg/process/` | 数据、平台解析上下文和进程归属；平台边界测试 |
-| `web/src/` | 页面、API 适配和图形；`web/test/`、`web/e2e/` |
+| `web/src/` | React/TypeScript 页面、API、领域转换与图形；Bun 核心测试及 Playwright 浏览器验收 |
+| `pkg/locale/catalog/` | Web/桌面共用离线语言资源；增加 JSON 后构建自动发现 |
 | `scripts/tasks/`、`scripts/ci/`、`scripts/release/` | 日常入口、CI、发布；任务与发布脚本测试 |
 
 核心原理见 [技术架构](../technical/architecture.md)。Web 重构先读 [产品 PRD](../requirements/prd.md) 和 [Web 规格](../requirements/web-ui.md)，保持状态、权限和数据语义。
@@ -102,12 +104,21 @@ just ci coverage-check coverage-base.out coverage.out
 | --- | --- | --- |
 | 启停、DNS、恢复 | `pkg/control/*test.go`、`test/integration/` 的生命周期、系统 DNS、IPv6 用例 | VPN 组合、权限弹窗、休眠换网、物理网络 |
 | 规则与配置 | 控制版本冲突、撤销、临时规则、凭据保留；浏览器真实服务闭环 | 已缓存 Fake-IP 的应用行为 |
-| 观察与桑基图 | `observation_test.go`、`web/test/graph.test.mjs`、高基数钻取用例 | 长时负载、目标设备性能 |
+| 观察与桑基图 | `observation_test.go`、`web/test/core.test.ts`、高基数钻取用例 | 长时负载、目标设备性能 |
 | 认证与移动管理 | `pkg/control/server_test.go`、`lan_test.go`、三浏览器自动化 | iOS/Android 证书信任、软键盘、锁屏与横竖屏 |
 | 桌面与安装 | AppKit/托盘、IPC、原生 TUN、安装包检查 | 干净机器安装、升级、卸载及签名信任 |
 | Shadowsocks | 独立 SIP004/SIP007 对端与固定官方服务端的 TCP/UDP 互操作 | 其他服务端、版本及网络环境 |
 
 SS 支持三种 AEAD2017 方法。官方对端由 [互操作脚本](../../scripts/test-shadowsocks-interop.sh) 固定镜像 digest 并校验二进制版本；升级时同时核对源码、digest、版本。保留域名远端解析、错误密码、取消和双向载荷用例。测试通过仅证明对应 SHA 与环境，不能用编译成功替代原生验收。
+
+### Web 的快速验证与翻译
+
+1. 页面改动前按 [设计规则](../design-system/kone/MASTER.md) 明确任务、信息优先级和错误状态，再实现。
+2. `just ci test-web` 执行格式、lint、严格类型检查、Bun 核心用例与两项原生/真实服务门禁契约。
+3. `just ci web-build` 更新内嵌资源并验证 LF/CRLF 构建一致性；随后 `just ci test-web-e2e` 验证三浏览器及真实 Go 服务。后者不自动替代前者。
+4. 实际浏览器检查桌面与 320 px、en/zh、键盘焦点、设置草稿、断连和原地操作。外网样本仅手动测试，CI 不依赖 Google 或 Telegram。
+
+新增语言复制 `pkg/locale/catalog/en.json`，修改 `metadata.tag/name/dir` 并翻译 `messages`；保留参数和复数后缀。Web/Go 自动注册资源并逐键回退 en。API 用稳定 `code/params`，原始技术详情单独展示；不要用英文句子判断业务分支。依赖由 `web/bun.lock` 固定，更新后检查随包第三方许可。
 
 ## 6. 维护资产与提交
 

@@ -66,6 +66,8 @@ type Rule struct {
 	outbounds     map[string]OutboundType
 	decisions     []decisionRule
 	geoIP         *geoip.Database
+	protected     []netip.Prefix
+	synthetic     []netip.Prefix
 }
 
 // Built-in and configured targets share the same immutable routing registry.
@@ -110,6 +112,9 @@ func (rule *Rule) Decide(val any, protocol string, port uint16) (decision Routin
 		endpoint = value.Unmap().String()
 	}
 	if endpoint != "" {
+		if rule.protectedAddress(endpoint) {
+			return RoutingDecision{RuleID: "protected:local", RuleType: "PROTECTED", RuleName: "Local network protection", RuleSource: "protected", Outbound: BuiltinDirect, Protocol: protocol, Port: port, Protected: true, Reason: "local_network"}
+		}
 		if rule.directDomains[endpoint] {
 			return RoutingDecision{RuleID: "protected:endpoint", RuleType: "PROTECTED", RuleName: "Proxy endpoint bypass", RuleSource: "protected", Outbound: BuiltinDirect, Protocol: protocol, Port: port, Protected: true, Reason: "proxy endpoint bypass"}
 		}

@@ -8,9 +8,9 @@ const chrome =
     : undefined);
 export default defineConfig({
   testDir: "./e2e",
-  testMatch: "**/*.spec.js",
-  fullyParallel: false,
-  workers: 1,
+  testMatch: "**/*.spec.ts",
+  fullyParallel: true,
+  workers: 2,
   timeout: 30000,
   expect: { timeout: 7000 },
   reporter: [
@@ -26,7 +26,7 @@ export default defineConfig({
   },
   projects: [
     {
-      name: "chromium-1440x900",
+      name: "chromium",
       use: {
         browserName: "chromium",
         viewport: { width: 1440, height: 900 },
@@ -55,7 +55,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "node e2e/server.mjs",
-    url: "http://127.0.0.1:4173",
-    reuseExistingServer: !process.env.CI,
+    wait: { stdout: /Isolated UI test host:/ },
+    timeout: 10000,
   },
 });

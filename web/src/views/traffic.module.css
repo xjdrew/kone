@@ -1,0 +1,78 @@
+.telemetry {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px 38px;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--line);
+}
+.telemetry > div {
+  display: grid;
+  gap: 5px;
+}
+.telemetry span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.telemetry strong {
+  font: 500 19px var(--mono);
+  letter-spacing: -0.5px;
+}
+.telemetry > div:last-child {
+  margin-inline-start: auto;
+}
+.attention {
+  padding: 16px 22px;
+  border-top: 1px solid var(--line);
+}
+.attention h2 {
+  margin-bottom: 10px;
+}
+.attention > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) 50px 180px auto;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  padding: 6px 0;
+}
+.attention .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.paths {
+  padding: 16px 22px;
+  border-top: 1px solid var(--line);
+}
+.paths summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.group {
+  background: var(--surface);
+}
+@media (max-width: 760px) {
+  .telemetry {
+    gap: 14px 22px;
+    padding: 14px 12px;
+  }
+  .telemetry strong {
+    font-size: 17px;
+  }
+  .telemetry > div:last-child {
+    margin-inline-start: 0;
+  }
+  .attention {
+    padding: 12px;
+  }
+  .attention > div {
+    grid-template-columns: 1fr 24px auto;
+    gap: 8px;
+  }
+  .attention > div > span:nth-child(3) {
+    display: none;
+  }
+  .paths {
+    padding: 12px;
+  }
+}

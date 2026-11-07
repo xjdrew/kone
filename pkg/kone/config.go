@@ -106,6 +106,7 @@ type RuleConfig struct {
 
 type KoneConfig struct {
 	source    any
+	Policy    PolicyConfig     `toml:"policy,omitempty"`
 	General   GeneralConfig    `toml:"general"`
 	Core      CoreConfig       `toml:"core"`
 	DNS       DNSConfig        `toml:"dns"`
@@ -330,6 +331,9 @@ func validatePort(value string) error {
 
 // Validate runs before a device is created or any system routes are changed.
 func (cfg *KoneConfig) Validate() error {
+	if err := cfg.ValidatePolicy(); err != nil {
+		return err
+	}
 	if cfg == nil {
 		return errors.New("config is nil")
 	}

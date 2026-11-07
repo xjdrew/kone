@@ -92,6 +92,7 @@ func ExplainRoutingWithGeoIP(config *KoneConfig, database *geoip.Database, targe
 		return RoutingDecision{}, err
 	}
 	rule := NewRuleWithGeoIP(config.Rule, config.Outbounds, database)
+	rule.protectPolicy(config)
 	outbounds.bypassEndpoints(rule)
 	return explainWithRule(rule, outbounds, target, protocol, port, config.Core.IPv6Network != "")
 }
