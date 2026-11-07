@@ -10,18 +10,34 @@ export async function initialize(ctx) {
     ["just", ["--version"], (value) => /^just 1\.(\d+)/.test(value) && Number(value.split(".")[1]) >= 59, "just 1.59 or later"],
     ["bash", ["--version"], () => true, "Bash (Git Bash on Windows)"],
   ];
-  const missing = [];
+  const installed = [];
+  const issues = [];
   for (const [command, args, valid, label] of tools) {
     try {
       const version = ctx.run(command, args, { capture: true });
-      if (!valid(version)) throw new Error("unsupported version");
-      ctx.log(`  ${version.split(/\r?\n/)[0]}`);
-    } catch { missing.push(label); }
+      const detected = version.split(/\r?\n/)[0];
+      if (valid(version)) installed.push(`${command}: ${detected}`);
+      else issues.push(`${command}: installed ${detected}; requires ${label}. Update this tool.`);
+    } catch (error) {
+      issues.push(error.code === "ENOENT"
+        ? `${command}: not found on PATH; install ${label}.`
+        : `${command}: could not check version; check that ${label} runs in this terminal.`);
+    }
   }
-  try { npm(ctx, ["--version"], { capture: true }); }
-  catch { missing.push("npm (included with Node)"); }
-  if (missing.length)
-    throw new Error(`Install these tools manually, reopen your terminal, then run just init: ${missing.join(", ")}`);
+  try {
+    const version = npm(ctx, ["--version"], { capture: true });
+    installed.push(`npm: ${version.split(/\r?\n/)[0]}`);
+  } catch {
+    issues.push("npm: unavailable; install npm (included with Node) and check that Bash can run it.");
+  }
+  ctx.log("  Installed and ready:");
+  for (const tool of installed) ctx.log(`    [OK] ${tool}`);
+  if (!installed.length) ctx.log("    None detected.");
+  if (issues.length) {
+    ctx.log("  Tools needing attention:");
+    for (const issue of issues) ctx.log(`    [!] ${issue}`);
+    throw new Error("Development setup needs attention. Fix the tools listed above, reopen your terminal if PATH changed, then run `just init` again. Project dependencies have not been installed.");
+  }
   ctx.log("[2/3] Preparing Go modules…");
   // Resolve only the native application graph, rather than downloading optional
   // platforms, test tools and unused transitive modules on every developer PC.

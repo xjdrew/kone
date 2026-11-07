@@ -100,7 +100,7 @@ test-tasks *args:
     task_arguments test-tasks "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    node --test "$KONE_TASK_ROOT"/test/tasks/*.test.mjs
+    node --test "$KONE_TASK_ROOT"/test/tasks/*.test.mjs "$KONE_TASK_ROOT/scripts/tasks/init.test.mjs" "$KONE_TASK_ROOT/test/integration/init.test.mjs"
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
