@@ -18,30 +18,28 @@ import chinese from "../../pkg/locale/catalog/zh.json";
 import { canEnable } from "../src/readiness";
 import type { Readiness, ReadinessCheck } from "../src/model";
 
-test("direct-only consent never bypasses another startup blocker", () => {
-  const consent: ReadinessCheck = {
-    id: "direct",
-    code: "direct_only_confirmation",
+test("default direct routing needs no consent, but cannot bypass real blockers", () => {
+  const permissions: ReadinessCheck = {
+    id: "permissions",
+    code: "privileges",
     severity: "error",
     status: "error",
-    message: "Confirm direct-only capture",
-    page: "outbounds",
+    message: "CAP_NET_ADMIN is required",
+    page: "settings",
   };
-  const permissions = { ...consent, id: "permissions", code: "privileges" };
   const report: Readiness = {
-    ready: false,
+    ready: true,
     direct_only: true,
     direct_only_confirmed: false,
-    checks: [consent, permissions],
-    blockers: [consent, permissions],
+    checks: [],
+    blockers: [],
     warnings: [],
   };
-  expect(canEnable(report)).toBe(false);
-  expect(canEnable({ ...report, blockers: [consent] })).toBe(true);
-  expect(canEnable({ ...report, direct_only: false, blockers: [consent] })).toBe(false);
-  expect(canEnable({ ...report, blockers: [] })).toBe(false);
-  expect(canEnable({ ...report, ready: true, blockers: [] })).toBe(true);
-  expect(canEnable({ ...report, ready: true })).toBe(false);
+  expect(canEnable(report)).toBe(true);
+  expect(canEnable({ ...report, direct_only: false })).toBe(true);
+  expect(canEnable({ ...report, ready: false, blockers: [permissions] })).toBe(false);
+  expect(canEnable({ ...report, ready: false })).toBe(false);
+  expect(canEnable({ ...report, blockers: [permissions] })).toBe(false);
 });
 
 describe("precise routing edits", () => {

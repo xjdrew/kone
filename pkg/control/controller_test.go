@@ -129,8 +129,6 @@ func TestCaptureLifecycleVersionsAndUndo(t *testing.T) {
 	legacy.Config["policy"] = map[string]any{"mode": "custom"}
 	_, saveErr := c.Save(legacy)
 	require.NoError(t, saveErr)
-	require.ErrorContains(t, c.Start(context.Background()), "direct-only")
-	enable(t, c)
 	require.NoError(t, c.Start(context.Background()))
 	require.NoError(t, c.Start(context.Background()))
 	require.Equal(t, "running", c.State().DataState)

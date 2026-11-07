@@ -1,19 +1,31 @@
 import { test, expect } from "@playwright/test";
 import { fixture } from "./fixture";
 
-test("@compat readiness explains blockers and requires a separate explicit start", async ({
+test("@compat default direct routing starts immediately; only real blockers require recovery", async ({
   page,
 }) => {
   const data = await fixture(page);
-  const consent = {
-    id: "direct",
-    code: "direct_only_confirmation",
-    status: "error",
-    severity: "error",
-    message: "Confirm direct-only capture",
-    page: "outbounds",
-    action: "confirm_direct",
+  data.document.config.outbounds = [];
+  data.document.config.rules = [{ id: "final", type: "FINAL", outbound: "direct" }];
+  data.document.direct_only_confirmed = false;
+  data.readiness = {
+    ready: true,
+    direct_only: true,
+    direct_only_confirmed: false,
+    checks: [],
+    blockers: [],
+    warnings: [],
   };
+  await page.goto("/#/traffic");
+  await page.getByRole("switch", { name: "Enable proxy" }).click();
+  await expect(page.getByRole("switch", { name: "Pause proxy" })).toBeVisible();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  expect(data.requests.filter(({ path }) => path === "/lifecycle/start")).toHaveLength(1);
+  expect(data.requests.some(({ method, path }) => method === "PUT" && path === "/config")).toBe(
+    false,
+  );
+  await page.getByRole("switch", { name: "Pause proxy" }).click();
+
   const permissions = {
     id: "privileges",
     code: "privileges",
@@ -24,37 +36,34 @@ test("@compat readiness explains blockers and requires a separate explicit start
     action: "authorize",
   };
   const advisory = {
-    id: "health",
-    code: "outbound_health",
-    status: "error",
+    id: "scope",
+    code: "capture_scope",
+    status: "warning",
     severity: "warning",
-    message: "Latest test failed",
-    page: "outbounds",
-    action: "test_outbound",
+    message: "Selective capture",
+    page: "inbounds",
+    action: "edit_inbound",
   };
   data.readiness = {
+    ...data.readiness,
     ready: false,
-    direct_only: true,
-    direct_only_confirmed: false,
-    checks: [consent, permissions, advisory],
-    blockers: [consent, permissions],
+    checks: [permissions, advisory],
+    blockers: [permissions],
     warnings: [advisory],
   };
-  await page.goto("/#/traffic");
   await page.getByRole("switch", { name: "Enable proxy" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText("Network permission is missing", { exact: true })).toBeVisible();
   await expect(dialog.getByText(/The browser cannot grant OS permissions/)).toBeVisible();
   await expect(dialog.getByText("Unknown", { exact: true })).toHaveCount(0);
-  const enable = dialog.getByRole("button", { name: "Enable TUN (direct only)", exact: true });
+  const enable = dialog.getByRole("button", { name: "Enable proxy", exact: true });
   await expect(enable).toBeDisabled();
-  await expect(dialog.getByRole("link", { name: "Configure proxy rules" })).toHaveAttribute(
-    "href",
-    /policy/,
-  );
   await dialog.getByText("Recommendations · 1 · do not block startup").click();
   await expect(dialog.getByText("Does not block startup", { exact: true })).toBeVisible();
-
+  await expect(dialog.getByRole("link", { name: "Configure capture" })).toHaveAttribute(
+    "href",
+    /section=capture/,
+  );
   await page.route("**/api/v1/readiness", (route) =>
     route.fulfill({
       status: 503,
@@ -68,50 +77,28 @@ test("@compat readiness explains blockers and requires a separate explicit start
   await expect(dialog.getByText("Host check failed")).toBeVisible();
   await page.unroute("**/api/v1/readiness");
 
-  // Rechecking is read-only, including after the host becomes ready.
-  data.readiness.blockers = [consent];
-  data.readiness.checks = [consent, advisory];
+  // Rechecking cannot start; enabling must revalidate a changed environment.
+  data.readiness = { ...data.readiness, ready: true, blockers: [], checks: [advisory] };
   await dialog.getByRole("button", { name: "Check again" }).click();
   await expect(enable).toBeEnabled();
-  expect(data.requests.some(({ path }) => path.startsWith("/lifecycle/"))).toBe(false);
-  expect(data.requests.some(({ method, path }) => method === "PUT" && path === "/config")).toBe(
-    false,
-  );
-
-  // The environment can change while the dialog is open. Check again on enable.
-  data.readiness.blockers = [consent, permissions];
-  data.readiness.checks = [consent, permissions, advisory];
-  await enable.click();
-  await expect(enable).toBeDisabled();
-  expect(data.requests.some(({ path }) => path.startsWith("/lifecycle/"))).toBe(false);
-
-  data.readiness.blockers = [consent];
-  data.readiness.checks = [consent];
-  await dialog.getByRole("button", { name: "Check again" }).click();
-  await enable.click();
-  await expect(dialog).not.toBeVisible();
-  expect(
-    data.requests.find(({ method, path }) => method === "PUT" && path === "/config")?.body,
-  ).toMatchObject({ direct_only_confirmed: true });
   expect(data.requests.filter(({ path }) => path === "/lifecycle/start")).toHaveLength(1);
-
-  await page.getByRole("switch", { name: "Pause proxy" }).click();
   data.readiness = {
     ...data.readiness,
-    direct_only: false,
+    ready: false,
     blockers: [permissions],
     checks: [permissions],
   };
-  await page.getByRole("switch", { name: "Enable proxy" }).click();
-  const proxy = dialog.getByRole("button", { name: "Enable proxy", exact: true });
-  await expect(proxy).toBeDisabled();
+  await enable.click();
+  await expect(enable).toBeDisabled();
+  expect(data.requests.filter(({ path }) => path === "/lifecycle/start")).toHaveLength(1);
   data.readiness = { ...data.readiness, ready: true, blockers: [], checks: [] };
   await dialog.getByRole("button", { name: "Check again" }).click();
-  await expect(proxy).toBeEnabled();
-  expect(data.requests.filter(({ path }) => path === "/lifecycle/start")).toHaveLength(1);
-  await proxy.click();
+  await enable.click();
   await expect(dialog).not.toBeVisible();
   expect(data.requests.filter(({ path }) => path === "/lifecycle/start")).toHaveLength(2);
+  expect(data.requests.some(({ method, path }) => method === "PUT" && path === "/config")).toBe(
+    false,
+  );
 });
 
 test("policy conversion is previewed and preserves exceptions; conflicts retain the draft", async ({

@@ -111,7 +111,6 @@ export function saveRequest(
           { action: "preserve" as const },
         ]),
       ),
-    direct_only_confirmed: document.direct_only_confirmed,
   };
 }
 export function addPreciseRule(config: Config, rule: Rule): Config {

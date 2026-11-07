@@ -37,7 +37,6 @@ export function ReadinessDialog({
       check.code === "outbound_health"
         ? `readiness.outbound_${check.status}`
         : `readiness.${check.code}`;
-    const needsConsent = check.code === "direct_only_confirmation";
     const action = (() => {
       if (check.code === "privileges" || check.code === "canceled") return null;
       if (check.code === "configuration")
@@ -46,7 +45,7 @@ export function ReadinessDialog({
             {t("readiness.repairConfig")}
           </Link>
         );
-      if (["confirm_direct", "configure_rules"].includes(check.action || ""))
+      if (check.action === "configure_rules")
         return (
           <Link
             to="/policy"
@@ -79,9 +78,7 @@ export function ReadinessDialog({
           <Status value={blocked ? "error" : check.severity === "warning" ? "warning" : "ready"}>
             {t(
               blocked
-                ? needsConsent
-                  ? "readiness.consent"
-                  : "readiness.blocked"
+                ? "readiness.blocked"
                 : check.severity === "warning"
                   ? "readiness.advisory"
                   : "common.ready",
@@ -118,13 +115,7 @@ export function ReadinessDialog({
     >
       <div className={styles.content}>
         <ul className={styles.checks} aria-label={t("readiness.blockers")}>
-          {[...report.blockers]
-            .sort(
-              (a, b) =>
-                Number(a.code === "direct_only_confirmation") -
-                Number(b.code === "direct_only_confirmation"),
-            )
-            .map((check) => entry(check, true))}
+          {report.blockers.map((check) => entry(check, true))}
         </ul>
         {!allowed && !report.blockers.length && <p>{t("readiness.incomplete")}</p>}
         {warnings.length > 0 && (
@@ -161,7 +152,7 @@ export function ReadinessDialog({
             aria-describedby="readiness-start-hint"
             onClick={onEnable}
           >
-            {t(report.direct_only ? "proxy.directConfirm" : "proxy.enable")}
+            {t("proxy.enable")}
           </Button>
         </div>
       </div>

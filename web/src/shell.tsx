@@ -11,7 +11,6 @@ import { Tools } from "./views/tools";
 import { RuleComposer } from "./views/policy";
 import { changeLanguage, languages } from "./i18n";
 import { formatBytes } from "./domain";
-import { saveRequest } from "./domain";
 import type { Readiness } from "./model";
 
 export function Shell() {
@@ -44,26 +43,16 @@ export function Shell() {
       setBusy(false);
     }
   }
-  async function lifecycle(confirmed = false) {
+  async function lifecycle() {
     setBusy(true);
     setError(null);
     try {
       if (!running) {
         const result = await api.readiness();
-        if (
-          !canEnable(result) ||
-          (!confirmed && result.direct_only && !result.direct_only_confirmed)
-        ) {
+        if (!canEnable(result)) {
           setReadiness(result);
           return;
         }
-      }
-      if (!running && confirmed && context.document) {
-        await api.save({
-          ...saveRequest(context.document, context.document.config),
-          direct_only_confirmed: true,
-        });
-        await context.refresh();
       }
       const op = await api.lifecycle(running ? "pause" : "start");
       context.track(op);
@@ -410,7 +399,7 @@ export function Shell() {
           hasOutbounds={!!context.document?.config.outbounds.length}
           onClose={() => setReadiness(null)}
           onCheck={() => void checkReadiness()}
-          onEnable={() => void lifecycle(readiness.direct_only && !readiness.direct_only_confirmed)}
+          onEnable={() => void lifecycle()}
         />
       )}
       {ruleDraft && <RuleComposer initial={ruleDraft} onClose={() => context.setRuleDraft(null)} />}

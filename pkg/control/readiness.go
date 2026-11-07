@@ -80,11 +80,7 @@ func (c *Controller) readiness(ctx context.Context, doc Document, state, configE
 		add(ReadinessCheck{"configuration", "configuration", "error", "error", configError, "settings", "config", "repair_configuration"})
 	}
 	if report.DirectOnly {
-		check := ReadinessCheck{"direct_only", "direct_only", "warning", "warning", "Current rules use no proxy outbound. Capture will only use direct/reject policies; adding a proxy alone does not change these rules.", "outbounds", "rules", "configure_rules"}
-		if !doc.DirectOnlyConfirmed {
-			check = ReadinessCheck{"direct_only_confirmation", "direct_only_confirmation", "error", "error", "Confirm direct-only capture explicitly, or select a proxy outbound in the rules", "outbounds", "direct_only_confirmed", "confirm_direct"}
-		}
-		add(check)
+		add(ReadinessCheck{"direct_only", "direct_only", "ready", "info", "No rule uses a proxy outbound. Unmatched traffic uses the built-in direct outbound; no proxy configuration or direct-only confirmation is required.", "outbounds", "rules", "configure_rules"})
 	}
 	for _, outbound := range doc.Config.Outbounds {
 		if outbound.Enabled == nil || *outbound.Enabled {

@@ -14,6 +14,7 @@
 
 ## Bugfixes
 
+- Allow default direct routing without configuring a proxy or confirming direct-only mode; removing proxy rules applies immediately.
 - Explain startup blockers and their next steps, keep the enable action visible, and allow readiness checks without starting capture.
 - Display only the protections active in legacy and custom policies.
 

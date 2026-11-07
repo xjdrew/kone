@@ -357,11 +357,6 @@ func (c *Controller) saveLocked(request SaveRequest) (result map[string]any, res
 	value := c.Document()
 	value["applied"] = false
 	if engine != nil {
-		if directOnly(next.Config) && !next.DirectOnlyConfirmed {
-			value["apply_error"] = "Saved, but confirm direct-only capture before applying"
-			c.logEvent(slog.LevelWarn, "Saved settings require direct-only confirmation before applying", slog.String("stage", "apply"), slog.Uint64("saved_version", next.Version))
-			return value, nil
-		}
 		applyCtx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
 		err = c.applyLocked(applyCtx)
 		cancel()
@@ -683,9 +678,6 @@ func (c *Controller) applyLocked(ctx context.Context) (resultErr error) {
 	}
 	if !doc.Inbound.Enabled {
 		return c.pauseLocked(ctx)
-	}
-	if directOnly(doc.Config) && !doc.DirectOnlyConfirmed {
-		return errors.New("confirm direct-only capture before applying")
 	}
 	var err error
 	if versioned, ok := engine.(interface {

@@ -13,7 +13,7 @@ import (
 	"github.com/xjdrew/kone/pkg/kone"
 )
 
-func TestFreshReadinessCollectsBlockersAndRequiresDirectConfirmation(t *testing.T) {
+func TestFreshReadinessOnlyBlocksOnInvalidEnvironment(t *testing.T) {
 	c := testController(t, Options{Preflight: func(context.Context, *kone.KoneConfig) kone.PreflightReport {
 		return kone.PreflightReport{Ready: false, Issues: []kone.PreflightIssue{{Code: "outbound_interface", Severity: "error", Message: "physical interface unavailable"}, {Code: "network_overlap", Severity: "error", Message: "TUN network overlaps"}}}
 	}})
@@ -25,7 +25,7 @@ func TestFreshReadinessCollectsBlockersAndRequiresDirectConfirmation(t *testing.
 	require.Equal(t, kone.BuiltinDirect, c.doc.Config.Rule[0].Outbound)
 	report := c.Readiness(t.Context())
 	require.False(t, report.Ready)
-	require.Len(t, report.Blockers, 3)
+	require.Len(t, report.Blockers, 2)
 	require.True(t, report.DirectOnly)
 	require.False(t, report.DirectOnlyConfirmed)
 	for _, issue := range report.Blockers {
@@ -34,16 +34,30 @@ func TestFreshReadinessCollectsBlockersAndRequiresDirectConfirmation(t *testing.
 		require.NotEmpty(t, issue.ID)
 	}
 	err := c.Start(t.Context())
-	require.ErrorContains(t, err, "direct-only")
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "direct-only")
 	require.ErrorContains(t, err, "physical interface unavailable")
 	require.ErrorContains(t, err, "TUN network overlaps")
 	require.Nil(t, c.engine)
 	require.NoFileExists(t, c.journalPath())
 }
 
-func TestDirectOnlyConfirmationIsPersistedAndLegacyIntentIsPreserved(t *testing.T) {
+func TestDirectOnlyStartsWithoutConfirmationAndPreservesLegacyProfiles(t *testing.T) {
 	c := testController(t, Options{})
-	require.Error(t, c.Start(t.Context()), "native tray and HTTP both use the same controller gate")
+	require.Empty(t, c.doc.Config.Outbounds)
+	require.False(t, c.doc.Config.Core.AutoRoute)
+	require.False(t, c.doc.Config.Core.AutoRoute6)
+	require.Equal(t, kone.SupportsSystemDNS(), c.doc.Config.DNS.System)
+	require.Len(t, c.doc.Config.Rule, 1, "no user rules; only the default direct fallback")
+	rules := kone.NewRule(c.doc.Config.Rule, c.doc.Config.Outbounds)
+	for _, protocol := range []string{"", "tcp", "udp"} {
+		decision := rules.Decide("example.net", protocol, 443)
+		require.Equal(t, kone.BuiltinDirect, decision.Outbound)
+		require.False(t, decision.CaptureOnly)
+	}
+	require.True(t, c.Readiness(t.Context()).Ready)
+	require.NoError(t, c.Start(t.Context()), "native tray and HTTP both accept default direct routing")
+	require.NoError(t, c.Pause(t.Context()))
 	request := currentRequest(c)
 	yes := true
 	request.DirectOnlyConfirmed = &yes
@@ -119,7 +133,7 @@ func TestRunningCaptureRejectsNetworkChangesAndHotApplyCanRetryTheSavedVersion(t
 	require.Equal(t, c.State().SavedVersion, c.State().RunningVersion)
 }
 
-func TestProxyToDirectEditNeedsConfirmationBeforeHotApply(t *testing.T) {
+func TestProxyToDirectEditAppliesWithoutConfirmation(t *testing.T) {
 	c := testController(t, Options{})
 	request := currentRequest(c)
 	request.Config["policy"] = map[string]any{"mode": "custom"}
@@ -128,22 +142,14 @@ func TestProxyToDirectEditNeedsConfirmationBeforeHotApply(t *testing.T) {
 	_, err := c.Save(request)
 	require.NoError(t, err)
 	require.NoError(t, c.Start(t.Context()), "unverified proxy is guidance, not an automatic direct fallback")
-	running := c.State().RunningVersion
 	request = currentRequest(c)
 	request.Config["rules"] = []any{map[string]any{"type": "FINAL", "outbound": "direct"}}
 	saved, err := c.Save(request)
 	require.NoError(t, err)
-	require.Equal(t, false, saved["applied"])
-	require.False(t, c.doc.DirectOnlyConfirmed)
-	require.Equal(t, running, c.State().RunningVersion)
-	require.ErrorContains(t, c.Apply(t.Context()), "direct-only")
-	require.False(t, c.Readiness(t.Context()).Ready)
-	yes := true
-	request = currentRequest(c)
-	request.DirectOnlyConfirmed = &yes
-	saved, err = c.Save(request)
-	require.NoError(t, err)
 	require.Equal(t, true, saved["applied"])
+	require.False(t, c.doc.DirectOnlyConfirmed)
+	require.NoError(t, c.Apply(t.Context()))
+	require.True(t, c.Readiness(t.Context()).Ready)
 	require.Equal(t, c.State().SavedVersion, c.State().RunningVersion)
 }
 
@@ -154,8 +160,8 @@ func TestReadinessHTTPAndRuntimeLockedErrorsProvideActions(t *testing.T) {
 	require.Equal(t, 200, response.Code)
 	var report ReadinessReport
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &report))
-	require.False(t, report.Ready)
-	require.Equal(t, "confirm_direct", report.Blockers[0].Action)
+	require.True(t, report.Ready)
+	require.Empty(t, report.Blockers)
 	enable(t, c)
 	require.NoError(t, c.Start(t.Context()))
 	next := currentRequest(c)
