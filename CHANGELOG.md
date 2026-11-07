@@ -10,6 +10,8 @@
 
 ## Changes
 
+- Specify editable direct-first and global-proxy base policies and extensible English/Chinese interface localization in the product and design documents.
+- Define Web console design rules around traffic and policy workspaces, contextual tools, dense layouts and efficient keyboard workflows.
 - Use clearer proxy terminology throughout the console, tray and guides.
 - Consolidate user and developer guides, replace historical notes with current instructions, and define product and Web requirements for future redesigns, including transparent routing, performance and payload privacy goals.
 
