@@ -8,6 +8,7 @@ import (
 	"unsafe"
 
 	"github.com/stretchr/testify/require"
+	"github.com/xjdrew/kone/pkg/locale"
 	"golang.org/x/sys/windows"
 )
 
@@ -53,7 +54,7 @@ func TestWindowsHiddenTrayMessagePumpStateRestartAndExit(t *testing.T) {
 	trayUser32.NewProc("PostMessageW").Call(hwnd, 0x0113, 1, 0)
 	select {
 	case tip := <-tips:
-		require.Contains(t, tip, "paused")
+		require.Equal(t, "KONE — "+locale.Desktop("common.paused"), tip)
 	case <-time.After(time.Second):
 		t.Fatal("tooltip did not reflect the actual controller state")
 	}
