@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { documentFixture, stateFixture, trafficFixture } from "../test/factories";
-import type { Config, Operation, PolicyRequest, SaveRequest } from "../src/model";
+import type { Config, Operation, PolicyRequest, Readiness, SaveRequest } from "../src/model";
 
 export async function fixture(page: Page, options: { readonly?: boolean; remote?: boolean } = {}) {
   const data = {
@@ -10,6 +10,14 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
     authenticated: !options.remote,
     conflict: false,
     offline: false,
+    readiness: {
+      ready: true,
+      direct_only: false,
+      direct_only_confirmed: true,
+      checks: [],
+      blockers: [],
+      warnings: [],
+    } as Readiness,
     requests: [] as { method: string; path: string; search: string; body: unknown }[],
   };
   if (options.readonly) data.state.role = "read";
@@ -178,15 +186,7 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
         capacity: 1000,
         bytes: 120,
       });
-    if (path === "/readiness")
-      return respond({
-        ready: true,
-        direct_only: false,
-        direct_only_confirmed: true,
-        checks: [],
-        blockers: [],
-        warnings: [],
-      });
+    if (path === "/readiness") return respond(data.readiness);
     if (path === "/sessions") return respond({ sessions: [] });
     if (path === "/access/lan") return respond({ enabled: false });
     if (path === "/geoip")

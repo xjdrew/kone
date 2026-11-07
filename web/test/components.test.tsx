@@ -1,12 +1,12 @@
 import "./dom";
 import { afterEach, expect, test } from "bun:test";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import english from "../../pkg/locale/catalog/en.json";
 import chinese from "../../pkg/locale/catalog/zh.json";
 import { FlowGraph } from "../src/components/flow-graph";
-import { ErrorNotice } from "../src/components/ui";
+import { ErrorNotice, Status } from "../src/components/ui";
 import { ApiError } from "../src/api/client";
 import { graphFixture } from "./factories";
 
@@ -20,6 +20,15 @@ await i18next.use(initReactI18next).init({
 afterEach(() => {
   cleanup();
   void i18next.changeLanguage("en");
+});
+test("an error status has an explicit label in both supported languages", async () => {
+  render(<Status value="error" />);
+  expect(screen.getByText("Error")).toBeTruthy();
+  await act(async () => {
+    await i18next.changeLanguage("zh");
+  });
+  expect(screen.getByText("错误")).toBeTruthy();
+  expect(screen.queryByText("未知")).toBeNull();
 });
 test("keyboard activation uses the original complete-path IDs", () => {
   let selected: string[] = [];

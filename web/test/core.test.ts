@@ -15,6 +15,34 @@ import { ApiError, clearSession, request, setSession } from "../src/api/client";
 import { configuration, documentFixture, flowFixture, graphFixture } from "./factories";
 import english from "../../pkg/locale/catalog/en.json";
 import chinese from "../../pkg/locale/catalog/zh.json";
+import { canEnable } from "../src/readiness";
+import type { Readiness, ReadinessCheck } from "../src/model";
+
+test("direct-only consent never bypasses another startup blocker", () => {
+  const consent: ReadinessCheck = {
+    id: "direct",
+    code: "direct_only_confirmation",
+    severity: "error",
+    status: "error",
+    message: "Confirm direct-only capture",
+    page: "outbounds",
+  };
+  const permissions = { ...consent, id: "permissions", code: "privileges" };
+  const report: Readiness = {
+    ready: false,
+    direct_only: true,
+    direct_only_confirmed: false,
+    checks: [consent, permissions],
+    blockers: [consent, permissions],
+    warnings: [],
+  };
+  expect(canEnable(report)).toBe(false);
+  expect(canEnable({ ...report, blockers: [consent] })).toBe(true);
+  expect(canEnable({ ...report, direct_only: false, blockers: [consent] })).toBe(false);
+  expect(canEnable({ ...report, blockers: [] })).toBe(false);
+  expect(canEnable({ ...report, ready: true, blockers: [] })).toBe(true);
+  expect(canEnable({ ...report, ready: true })).toBe(false);
+});
 
 describe("precise routing edits", () => {
   test("Telegram is one IPv4 TCP port, and the probe never sends TLS", () => {

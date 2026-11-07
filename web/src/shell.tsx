@@ -4,7 +4,9 @@ import { useTranslation } from "react-i18next";
 import { useConsole } from "./context";
 import { api } from "./api/endpoints";
 import { ApiError } from "./api/client";
-import { Button, ErrorNotice, Modal, Status, KeyValues } from "./components/ui";
+import { Button, ErrorNotice, Modal, Status } from "./components/ui";
+import { ReadinessDialog } from "./components/readiness";
+import { canEnable } from "./readiness";
 import { Tools } from "./views/tools";
 import { RuleComposer } from "./views/policy";
 import { changeLanguage, languages } from "./i18n";
@@ -31,18 +33,32 @@ export function Shell() {
   const policyMode =
     context.document?.config.policy?.mode ||
     (context.document?.config.rules.at(-1)?.outbound === "direct" ? "direct-first" : "custom");
+  async function checkReadiness() {
+    setBusy(true);
+    setError(null);
+    try {
+      setReadiness(await api.readiness());
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function lifecycle(confirmed = false) {
     setBusy(true);
     setError(null);
     try {
-      if (!running && !confirmed) {
+      if (!running) {
         const result = await api.readiness();
-        if (!result.ready || (result.direct_only && !result.direct_only_confirmed)) {
+        if (
+          !canEnable(result) ||
+          (!confirmed && result.direct_only && !result.direct_only_confirmed)
+        ) {
           setReadiness(result);
           return;
         }
       }
-      if (confirmed && context.document) {
+      if (!running && confirmed && context.document) {
         await api.save({
           ...saveRequest(context.document, context.document.config),
           direct_only_confirmed: true,
@@ -281,7 +297,7 @@ export function Shell() {
           }}
         />
       )}
-      {!!error && <ErrorNotice error={error} />}
+      {!!error && !readiness && <ErrorNotice error={error} />}
       <ErrorNotice
         error={context.configError}
         retry={() => {
@@ -386,44 +402,17 @@ export function Shell() {
           {!actions.length && <p>{t("command.noResults")}</p>}
         </div>
       </Modal>
-      <Modal
-        open={!!readiness}
-        onClose={() => setReadiness(null)}
-        title={t("proxy.preflight")}
-        description={t(readiness?.direct_only ? "proxy.directHint" : "proxy.fix")}
-      >
-        {readiness && (
-          <>
-            <KeyValues
-              entries={readiness.checks.map((check) => [
-                t(`check.${check.code}`, { defaultValue: t("common.warning") }),
-                <div key={check.id}>
-                  <Status value={check.status} />
-                  <details>
-                    <summary>{t("common.details")}</summary>
-                    {check.message}
-                  </details>
-                </div>,
-              ])}
-            />
-            {readiness.direct_only &&
-              readiness.blockers.every((check) => check.code === "direct_only_confirmation") && (
-                <Button
-                  tone="primary"
-                  disabled={busy}
-                  onClick={() => {
-                    void lifecycle(true);
-                  }}
-                >
-                  {t("proxy.directConfirm")}
-                </Button>
-              )}
-            <Link to="/settings" search={{ section: "capture" }} onClick={() => setReadiness(null)}>
-              {t("nav.settings")}
-            </Link>
-          </>
-        )}
-      </Modal>
+      {readiness && (
+        <ReadinessDialog
+          report={readiness}
+          busy={busy}
+          error={error}
+          hasOutbounds={!!context.document?.config.outbounds.length}
+          onClose={() => setReadiness(null)}
+          onCheck={() => void checkReadiness()}
+          onEnable={() => void lifecycle(readiness.direct_only && !readiness.direct_only_confirmed)}
+        />
+      )}
       {ruleDraft && <RuleComposer initial={ruleDraft} onClose={() => context.setRuleDraft(null)} />}
     </div>
   );
