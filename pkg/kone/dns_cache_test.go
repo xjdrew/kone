@@ -74,6 +74,21 @@ func TestDNSHistoryRetentionCapacityAndClear(t *testing.T) {
 	newDNSHistory(0, time.Second).add(DNSQueryEvent{})
 }
 
+func TestDNSStatusOwnsResolverRoutes(t *testing.T) {
+	route := DNSRouteConfig{Suffix: "corp.test", Servers: []string{"192.0.2.53:53"}, Interface: "office", Automatic: true}
+	one := &One{dns: &Dns{nameservers: []string{"198.51.100.53:53"}, routes: []DNSRouteConfig{route}}}
+	status := one.DNSStatus()
+	require.Equal(t, []DNSRouteConfig{route}, status.Rules)
+	require.Equal(t, []string{"198.51.100.53:53"}, status.Servers)
+	status.Rules[0].Suffix = "changed.test"
+	status.Rules[0].Servers[0] = "203.0.113.53:53"
+	status.Servers[0] = "203.0.113.54:53"
+	unchanged := one.DNSStatus()
+	require.Equal(t, "corp.test", unchanged.Rules[0].Suffix)
+	require.Equal(t, []string{"192.0.2.53:53"}, unchanged.Rules[0].Servers)
+	require.Equal(t, []string{"198.51.100.53:53"}, unchanged.Servers)
+}
+
 func TestFakeIPPinPreventsRecycle(t *testing.T) {
 	address, subnet, _ := net.ParseCIDR("192.0.2.1/30")
 	table := NewDnsTable(address, subnet)

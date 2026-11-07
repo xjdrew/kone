@@ -347,6 +347,22 @@ func TestScopedDNSCleanupReportsBlockedMonitorAndDiscardsLateRead(t *testing.T) 
 	})
 }
 
+func TestScopedDNSSessionDeathStopsMonitorBeforeExplicitCleanup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newScopedFixture(t)
+		cleanup, failures, err := f.configure(t.Context(), func() error { return nil })
+		require.NoError(t, err)
+		f.end(io.EOF)
+		// Let process death stop the monitor before cleanup cancels its context.
+		synctest.Wait()
+		require.ErrorIs(t, <-failures, io.EOF)
+		require.NoError(t, cleanup(t.Context()))
+		_, open := <-failures
+		require.False(t, open, "a dead session reports exactly one ownership failure")
+		require.Equal(t, 0, f.killCount)
+	})
+}
+
 func TestScopedDNSInputAndMachineOutputBoundaries(t *testing.T) {
 	for _, id := range []string{"", "../key", testScopedDNSID + "\nremove key"} {
 		_, _, _, err := scopedDNSScript(id, "utun1", netip.MustParseAddr("198.18.1.1"), 53)
