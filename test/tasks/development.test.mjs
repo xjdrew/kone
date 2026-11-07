@@ -34,7 +34,7 @@ async function fixture(t, options = {}) {
   const logs = [];
   const run = (command, args, settings = {}) => {
     calls.push({ command, args, settings });
-    if (command === options.missing) throw new Error("ENOENT");
+    if (command === options.missing) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     if (command === "git") return args[0] === "rev-parse" ? sha : "git version 2.50";
     if (command === "go" && args[0] === "version") return "go version go1.27.3 windows/amd64";
     if (command === "node") return "v26.13.0";
@@ -70,9 +70,11 @@ const npmCalls = (calls, command) => calls.filter((call) =>
 
 test("init reports missing base tools before installing any dependencies", async (t) => {
   const f = await fixture(t, { missing: "go" });
-  await assert.rejects(initialize(f.ctx), /Install these tools manually.*Go 1.27.3/);
+  await assert.rejects(initialize(f.ctx), /Development setup needs attention/);
+  assert.match(f.logs.join("\n"), /go: not found on PATH; install Go 1.27.3/);
+  assert.match(f.logs.join("\n"), /\[OK\] npm: 11.20.0/);
   assert.equal(npmCalls(f.calls, "ci").length, 0);
-  assert.ok(!f.calls.some((call) => call.args.join(" ") === "list -deps ./cmd/kone"));
+  assert.ok(!f.calls.some((call) => call.command === "go" && call.args[0] === "list"));
 });
 
 test("init prepares project dependencies once and detects lockfile changes", async (t) => {
