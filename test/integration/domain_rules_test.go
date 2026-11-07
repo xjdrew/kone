@@ -182,7 +182,10 @@ func TestSavedDomainRuleDefaultsAndSimulationIdentifyFinalOverHTTP(t *testing.T)
 	call("POST", "auth/password", map[string]any{"password": "domain-rules-owner", "confirm_password": "domain-rules-owner"})
 	doc := call("GET", "config", nil)
 	config := doc["config"].(map[string]any)
-	config["policy"] = map[string]any{"mode": "custom"}
+	// Import a legacy profile explicitly; new management profiles use v2 and
+	// persistent ownership by default. Legacy simulation keeps its old order.
+	config["policy"] = map[string]any{"mode": "custom", "rule-version": 1}
+	config["dns"].(map[string]any)["persistent-fake-ip"] = false
 	config["outbounds"] = []map[string]any{{"name": "office", "url": "http://127.0.0.1:8080"}}
 	config["rules"] = []map[string]any{{"id": "explicit-final", "type": "FINAL", "outbound": "reject"}}
 	doc = call("PUT", "config", map[string]any{"base_version": doc["version"], "config": config, "inbound": doc["inbound"]})
@@ -226,6 +229,23 @@ func TestSavedDomainRuleDefaultsAndSimulationIdentifyFinalOverHTTP(t *testing.T)
 	require.Equal(t, "reject", fallback["outbound"])
 	fallback = call("POST", "rules/simulate", map[string]any{"target": "unmatched.example", "protocol": "tcp", "port": 443})
 	require.Equal(t, "builtin:default", fallback["rule_id"], "imported conditional FINAL keeps its old scope")
+	// The same rules in v2 require real DNS evidence before target protection
+	// can finish. Simulation must report pending rather than invent a FINAL.
+	doc = call("GET", "config", nil)
+	config = doc["config"].(map[string]any)
+	config["policy"].(map[string]any)["rule-version"] = 2
+	call("PUT", "config", map[string]any{"base_version": doc["version"], "config": config, "inbound": doc["inbound"]})
+	for _, target := range []string{"example.com", "unmatched.example"} {
+		pending := call("POST", "rules/simulate", map[string]any{"target": target, "protocol": "tcp", "port": 443})
+		require.Equal(t, "dns_required", pending["evidence"])
+		require.Equal(t, true, pending["capture_only"])
+		require.Empty(t, pending["effective_outbound"])
+	}
+	fallback = call("POST", "rules/simulate", map[string]any{"target": "203.0.113.9", "protocol": "udp", "port": 53})
+	require.Equal(t, "legacy-final", fallback["rule_id"])
+	require.Equal(t, "reject", fallback["outbound"])
+	fallback = call("POST", "rules/simulate", map[string]any{"target": "203.0.113.9", "protocol": "tcp", "port": 443})
+	require.Equal(t, "builtin:default", fallback["rule_id"])
 	require.Equal(t, "paused", c.State().State)
 	require.Empty(t, c.Operations(), "rule simulation never opens a diagnostic connection")
 }

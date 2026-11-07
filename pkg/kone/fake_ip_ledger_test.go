@@ -187,6 +187,11 @@ func TestFakeIPPersistentPoolCannotBeReopenedAsVolatile(t *testing.T) {
 	require.ErrorContains(t, one.verifyVolatileFakeIPPools(), "durable ownership")
 	snapshot.cfg.Core.Network = "10.204.0.1/24"
 	require.NoError(t, one.verifyVolatileFakeIPPools())
+	require.NoError(t, one.Close())
+	// Closing an unstarted engine must release its retained host ledger lock.
+	reopened, err := openFakeIPLedger(directory)
+	require.NoError(t, err)
+	require.NoError(t, reopened.Close())
 }
 
 func TestFakeIPLedgerProcessCrashRetainsPublishedIdentity(t *testing.T) {
