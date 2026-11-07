@@ -1,9 +1,3 @@
-# 2026/11/07
-
-## Bugfixes
-
-- Show installed tool versions and actionable missing or incompatible tool diagnostics during `just init`.
-
 # 2026/11/01
 
 ## Features

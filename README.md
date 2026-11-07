@@ -9,14 +9,15 @@ Its original [K1 dial mark](docs/branding.md) represents reliable guidance for n
 
 ## Features
 
-- Route application and LAN traffic through proxies without configuring every application, with optional IPv6 capture.
-- Use HTTP/HTTPS, SOCKS5 and Shadowsocks outbounds, with direct and reject policies.
-- Select system, gVisor or mixed networking at runtime; every package includes all three.
-- Inspect traffic, DNS history and runtime logs, and test TCP/UDP connectivity.
-- Use offline country data or import DB-IP, IPinfo and MaxMind databases for IPv4/IPv6 geographic rules.
-- Use a password-protected Web console, desktop tray/menu, or paired phone and tablet.
-- Preserve established connections during rule updates, roll back failed startup,
-  and restore owned network settings on normal exit.
+- **Transparent capture:** Selectively route application or LAN traffic through TUN, with optional IPv6 support.
+- **Flexible policies:** Route by domain, IP or country, and update rules live without interrupting established connections.
+- **Proxy support:** HTTP/HTTPS CONNECT for TCP, SOCKS5 and Shadowsocks AEAD for TCP/UDP, plus direct and reject policies.
+- **Network-aware DNS:** Fake-IP routing, system resolver discovery and private DNS support for LAN and VPN environments.
+- **Traffic insights:** Live flow visualization, connection details, DNS history and runtime logs.
+- **Actionable diagnostics:** Compare connectivity, simulate routing and turn observed connections into precise rules.
+- **Easy management:** A password-protected Web console, desktop tray controls and optional paired mobile access, alongside TOML and CLI operation.
+- **Safe lifecycle:** Startup checks, failure rollback and network restoration, with management available while capture is paused.
+- **Built-in choices:** Runtime-selectable system, gVisor and mixed stacks, plus offline and importable GeoIP data.
 
 ## Use
 
