@@ -1,0 +1,33 @@
+name: Set up Go with separate module and build caches
+description: Refresh source-dependent build outputs without repeatedly uploading downloaded modules.
+inputs:
+  flavor:
+    description: Build mode and task family; excludes runtime-only stack selection.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v7.0.0
+      id: go
+      with:
+        go-version-file: go.mod
+        cache: false
+    - name: Locate Go caches
+      id: paths
+      shell: bash
+      run: |
+        printf 'modules=%s\n' "$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+        printf 'build=%s\n' "$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+    - name: Cache downloaded modules
+      uses: actions/cache@v6.1.0
+      with:
+        path: ${{ steps.paths.outputs.modules }}
+        key: go-mod-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
+    - name: Cache compiled packages
+      uses: actions/cache@v6.1.0
+      with:
+        path: ${{ steps.paths.outputs.build }}
+        key: go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ inputs.flavor }}-${{ hashFiles('go.mod', 'go.sum') }}-${{ hashFiles('cmd/**', 'pkg/**', 'test/**/*.go', 'web/embed.go', 'web/dist/**', 'web/native/**') }}
+        restore-keys: |
+          go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ inputs.flavor }}-${{ hashFiles('go.mod', 'go.sum') }}-
+          go-build-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.go.outputs.go-version }}-${{ inputs.flavor }}-

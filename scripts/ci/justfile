@@ -100,7 +100,7 @@ test-tasks *args:
     task_arguments test-tasks "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    node --test "$KONE_TASK_ROOT"/test/tasks/*.test.mjs "$KONE_TASK_ROOT/scripts/tasks/init.test.mjs" "$KONE_TASK_ROOT/test/integration/init.test.mjs"
+    node --test "$KONE_TASK_ROOT"/test/tasks/*.test.mjs "$KONE_TASK_ROOT/scripts/tasks/init.test.mjs" "$KONE_TASK_ROOT/test/integration/init.test.mjs" "$KONE_TASK_ROOT/test/integration/ci-cache.test.mjs"
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
@@ -222,7 +222,7 @@ test *args:
     task_arguments test "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    go test -tags with_gvisor -race -count=1 ./...
+    go test -tags with_gvisor -race -count=1 -v ./...
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]
@@ -481,7 +481,7 @@ docker-build *args:
     task_arguments docker-build "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    docker build -f deploy/docker/Dockerfile -t kone:ci .
+    bash "$KONE_TASK_ROOT/scripts/ci/docker-build.sh"
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]

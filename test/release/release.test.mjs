@@ -233,8 +233,12 @@ test("workflow grouping preserves platform, coverage, protocol and container acc
   assert.equal(requiredJobs.length - 2 + flowList(jobs.test, "os").length + flowList(jobs["windows-native"], "stack").length, 9, "matrix expansion has nine active qualification jobs");
   assert.doesNotMatch(jobs.test, /^    needs:/m, "unit/native checks must not wait for cross-builds to start");
   assert.ok(jobs.test.includes("github.event.pull_request.base.sha"), "coverage must measure the exact PR base");
-  for (const recipe of ["go-verify", "vet", "test-coverage", "test-pe", "test-macos-desktop", "coverage-check", "ci-macos-build", "ci-macos-tun", "ci-macos-session", "wait-build", "package"])
+  for (const recipe of ["go-verify", "vet", "test", "test-coverage", "test-pe", "coverage-check", "ci-macos-build", "ci-macos-tun", "ci-macos-session", "wait-build", "package"])
     invokesTask(jobs.test, recipe);
+  assert.doesNotMatch(jobs.test, /just ci test-macos-desktop/, "AppKit/helper cases already execute in the full macOS race suite");
+  assert.match(jobs.test, /if: \$\{\{ matrix\.os == 'windows-latest' \}\}\n        run: just ci test-coverage/);
+  assert.match(jobs.test, /if: \$\{\{ matrix\.os != 'windows-latest' \}\}\n        run: just ci test\n/);
+  assert.match(jobs.test, /if: \$\{\{ !cancelled\(\) && matrix\.os == 'windows-latest' \}\}\n        with:\n          name: \$\{\{ inputs\.artifact-prefix \}\}coverage-/);
   assert.doesNotMatch(jobs.test, /just ci test-mixed/, "the unified binary must avoid repeating the full race suite per stack");
   assert.match(jobs.test, /steps\.package-input\.outcome == 'success'/);
   assert.match(jobs.test, /steps\.package-download\.outcome == 'success'/);

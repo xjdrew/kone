@@ -112,25 +112,30 @@ jobs:
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
         with:
           just-version: '1.59.0'
-      - uses: actions/setup-go@v7.0.0
+      - uses: ./.github/actions/setup-go-cache
+        if: ${{ inputs.ref == '' }}
         with:
-          go-version-file: go.mod
-          cache: true
+          flavor: platform-${{ matrix.os == 'windows-latest' && 'coverage' || 'race' }}
+      - uses: ./.ci-tools/.github/actions/setup-go-cache
+        if: ${{ inputs.ref != '' }}
+        with:
+          flavor: platform-${{ matrix.os == 'windows-latest' && 'coverage' || 'race' }}
       - name: Verify module checksums
         run: just ci go-verify
       - name: Vet
         run: just ci vet
-      - name: Test with race detector
+      - name: Test with race detector and full-module coverage
+        if: ${{ matrix.os == 'windows-latest' }}
         run: just ci test-coverage
+      - name: Test all packages with race detector and individual case results
+        if: ${{ matrix.os != 'windows-latest' }}
+        run: just ci test
       - name: Regress upstream PE loader pointer bounds
         if: ${{ matrix.os == 'windows-latest' }}
         run: just ci test-pe
       - name: Regress Windows packaging without PowerShell 7
         if: ${{ matrix.os == 'windows-latest' }}
         run: just ci test-windows-package
-      - name: Validate macOS AppKit and private helper boundaries
-        if: matrix.os == 'macos-latest'
-        run: just ci test-macos-desktop
       - name: Check out exact PR base for coverage
         if: ${{ matrix.os == 'windows-latest' && github.event_name == 'pull_request' }}
         uses: actions/checkout@v7.0.1
@@ -194,15 +199,25 @@ jobs:
             ${{ runner.temp }}/kone-shadowsocks-interop/server.log
             ${{ runner.temp }}/kone-shadowsocks-interop/test.log
             ${{ runner.temp }}/kone-shadowsocks-interop/image.json
+      - name: Cache container build layers
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        uses: actions/cache@v6.1.0
+        with:
+          path: ${{ runner.temp }}/kone-buildkit-cache
+          key: docker-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deploy/docker/Dockerfile', '.dockerignore') }}-${{ inputs.ref || github.sha }}
+          restore-keys: |
+            docker-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('deploy/docker/Dockerfile', '.dockerignore') }}-
       - name: Build container from source
         id: container-build
         if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' }}
+        env:
+          KONE_DOCKER_CACHE: '1'
         run: just ci docker-build
       - name: Validate container configuration without privileges
         if: ${{ !cancelled() && matrix.os == 'ubuntu-latest' && steps.container-build.outcome == 'success' }}
         run: just ci docker-check
       - uses: actions/upload-artifact@v7.0.2
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.os == 'windows-latest' }}
         with:
           name: ${{ inputs.artifact-prefix }}coverage-${{ matrix.os }}
           overwrite: true
@@ -256,17 +271,14 @@ jobs:
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
         with:
           just-version: '1.59.0'
-      - uses: actions/setup-go@v7.0.0
+      - uses: ./.github/actions/setup-go-cache
+        if: ${{ inputs.ref == '' }}
         with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            .github/workflows/go.yml
-            scripts/release/build-info.mjs
-            justfile
-            scripts/ci/justfile
-            scripts/ci/build-all.sh
+          flavor: cross-build
+      - uses: ./.ci-tools/.github/actions/setup-go-cache
+        if: ${{ inputs.ref != '' }}
+        with:
+          flavor: cross-build
       - name: Cross compile
         env:
           CGO_ENABLED: '0'
@@ -309,17 +321,14 @@ jobs:
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
         with:
           just-version: '1.59.0'
-      - uses: actions/setup-go@v7.0.0
+      - uses: ./.github/actions/setup-go-cache
+        if: ${{ inputs.ref == '' }}
         with:
-          go-version-file: go.mod
-          cache: true
-          cache-dependency-path: |
-            go.sum
-            .github/workflows/go.yml
-            pkg/kone/core_benchmark_test.go
-            justfile
-            scripts/ci/justfile
-            scripts/ci/benchmark.sh
+          flavor: quality
+      - uses: ./.ci-tools/.github/actions/setup-go-cache
+        if: ${{ inputs.ref != '' }}
+        with:
+          flavor: quality
       - name: Check formatting and module files
         run: just ci quality-check
       - run: just ci fuzz
@@ -365,11 +374,15 @@ jobs:
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
         with:
           just-version: '1.59.0'
-      - uses: actions/setup-go@v7.0.0
+      - uses: ./.github/actions/setup-go-cache
+        if: ${{ inputs.ref == '' }}
         with:
-          go-version-file: go.mod
-          cache: true
-      - name: Require the selected stack's six real native cases
+          flavor: native-race
+      - uses: ./.ci-tools/.github/actions/setup-go-cache
+        if: ${{ inputs.ref != '' }}
+        with:
+          flavor: native-race
+      - name: Require every selected stack native case
         run: just ci ci-windows-tun
       - uses: actions/upload-artifact@v7.0.2
         if: ${{ !cancelled() && (matrix.stack != 'gvisor' || hashFiles('pkg/kone/stack_modes.go') != '') }}
