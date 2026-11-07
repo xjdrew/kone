@@ -15,6 +15,7 @@
 ## Changes
 
 - Document the four-mode design, routing and cache limitations, proxy-tool comparisons, and Windows/macOS application-rule feasibility.
+- Propose fixed rule layers, consistent dial targets, durable Fake-IP ownership, and DNS-driven Smart proxy suggestions with explicit probe limits.
 - Reduce contributor wait time for automated checks across supported platforms.
 - Specify editable direct-first and global-proxy base policies and extensible English/Chinese interface localization in the product and design documents.
 - Define Web console design rules around traffic and policy workspaces, contextual tools, dense layouts and efficient keyboard workflows.
