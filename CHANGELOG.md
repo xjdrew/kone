@@ -8,8 +8,13 @@
 - Group attention events and connection records by target while retaining individual connection details.
 - Control the proxy with a switch beside live upload/download rates and show compact final-rule summaries.
 
+## Bugfixes
+
+- Preserve the helper's final cleanup logs when stopping capture.
+
 ## Changes
 
+- Reduce contributor wait time for automated checks across supported platforms.
 - Specify editable direct-first and global-proxy base policies and extensible English/Chinese interface localization in the product and design documents.
 - Define Web console design rules around traffic and policy workspaces, contextual tools, dense layouts and efficient keyboard workflows.
 - Use clearer proxy terminology throughout the console, tray and guides.

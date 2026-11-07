@@ -1,4 +1,9 @@
 .git
+.ci-tools
+.coverage-base
+baseline
+release-assets
+release-input
 dist
 *.exe
 coverage*

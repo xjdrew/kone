@@ -79,6 +79,12 @@ just quality full
 
 PR 执行九个检查：Web、Linux/macOS/Windows 平台、跨平台构建、质量性能、Windows 三种独立原生栈。所有产物包含 `system/gvisor/mixed`；平台原生验收逐栈执行。工作流定义见 [go.yml](../../.github/workflows/go.yml)。
 
+Linux/macOS 使用 `just ci test` 执行全包 race 检查并记录各用例结果，不做覆盖率插桩；macOS AppKit 与私有 helper 用例包含在这次全包执行中。需要单独排查时仍可运行 `just ci test-macos-desktop`。Windows 保留全包覆盖率报告与下述 PR 基线门禁。
+
+平台、原生 Windows、构建和质量任务分别缓存编译产物，源码变化后通过回退键恢复并保存新增结果；模块下载缓存仅随依赖与工具链变化。Windows 原生三种栈使用同一编译缓存，因为栈在运行时选择。缓存不会跳过测试执行，也不会替代精确源码的发布验证；Web 测试流程保持独立。
+
+Linux 在原平台任务内通过 `just ci docker-build` 从源码构建容器，再执行 `just ci docker-check`；临时 CI 检出与打包产物不进入容器构建上下文。
+
 每个 PR 在 Windows 用相同工具链、race、atomic 和包枚举方式重测精确 base SHA。KONE 全包语句覆盖率不得下降，包括未执行代码的包；重复 block 合并后按语句数精确比较，空或缺失报告失败。外部 sing-tun 模块另验补丁，不进入 KONE 分母。
 
 ```sh

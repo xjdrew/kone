@@ -26,7 +26,7 @@ task_arguments() {
     go-deps) description='Download Go modules declared by the project.' ;;
     go-verify) description='Verify downloaded Go modules against their checksums.' ;;
     vet) description='Run go vet across all application packages.' ;;
-    test) description='Run all Go tests with the race detector and no result cache.' ;;
+    test) description='Run all Go tests with race detection, individual case results and no coverage or result cache.' ;;
     test-coverage) description='Measure all-package statement coverage with the race detector.'; example='just ci test-coverage .coverage-base ../coverage-base.out' ;;
     test-pe) description='Run Windows PE-loader pointer-boundary regressions.' ;;
     test-windows-package) description='Windows only: verify inert package fixtures and native-test argument handoff through PowerShell; never run KONE.' ;;

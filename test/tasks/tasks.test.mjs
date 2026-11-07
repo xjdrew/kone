@@ -113,6 +113,18 @@ test("coverage follows the selected source and preserves directory and output ar
   assert.equal(await readFile(profile, "utf8"), "mode: atomic\n");
 });
 
+test("portable race tests execute every package without coverage and retain individual case evidence", async (t) => {
+  const f = await fixture(t);
+  const result = f.run(["ci", "test"]);
+  assert.equal(result.status, 0, result.stderr);
+  const calls = await f.calls();
+  assert.deepEqual(calls.map(call => call.argv), [["test", "-tags", "with_gvisor", "-race", "-count=1", "-v", "./..."]]);
+  assert.equal(resolve(calls[0].cwd), resolve(f.source));
+  const failed = f.run(["ci", "test"], { KONE_FAKE_FAIL: "test" });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.stderr, /37/);
+});
+
 test("read-only version inspection uses the trusted tool and selected source with explicit bounded arguments", async (t) => {
   const f = await fixture(t);
   await mkdir(join(f.tools, "scripts/release"));

@@ -298,6 +298,24 @@ func TestRemoteDiagnosticUsesRunningRevisionAndCancelKeepsCaptureAlive(t *testin
 	require.NoError(t, <-done)
 }
 
+func TestRemoteDiagnosticFinalReplyPreservesMeasuredZeroLatency(t *testing.T) {
+	remote, fake, _ := helperHarness(t, false)
+	done := startRemote(t, remote)
+	fake.mu.Lock()
+	fake.probe = func(context.Context, string, string, bool, uint64) (kone.DiagnosticResult, error) {
+		zero := int64(0)
+		return kone.DiagnosticResult{Status: "reachable", ConnectLatencyMS: &zero, ConnectLatencyMeasured: true}, nil
+	}
+	fake.mu.Unlock()
+	result, err := remote.ProbeDiagnosticVersion(t.Context(), kone.BuiltinDirect, "example.invalid:443", false, 7)
+	require.NoError(t, err)
+	require.True(t, result.ConnectLatencyMeasured)
+	require.NotNil(t, result.ConnectLatencyMS, "Gob omits zero pointer values, but measured zero is not an absent measurement")
+	require.Zero(t, *result.ConnectLatencyMS)
+	require.NoError(t, remote.Close())
+	require.NoError(t, <-done)
+}
+
 func TestHelperRemembersCancellationBeforeProbeRegistration(t *testing.T) {
 	cfg := kone.DefaultConfig()
 	cfg.DNS.Servers = []string{"127.0.0.1:5353"}

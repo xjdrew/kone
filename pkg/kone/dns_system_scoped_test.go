@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -313,6 +314,53 @@ func TestScopedDNSUnresponsiveSessionIsKilledOnlyByItsOwnHandle(t *testing.T) {
 	require.Equal(t, 1, f.killCount)
 	require.Nil(t, f.profile)
 	f.mu.Unlock()
+}
+
+func TestScopedDNSCleanupReportsBlockedMonitorAndDiscardsLateRead(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newScopedFixture(t)
+		hooks := f.hooks()
+		read := hooks.read
+		entered, release := make(chan struct{}), make(chan struct{})
+		reads := 0
+		hooks.read = func(ctx context.Context, key string) ([]byte, error) {
+			reads++
+			if reads == 3 { // Preflight, initial publication, then the monitor's first read.
+				close(entered)
+				<-release
+			}
+			return read(ctx, key)
+		}
+		cleanup, failures, err := configureScopedDNS(t.Context(), hooks, testScopedDNSID, "utun17", netip.MustParseAddr("198.18.1.1"), 20553, func() error { return nil })
+		require.NoError(t, err)
+		<-entered
+		budget, cancel := context.WithCancel(t.Context())
+		cancel()
+		err = cleanup(budget)
+		require.ErrorContains(t, err, "owned DNS lease monitor did not stop")
+		close(release)
+		synctest.Wait()
+		_, open := <-failures
+		require.False(t, open, "a read completing after cleanup must not report ownership loss")
+		require.Equal(t, 1, f.closeCount)
+		require.Nil(t, f.profile)
+	})
+}
+
+func TestScopedDNSSessionDeathStopsMonitorBeforeExplicitCleanup(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newScopedFixture(t)
+		cleanup, failures, err := f.configure(t.Context(), func() error { return nil })
+		require.NoError(t, err)
+		f.end(io.EOF)
+		// Let process death stop the monitor before cleanup cancels its context.
+		synctest.Wait()
+		require.ErrorIs(t, <-failures, io.EOF)
+		require.NoError(t, cleanup(t.Context()))
+		_, open := <-failures
+		require.False(t, open, "a dead session reports exactly one ownership failure")
+		require.Equal(t, 0, f.killCount)
+	})
 }
 
 func TestScopedDNSInputAndMachineOutputBoundaries(t *testing.T) {

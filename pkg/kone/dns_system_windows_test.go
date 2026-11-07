@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unicode/utf16"
 
@@ -220,6 +221,28 @@ func TestWindowsDNSWorkerPipeProtocol(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWindowsDNSWorkerCloseAbortsUnconfirmedExit(t *testing.T) {
+	// Own an already-reaped inert process: the timeout path can exercise Kill
+	// without ever targeting a live process or running a DNS/registry command.
+	command := exec.Command("cmd", "/d", "/c", "exit", "0")
+	require.NoError(t, command.Run())
+	synctest.Test(t, func(t *testing.T) {
+		closed := 0
+		worker := &windowsDNSProcess{command: command,
+			input: scopedInput{close: func() error { closed++; return nil }},
+			done:  make(chan struct{}), abort: make(chan struct{}),
+		}
+		worker.Close() // The absent exit confirmation consumes only virtual time.
+		select {
+		case <-worker.abort:
+		default:
+			t.Fatal("an unconfirmed worker exit did not release its protocol reader")
+		}
+		worker.Close() // Closing abort twice must not panic.
+		require.Equal(t, 2, closed)
+	})
 }
 
 func TestWindowsDNSPolicyOwnershipWithMockCmdlets(t *testing.T) {
