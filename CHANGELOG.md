@@ -14,6 +14,8 @@
 
 ## Changes
 
+- Document the two-base-mode design with shared custom rules, routing and cache limitations, proxy-tool comparisons, and Windows/macOS application-rule feasibility.
+- Document proposals for fixed rule layers, consistent dial targets, durable Fake-IP ownership, and optional Smart suggestions for both proxy and direct routing.
 - Reduce contributor wait time for automated checks across supported platforms.
 - Specify editable direct-first and global-proxy base policies and extensible English/Chinese interface localization in the product and design documents.
 - Define Web console design rules around traffic and policy workspaces, contextual tools, dense layouts and efficient keyboard workflows.
