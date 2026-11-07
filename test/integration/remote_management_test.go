@@ -32,7 +32,10 @@ func TestRemoteManagementPasswordHTTPAndHTTPS(t *testing.T) {
 	require.NoError(t, err)
 	transport := &http.Transport{Proxy: nil}
 	defer transport.CloseIdleConnections()
-	client := &http.Client{Jar: jar, Timeout: 3 * time.Second, Transport: transport}
+	// Replacing a listener may legitimately spend three seconds draining the
+	// old HTTP server. Leave room for that bound and TLS setup on race runners;
+	// ordinary requests still finish immediately, without polling or sleeps.
+	client := &http.Client{Jar: jar, Timeout: 10 * time.Second, Transport: transport}
 	do := func(method, url, body, csrf string, want int) (map[string]any, *http.Response) {
 		t.Helper()
 		r, err := http.NewRequest(method, url, strings.NewReader(body))
