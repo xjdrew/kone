@@ -35,6 +35,12 @@ func newRouteIndex(routes []policyRoute) *routeIndex {
 		return 0
 	})
 	for _, route := range routes {
+		if route.Prefix.Addr().Is4In6() {
+			if route.Prefix.Bits() <= 96 {
+				continue // Covers all IPv4 addresses; retain the physical default.
+			}
+			route.Prefix = netip.PrefixFrom(route.Prefix.Addr().Unmap(), route.Prefix.Bits()-96)
+		}
 		address := route.Prefix.Addr().Unmap()
 		if !route.Prefix.IsValid() || route.Prefix.Bits() == 0 {
 			continue

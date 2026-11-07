@@ -44,11 +44,13 @@ func TestPolicyRouteIndexUsesSpecificVPNAndLowestMetric(t *testing.T) {
 		{Prefix: netip.MustParsePrefix("10.8.0.0/16"), Interface: 4, Metric: 100},
 		{Prefix: netip.MustParsePrefix("fd00::/8"), Interface: 5, Metric: 0},
 		{Prefix: netip.MustParsePrefix("fd00:1234::/32"), Interface: 6, Metric: 0},
+		{Prefix: netip.MustParsePrefix("::ffff:192.0.2.0/120"), Interface: 7},
+		{Prefix: netip.MustParsePrefix("::ffff:0.0.0.0/96"), Interface: 8},
 	})
 	for _, test := range []struct {
 		address string
 		device  int
-	}{{"10.8.1.9", 4}, {"10.9.0.1", 2}, {"149.154.167.50", 0}, {"fd00:1234::5", 6}, {"fd00:9999::5", 5}, {"::ffff:10.8.1.9", 4}} {
+	}{{"10.8.1.9", 4}, {"10.9.0.1", 2}, {"149.154.167.50", 0}, {"fd00:1234::5", 6}, {"fd00:9999::5", 5}, {"::ffff:10.8.1.9", 4}, {"::ffff:192.0.2.9", 7}} {
 		require.Equal(t, test.device, index.device(netip.MustParseAddr(test.address)), test.address)
 	}
 	address := netip.MustParseAddr("fd00:1234::5")
