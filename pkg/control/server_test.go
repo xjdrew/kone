@@ -46,7 +46,7 @@ func owner(t *testing.T, c *Controller) string {
 		require.Equal(t, 200, response.Code, response.Body.String())
 		return response.Result().Cookies()[0].Value
 	}
-	token, _, err := c.claim(c.BootstrapToken(), "", false)
+	token, _, err := c.claim(c.BootstrapToken(), false)
 	require.NoError(t, err)
 	response := request(t, c, token, "POST", "/api/v1/auth/password", map[string]any{"password": "control-test-password", "confirm_password": "control-test-password"})
 	require.Equal(t, 200, response.Code, response.Body.String())
@@ -79,15 +79,10 @@ func TestManagementAuthorizationAndReadOnlyRoles(t *testing.T) {
 	}
 	require.Equal(t, 401, makeCookieRequest(""))
 	require.Equal(t, 200, makeCookieRequest(auth["csrf_token"].(string)))
-	_, _, err := c.claim(cookie.Value, "", false)
+	_, _, err := c.claim(cookie.Value, false)
 	require.Error(t, err)
 	for _, role := range []string{"read", "admin"} {
-		pair, err := c.pair(role)
-		require.NoError(t, err)
-		token, session, err := c.claim("", pair.Code, true)
-		require.NoError(t, err)
-		_, _, err = c.claim("", pair.Code, true)
-		require.Error(t, err)
+		token, session := roleSession(c, role)
 		require.Equal(t, 200, request(t, c, token, "GET", "/api/v1/state", nil).Code)
 		status := request(t, c, token, "POST", "/api/v1/privacy/clear", nil).Code
 		if role == "read" {
@@ -100,8 +95,6 @@ func TestManagementAuthorizationAndReadOnlyRoles(t *testing.T) {
 		require.False(t, c.revoke(session.ID))
 		require.Equal(t, 401, request(t, c, token, "GET", "/api/v1/state", nil).Code)
 	}
-	_, err = c.pair("owner")
-	require.Error(t, err)
 }
 
 func TestAPIHostOriginAndInputBoundaries(t *testing.T) {
@@ -166,9 +159,9 @@ func TestConfigAPIAndRuleSimulation(t *testing.T) {
 	require.Equal(t, 410, request(t, c, token, "GET", "/api/v1/flows/expired", nil).Code)
 	require.Equal(t, 404, request(t, c, token, "GET", "/api/v1/operations/expired", nil).Code)
 	require.Equal(t, 400, request(t, c, token, "POST", "/api/v1/diagnostics/expired/cancel", nil).Code)
-	require.Equal(t, 400, request(t, c, token, "POST", "/api/v1/access/lan", map[string]any{"enabled": true, "address": "0.0.0.0:9201"}).Code)
+	require.Equal(t, 400, request(t, c, token, "POST", "/api/v1/access/lan", map[string]any{"enabled": true, "address": "192.0.2.1:9201"}).Code)
 	require.Equal(t, 200, request(t, c, token, "POST", "/api/v1/access/lan", map[string]any{"enabled": false}).Code)
-	require.Equal(t, 200, request(t, c, token, "POST", "/api/v1/pairing", map[string]any{"role": "read"}).Code)
+	require.Equal(t, 404, request(t, c, token, "POST", "/api/v1/pairing", map[string]any{"role": "read"}).Code)
 	require.Equal(t, 200, request(t, c, token, "POST", "/api/v1/sessions/expired/revoke", nil).Code)
 	require.Equal(t, 404, request(t, c, token, "POST", "/api/v1/lifecycle/unknown", nil).Code)
 	require.Equal(t, 200, request(t, c, token, "POST", "/api/v1/lifecycle/preflight", nil).Code)
@@ -239,14 +232,8 @@ func TestSessionExpiryAndRateLimits(t *testing.T) {
 		c.newSession("read", true)
 		c.mu.Unlock()
 	}
-	_, _, err := c.claim("", "", true)
+	_, _, err := c.claim("", true)
 	require.ErrorContains(t, err, "session limit")
-	for range 4 {
-		_, err := c.pair("read")
-		require.NoError(t, err)
-	}
-	_, err = c.pair("read")
-	require.ErrorContains(t, err, "too many")
 	query := trafficQuery(httptest.NewRequest("GET", "http://127.0.0.1:1/?flow_ids=a,b&path_ids=x&since=2026-11-01T00:00:00Z&limit=5", nil))
 	require.Equal(t, []string{"a", "b"}, query.FlowIDs)
 	require.Equal(t, 5, query.Limit)
@@ -254,3 +241,10 @@ func TestSessionExpiryAndRateLimits(t *testing.T) {
 }
 
 var _ = kone.BuiltinDirect
+
+// Exercise retained authorization roles without an obsolete pairing flow.
+func roleSession(c *Controller, role string) (string, *Session) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.newSession(role, true)
+}

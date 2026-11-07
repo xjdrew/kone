@@ -297,7 +297,6 @@ function Login({
     connectionError instanceof ApiError &&
     connectionError.code === "setup_required" &&
     connectionError.details.params?.authorized === 1;
-  const [paired, setPaired] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>();
   return (
@@ -315,12 +314,7 @@ function Login({
                 method: "POST",
                 body: { password: data.get("credential"), confirm_password: data.get("confirm") },
               });
-            else
-              await api.session(
-                paired
-                  ? { pairing_code: data.get("credential") }
-                  : { password: data.get("credential") },
-              );
+            else await api.session({ password: data.get("credential") });
             await onLogin();
           } catch (caught) {
             setError(caught);
@@ -337,11 +331,11 @@ function Login({
         <h1>{t(setup ? "auth.setup" : "auth.title")}</h1>
         <p className="muted">{t("auth.subtitle")}</p>
         <ErrorNotice error={error || (setup ? null : connectionError)} />
-        <Field label={t(paired ? "auth.pairing" : "auth.password")}>
+        <Field label={t("auth.password")}>
           <input
             name="credential"
-            type={paired ? "text" : "password"}
-            autoComplete={paired ? "one-time-code" : "current-password"}
+            type="password"
+            autoComplete={setup ? "new-password" : "current-password"}
             required
           />
         </Field>
@@ -359,11 +353,6 @@ function Login({
         <Button type="submit" tone="primary" disabled={busy}>
           {t(busy ? "common.loading" : setup ? "auth.setup" : "auth.signin")}
         </Button>
-        {!setup && (
-          <Button tone="quiet" onClick={() => setPaired(!paired)}>
-            {t(paired ? "auth.usePassword" : "auth.usePairing")}
-          </Button>
-        )}
         <small className="muted">{t("proxy.manual")}</small>
       </form>
     </div>

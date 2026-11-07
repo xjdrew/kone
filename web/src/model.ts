@@ -7,6 +7,18 @@ export interface Notice {
   message?: string;
   request_id?: string;
 }
+export interface RemoteAccess {
+  enabled: boolean;
+  https: boolean;
+  transport: "http" | "https";
+  listen_address?: string;
+  address?: string;
+  fingerprint?: string;
+  trust_required: boolean;
+  interfaces: { address: string; interface: string }[];
+  interfaces_unavailable?: boolean;
+  urls: string[];
+}
 export interface RuntimeState {
   state: string;
   control_state: string;

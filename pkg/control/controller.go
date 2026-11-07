@@ -73,7 +73,6 @@ type Controller struct {
 	bootstrap                     string
 	bootstrapExpiry               time.Time
 	sessions                      map[string]*Session
-	pairs                         map[string]Pairing
 	operations                    map[string]*Operation
 	operationOrder                []string
 	requestKeys                   map[string]string
@@ -159,7 +158,7 @@ func New(options Options) (*Controller, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &Controller{directory: options.Directory, version: options.Version, factory: options.Factory, preflight: options.Preflight, probe: options.Probe, now: options.Now, state: "paused", bootstrap: randomToken(), bootstrapExpiry: options.Now().Add(5 * time.Minute), sessions: map[string]*Session{}, pairs: map[string]Pairing{}, operations: map[string]*Operation{}, requestKeys: map[string]string{}, probeSlots: make(chan struct{}, 4), ctx: ctx, cancel: cancel}
+	c := &Controller{directory: options.Directory, version: options.Version, factory: options.Factory, preflight: options.Preflight, probe: options.Probe, now: options.Now, state: "paused", bootstrap: randomToken(), bootstrapExpiry: options.Now().Add(5 * time.Minute), sessions: map[string]*Session{}, operations: map[string]*Operation{}, requestKeys: map[string]string{}, probeSlots: make(chan struct{}, 4), ctx: ctx, cancel: cancel}
 	c.inspectSystemDNSRecovery, c.recoverSystemDNS = options.InspectSystemDNSRecovery, options.RecoverSystemDNS
 	c.probeUDP = options.ProbeUDP
 	if err := c.initAuthentication(); err != nil {

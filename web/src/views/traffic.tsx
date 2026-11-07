@@ -1,3 +1,4 @@
+import { copyText } from "../browser";
 import { Fragment, useDeferredValue, useEffect, useState } from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -67,8 +68,7 @@ export function useTargetActions(target: string, protocol?: string): Action[] {
       disabled: !target,
       label: t("common.copy"),
       run: () => {
-        void navigator.clipboard
-          .writeText(target)
+        void copyText(target)
           .then(() => context.notify({ key: "common.copied" }))
           .catch((error: Error) => context.notify({ key: "api.request", details: error.message }));
       },

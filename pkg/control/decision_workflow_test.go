@@ -120,7 +120,7 @@ func TestLocalDesktopBootstrapRenewalAndOperationBoundaries(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, url, old)
 	require.Contains(t, url, "#token=")
-	_, _, err = c.claim(old, "", false)
+	_, _, err = c.claim(old, false)
 	require.Error(t, err)
 	w := httptest.NewRecorder()
 	writeOperation(w, Operation{Error: "limit"})

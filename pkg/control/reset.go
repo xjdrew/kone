@@ -95,7 +95,6 @@ func (c *Controller) ResetConfiguration(ctx context.Context, base uint64) (map[s
 			delete(c.sessions, key)
 		}
 	}
-	c.pairs = map[string]Pairing{}
 	c.health = nil
 	c.state, c.lastError = "paused", ""
 	c.mu.Unlock()

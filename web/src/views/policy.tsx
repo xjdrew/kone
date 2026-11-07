@@ -1,3 +1,4 @@
+import { newID } from "../browser";
 import { useState } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -377,7 +378,7 @@ function RulesView({ onPolicy }: { onPolicy: () => void }) {
   }
   const newRule = (type = "DOMAIN") =>
     context.setRuleDraft({
-      id: crypto.randomUUID(),
+      id: newID(),
       type,
       pattern: "",
       outbound: "direct",

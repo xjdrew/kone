@@ -2,6 +2,7 @@
 
 ## Features
 
+- Choose a local private address or all IPv4 interfaces for remote management, use HTTP or HTTPS, and set a password as part of first-time enablement; HTTPS includes CA trust guidance.
 - Rebuild the Web console around Traffic and Policy workspaces, with contextual rule editing, keyboard commands and persistent diagnostics/log tools.
 - Add editable direct-first and global-proxy policies with local-network protections, country exceptions, IPv6 scope and explicit UDP fallback consent; existing profiles retain their intent.
 - Add offline English and Chinese interfaces, system-language detection and per-client language preferences, including desktop menus and translated operation summaries.
@@ -26,6 +27,7 @@
 
 - Document the two-base-mode design with shared custom rules, routing and cache limitations, proxy-tool comparisons, and Windows/macOS application-rule feasibility.
 - Document proposals for fixed rule layers, consistent dial targets, durable Fake-IP ownership, and optional Smart suggestions for both proxy and direct routing.
+- Replace pairing codes with management-password sign-in and revocable remote sessions.
 - Reduce contributor wait time for automated checks across supported platforms.
 - Define Web console design rules around traffic and policy workspaces, contextual tools, dense layouts and efficient keyboard workflows.
 - Use clearer proxy terminology throughout the console, tray and guides.

@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import { startManager, networkFingerprint, assertNoCaptureJournal } from "./real-manager.mjs";
 
 // These journeys enter synthetic credentials. Keep traces and screenshots off.
@@ -62,10 +63,19 @@ test("@real management credentials, policy edits and process restart remain capt
     ).toBeVisible();
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await page.getByRole("link", { name: "Access", exact: true }).click();
+    const reservation = createServer();
+    await new Promise<void>((resolve) => reservation.listen(0, "127.0.0.1", resolve));
+    const port = (reservation.address() as { port: number }).port;
+    await new Promise<void>((resolve) => reservation.close(() => resolve()));
+    await page.getByLabel("Listen on", { exact: true }).selectOption("0.0.0.0");
+    await page.getByLabel("Port", { exact: true }).fill(String(port));
+    await page.getByLabel("Use HTTPS", { exact: true }).uncheck();
     await page.getByLabel("New password", { exact: true }).fill("fixture-management-password");
     await page.getByLabel("Confirm password", { exact: true }).fill("fixture-management-password");
-    await page.getByRole("button", { name: "Set management password", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Change password", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Set password and enable", exact: true }).last().click();
+    await expect(page.getByRole("button", { name: "Stop listener", exact: true })).toBeVisible();
+    await expect(page.getByText("Configured · click to change", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Stop listener", exact: true }).click();
     await page.reload();
     await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
     const saved = await page.evaluate(async () => {

@@ -1,0 +1,170 @@
+.access {
+  width: 100%;
+}
+.section {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+  scroll-margin-top: 12px;
+}
+.section:first-child {
+  padding-top: 0;
+}
+.heading,
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.heading {
+  margin-bottom: 16px;
+}
+.heading h2,
+.heading h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.heading p,
+.hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.heading p {
+  margin: 5px 0 0;
+}
+.actions {
+  justify-content: flex-start;
+}
+.listener {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 24px;
+}
+.fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  gap: 10px;
+}
+.addressHelp {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+  margin: 6px 0 12px;
+}
+.endpoints {
+  border-inline-start: 1px solid var(--line);
+  padding-inline-start: 20px;
+  min-width: 0;
+}
+.endpoints h3 {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.endpoint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+}
+.endpoint a {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.certificate {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.certificate .heading {
+  margin-bottom: 6px;
+}
+.certificate p {
+  margin: 6px 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.certificate summary {
+  font-size: 12px;
+}
+.fingerprint {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.fingerprint code {
+  flex: 1;
+  min-width: 120px;
+  overflow-wrap: anywhere;
+}
+.passwordSummary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.passwordSummary::before {
+  content: "▸";
+}
+details[open] > .passwordSummary::before {
+  content: "▾";
+}
+.session {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) auto auto minmax(70px, auto);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.session:last-child {
+  border-bottom: 0;
+}
+.session strong {
+  font-weight: 500;
+}
+.session code {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.session time {
+  color: var(--muted);
+}
+@media (max-width: 760px) {
+  .listener {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .endpoints {
+    border-inline-start: 0;
+    border-top: 1px solid var(--line);
+    padding: 14px 0 0;
+  }
+  .session {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .passwordSummary {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .fields {
+    grid-template-columns: minmax(0, 1fr) 80px;
+  }
+}

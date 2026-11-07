@@ -105,7 +105,7 @@ func (c *Controller) Handler() http.Handler {
 		}
 		session, ok := c.authorize(r)
 		if !ok {
-			apiError(w, 401, "unauthorized", "Authorize this browser or pair it from the local KONE window")
+			apiError(w, 401, "unauthorized", "Sign in with the management password")
 			return
 		}
 		if path == "auth/password" && r.Method == http.MethodPost {
@@ -118,7 +118,7 @@ func (c *Controller) Handler() http.Handler {
 		}
 		if path == "session/logout" && r.Method == http.MethodPost {
 			c.revoke(session.ID)
-			http.SetCookie(w, &http.Cookie{Name: "kone_session", Value: "", Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+			http.SetCookie(w, &http.Cookie{Name: sessionCookieName(r), Value: "", Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 			writeJSON(w, 200, map[string]any{"logged_out": true})
 			return
 		}
@@ -436,27 +436,6 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 			return
 		}
 		writeJSON(w, 200, map[string]any{"sessions": c.sessionList()})
-	case path == "pairing" && r.Method == http.MethodPost:
-		if !localRemote(r) {
-			apiError(w, 403, "local_owner", "Create pairing codes on the KONE host")
-			return
-		}
-		var request struct {
-			Role string `json:"role"`
-		}
-		if err := readJSON(w, r, &request); err != nil {
-			respondError(err)
-			return
-		}
-		if request.Role == "" {
-			request.Role = "read"
-		}
-		pair, err := c.pair(request.Role)
-		if err != nil {
-			respondError(err)
-			return
-		}
-		writeJSON(w, 200, pair)
 	case strings.HasPrefix(path, "sessions/") && strings.HasSuffix(path, "/revoke") && r.Method == http.MethodPost:
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "sessions/"), "/revoke")
 		writeJSON(w, 200, map[string]any{"revoked": c.revoke(id)})
@@ -486,20 +465,27 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		}
 		writeJSON(w, 200, map[string]any{"cleared": true, "network_changed": false})
 	case path == "access/lan" && r.Method == http.MethodPost:
-		if !localRemote(r) {
+		if !c.localAccess(r) {
 			apiError(w, 403, "local_owner", "LAN access is controlled on the KONE host")
 			return
 		}
 		var request struct {
 			Enabled bool   `json:"enabled"`
 			Address string `json:"address"`
+			HTTPS   *bool  `json:"https"`
 		}
 		if err := readJSON(w, r, &request); err != nil {
 			respondError(err)
 			return
 		}
-		value, err := c.SetLAN(request.Enabled, request.Address)
+		https := request.HTTPS == nil || *request.HTTPS
+		value, err := c.SetRemoteAccess(request.Enabled, request.Address, https)
 		if err != nil {
+			var failure *accessError
+			if errors.As(err, &failure) {
+				apiError(w, 400, failure.code, failure.Error())
+				return
+			}
 			respondError(err)
 			return
 		}
@@ -542,7 +528,7 @@ func (c *Controller) Serve(ctx context.Context, address string, ready func(strin
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil || !ip.IsLoopback() {
-		return errors.New("local control must listen on a loopback IP; enable authenticated TLS LAN access separately")
+		return errors.New("local control must listen on a loopback IP; enable authenticated remote access separately")
 	}
 	lock, err := lockInstance(filepath.Join(c.directory, "instance.lock"))
 	if err != nil {

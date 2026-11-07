@@ -4,7 +4,7 @@ B01–B08 已由用户确认并实现于 [PR #51](https://github.com/xjdrew/kone
 
 | ID | 用户请求 | 已实现决策 | 回归证据 / 对应契约 |
 | --- | --- | --- | --- |
-| B01 | 通过 `127.0.0.1` 打开 Web 时无需密码，自动拥有全部权限；其他地址才需管理员密码 | HTTP 数字回环来源自动创建管理会话；同时校验实际来源、Host/端口、Origin 和跨站标记，不信任转发头。本机仍使用 Cookie/CSRF，不能远程复用会话；远端密码和设备配对保留 | [本机会话单测](../../pkg/control/local_session_test.go)、[真实 HTTP 集成](../../test/integration/local_management_test.go)、[真实浏览器](../../web/e2e/real-console.spec.ts)；UI-03/06、MG-QUALITY-01 |
+| B01 | 通过 `127.0.0.1` 打开 Web 时无需密码，自动拥有全部权限；其他地址才需管理员密码 | HTTP 数字回环来源自动创建管理会话；同时校验实际来源、Host/端口、Origin 和跨站标记，不信任转发头。本机仍使用 Cookie/CSRF，不能远程复用会话；远端 HTTP/HTTPS 使用密码认证 | [本机会话单测](../../pkg/control/local_session_test.go)、[真实 HTTP 集成](../../test/integration/local_management_test.go)、[真实浏览器](../../web/e2e/real-console.spec.ts)；UI-03/06、MG-QUALITY-01 |
 | B02 | 添加或修改规则立即生效，不需重启代理 | 包括 IPv4/IPv6 CIDR 增删改与排序，先更新路由再发布策略；旧连接保留策略和所需路由。失败回滚，回滚无法完成则停止引擎。TUN/core、DNS 等设置仍需停用；文件模式仍需重启加载文件 | [路由事务单测](../../pkg/kone/live_routes_test.go)、[管理保存](../../pkg/control/readiness_test.go)、[原生 Linux 集成](../../test/integration/live_routes_linux_test.go)；RULE-03、MG-RULE-03 |
 | B03 | 将原“启用接管”等术语改为“启用代理”或“启用 TUN”，统一所有位置 | Web、托盘和当前指南统一使用“代理”；默认 direct 无需额外确认，入口统一为“启用代理”，运行摘要说明实际分流模式；内部 API 字段保持兼容 | [托盘测试](../../pkg/application/desktop_test.go)、[三浏览器交互](../../web/e2e/console.spec.ts)；UI-02、DESK-01 |
 | B04 | 右上角用开关启停；启用后左侧显示实时出口带宽，单位自动调整 | 开关显示后端代理状态，忙碌/切换/无权限时禁用；分别显示当前采样的上传/下载业务载荷速率，单位自动换算，不计代理封装；过期显示不可用，停止隐藏 | [本机及分组浏览器用例](../../web/e2e/console.spec.ts)；OBS-03、MG-GLOBAL-02 |
@@ -30,7 +30,7 @@ B09–B10 本轮实现见下表；发布状态以合并和对应 CI 为准。启
 
 | 既有能力 | 新入口 / 验证闭环 |
 | --- | --- |
-| 本机自动授权、密码、设备配对、只读、会话撤销 | 登录与设置的访问分组；真实服务会话与撤销回归 |
+| 本机自动授权、密码、可选 HTTP/HTTPS 监听、会话撤销 | 登录与设置的访问分组；真实服务会话与撤销回归 |
 | 代理启停、预检、运行锁、失败恢复 | 全局顶栏和设置；启动保持暂停，操作结果与网络状态分别验证 |
 | 流量、桑基、目标分组、精确快照 | 流量总览和连接；守恒、原成员钻取、分页与缺失标记 |
 | DNS、Fake-IP、缓存与私有解析 | DNS 观察和解析设置；查询事实与配置分别呈现 |

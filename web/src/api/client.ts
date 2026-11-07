@@ -1,3 +1,4 @@
+import { newID } from "../browser";
 import type { Notice } from "../model";
 
 export class ApiError extends Error {
@@ -54,7 +55,7 @@ export async function request<T>(
   if (options.body !== undefined && !options.raw) headers.set("Content-Type", "application/json");
   if (method !== "GET" && method !== "HEAD") {
     headers.set("X-CSRF-Token", csrf);
-    headers.set("Idempotency-Key", options.requestId ?? crypto.randomUUID());
+    headers.set("Idempotency-Key", options.requestId ?? newID());
   }
   try {
     const response = await fetch(`/api/v1${path}`, {

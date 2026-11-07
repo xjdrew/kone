@@ -1,3 +1,4 @@
+import { newID } from "../browser";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -90,7 +91,7 @@ export function OutboundsView() {
           disabled={!context.admin}
           onClick={() =>
             setEditor({
-              id: crypto.randomUUID(),
+              id: newID(),
               name: "",
               url: "",
               enabled: true,
@@ -218,7 +219,7 @@ export function OutboundsView() {
               disabled={!context.admin}
               onClick={() =>
                 setEditor({
-                  id: crypto.randomUUID(),
+                  id: newID(),
                   name: "",
                   url: "",
                   enabled: true,

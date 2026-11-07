@@ -286,3 +286,58 @@ test("@compat 320 px, long translated labels and 200% zoom preserve primary acti
   await expect(page.getByRole("switch", { name: "启用代理" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test("@compat remote access sets a password first and preserves listener drafts across failure", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  data.state.password_configured = false;
+  // A non-secure HTTP origin has getRandomValues, but no randomUUID or Clipboard API.
+  await page.addInitScript(() => {
+    Object.defineProperty(crypto, "randomUUID", { value: undefined });
+    Object.defineProperty(navigator, "clipboard", { value: undefined });
+  });
+  await page.goto("/#/settings?section=access");
+  await expect(page.getByLabel("Listen on", { exact: true })).toHaveValue("192.168.40.2");
+  await page.getByLabel("Listen on", { exact: true }).selectOption("0.0.0.0");
+  await page.getByLabel("Use HTTPS", { exact: true }).uncheck();
+  await expect(page.getByText("HTTPS certificate", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Set password and enable", exact: true }).first().click();
+  expect(data.requests.some((item) => item.path === "/access/lan" && item.method === "POST")).toBe(
+    false,
+  );
+  await page.getByLabel("New password", { exact: true }).fill("fixture-management-password");
+  await page.getByLabel("Confirm password", { exact: true }).fill("fixture-management-password");
+  data.accessFailure = true;
+  await page.getByRole("button", { name: "Set password and enable", exact: true }).last().click();
+  await expect(page.getByRole("alert")).toContainText("Could not bind");
+  expect(
+    data.requests
+      .filter(
+        ({ method, path }) => method === "POST" && ["/auth/password", "/access/lan"].includes(path),
+      )
+      .map(({ path }) => path),
+  ).toEqual(["/auth/password", "/access/lan"]);
+  await expect(page.getByLabel("Listen on", { exact: true })).toHaveValue("0.0.0.0");
+  data.accessFailure = false;
+  await page.getByRole("button", { name: "Enable listener", exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "http://192.168.40.2:9443", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Copy http://192.168.40.2:9443", exact: true }).click();
+  expect(
+    data.requests.some(({ path }) => path === "/access/certificate" || path === "/pairing"),
+  ).toBe(false);
+  await page.getByLabel("Use HTTPS", { exact: true }).check();
+  await page.getByRole("button", { name: "Apply changes", exact: true }).click();
+  await expect(
+    page.getByRole("link", { name: "https://192.168.40.2:9443", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("HTTPS certificate", { exact: true })).toBeVisible();
+  await page.getByText("How to trust the CA", { exact: true }).click();
+  await expect(page.getByText(/macOS: import the CA/)).toBeVisible();
+  await page.getByRole("button", { name: "Stop listener", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Enable listener", exact: true })).toBeVisible();
+  await expect(page.getByText(/Pairing code|Create pairing/)).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

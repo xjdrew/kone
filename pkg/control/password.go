@@ -146,7 +146,6 @@ func (c *Controller) setupPassword(w http.ResponseWriter, r *http.Request, sessi
 	}
 	c.credentials.Version, c.credentials.Salt, c.credentials.Hash = credential.Version, credential.Salt, credential.Hash
 	c.sessions = map[string]*Session{}
-	c.pairs = map[string]Pairing{}
 	c.bootstrap = ""
 	token, owner := c.newSession("admin", false)
 	owner.Local = session.Local
@@ -242,30 +241,40 @@ func (c *Controller) changePassword(w http.ResponseWriter, r *http.Request, sess
 	}
 	c.credentials.Version, c.credentials.Salt, c.credentials.Hash = next.Version, next.Salt, next.Hash
 	c.sessions = map[string]*Session{}
-	c.pairs = map[string]Pairing{}
 	token, owner := c.newSession("admin", session.Remote)
 	owner.Local = session.Local
 	c.mu.Unlock()
 	writeSession(w, r, token, owner)
 }
 
+func sessionCookieName(r *http.Request) string {
+	if r.TLS != nil {
+		return "kone_remote_session"
+	}
+	if r.Context().Value(remoteListenerKey{}) != nil {
+		// Browsers refuse to overwrite a Secure cookie over HTTP after a
+		// protocol switch. Keep remote HTTP, HTTPS and local sessions separate.
+		return "kone_remote_http_session"
+	}
+	return "kone_session"
+}
+
 func writeSession(w http.ResponseWriter, r *http.Request, token string, session *Session) {
-	http.SetCookie(w, &http.Cookie{Name: "kone_session", Value: token, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: int(time.Until(session.Expires).Seconds())})
+	http.SetCookie(w, &http.Cookie{Name: sessionCookieName(r), Value: token, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: int(time.Until(session.Expires).Seconds())})
 	writeJSON(w, 200, map[string]any{"role": session.Role, "session_id": session.ID, "csrf_token": session.csrf, "expires": session.Expires, "setup_required": session.Role == "setup"})
 }
 
 func (c *Controller) createSession(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Token       string `json:"token"`
-		PairingCode string `json:"pairing_code"`
-		Password    string `json:"password"`
+		Token    string `json:"token"`
+		Password string `json:"password"`
 	}
 	if readJSON(w, r, &input) != nil {
 		apiError(w, 400, "request", "Invalid authorization request")
 		return
 	}
 	count := 0
-	for _, value := range []string{input.Token, input.PairingCode, input.Password} {
+	for _, value := range []string{input.Token, input.Password} {
 		if value != "" {
 			count++
 		}
@@ -274,17 +283,17 @@ func (c *Controller) createSession(w http.ResponseWriter, r *http.Request) {
 		c.localSession(w, r)
 		return
 	}
-	if count != 1 || len(input.Token) > 64 || len(input.PairingCode) > 16 || len(input.Password) > 128 {
-		apiError(w, 400, "request", "Supply one password, local setup token or pairing code")
+	if count != 1 || len(input.Token) > 64 || len(input.Password) > 128 {
+		apiError(w, 400, "request", "Supply one password or local setup token")
 		return
 	}
 	var token string
 	var session *Session
 	var err error
 	if input.Password != "" {
-		token, session, err = c.passwordSession(input.Password, !localRemote(r))
+		token, session, err = c.passwordSession(input.Password, r.Context().Value(remoteListenerKey{}) != nil || !localRemote(r))
 	} else {
-		token, session, err = c.claim(input.Token, input.PairingCode, !localRemote(r))
+		token, session, err = c.claim(input.Token, r.Context().Value(remoteListenerKey{}) != nil || !localRemote(r))
 	}
 	if err != nil {
 		apiError(w, 401, "unauthorized", "Password or authorization is invalid; open the local tray entry for first-time setup")

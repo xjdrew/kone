@@ -1,3 +1,4 @@
+import { newID } from "./browser";
 import type { Flow, Rule, Document, SaveRequest, Config, Credentials, SankeyPath } from "./model";
 
 let formattingLocale = "en";
@@ -46,7 +47,7 @@ export function exactRule(target: string, protocol?: string): Rule {
   const ipv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
   const ipv6 = host.includes(":");
   return {
-    id: crypto.randomUUID(),
+    id: newID(),
     type: ipv4 ? "IP-CIDR" : ipv6 ? "IP-CIDR6" : "DOMAIN",
     pattern: ipv4 ? `${host}/32` : ipv6 ? `${host}/128` : host,
     source: "one-click",

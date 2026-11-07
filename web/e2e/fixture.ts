@@ -1,6 +1,13 @@
 import type { Page } from "@playwright/test";
 import { documentFixture, stateFixture, trafficFixture } from "../test/factories";
-import type { Config, Operation, PolicyRequest, Readiness, SaveRequest } from "../src/model";
+import type {
+  Config,
+  Operation,
+  PolicyRequest,
+  Readiness,
+  RemoteAccess,
+  SaveRequest,
+} from "../src/model";
 
 export async function fixture(page: Page, options: { readonly?: boolean; remote?: boolean } = {}) {
   const data = {
@@ -9,6 +16,18 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
     operations: [] as Operation[],
     authenticated: !options.remote,
     conflict: false,
+    accessFailure: false,
+    access: {
+      enabled: false,
+      https: true,
+      transport: "https",
+      trust_required: false,
+      urls: [],
+      interfaces: [
+        { address: "192.168.40.2", interface: "eth0" },
+        { address: "10.8.0.2", interface: "vpn0" },
+      ],
+    } as RemoteAccess,
     offline: false,
     readiness: {
       ready: true,
@@ -42,7 +61,7 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
       return respond({
         local_access: data.state.local_access,
         local_session: data.authenticated,
-        password_configured: true,
+        password_configured: data.state.password_configured,
       });
     if (path === "/session") {
       data.authenticated = true;
@@ -188,7 +207,36 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
       });
     if (path === "/readiness") return respond(data.readiness);
     if (path === "/sessions") return respond({ sessions: [] });
-    if (path === "/access/lan") return respond({ enabled: false });
+    if (path === "/auth/password") {
+      data.state.password_configured = true;
+      return respond({ csrf_token: "fixture-csrf" });
+    }
+    if (path === "/access/lan") {
+      if (method === "POST") {
+        if (data.accessFailure) return respond({ error: { code: "access_bind" } }, 400);
+        const input = body as { enabled: boolean; address: string; https: boolean };
+        const scheme = input.https ? "https" : "http";
+        data.access = {
+          ...data.access,
+          enabled: input.enabled,
+          listen_address: input.address,
+          https: input.https,
+          transport: scheme,
+          trust_required: input.https && input.enabled,
+          fingerprint: input.https ? "a1b2c3d4".repeat(8) : undefined,
+          urls: input.enabled
+            ? [scheme + "://" + input.address.replace("0.0.0.0", "192.168.40.2")]
+            : [],
+        };
+      }
+      return respond(data.access);
+    }
+    if (path === "/access/certificate")
+      return route.fulfill({
+        status: 200,
+        contentType: "application/x-pem-file",
+        body: "fixture-ca",
+      });
     if (path === "/geoip")
       return respond({
         saved: { provider: "builtin", version: "fixture", sha256: "0".repeat(64) },
