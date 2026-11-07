@@ -12,8 +12,8 @@
     <link rel="icon" type="image/svg+xml" href="/icon.svg?v=k1" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <script type="module" crossorigin src="/assets/index-DzYAgOwG.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-fNOnMwKh.css">
+    <script type="module" crossorigin src="/assets/index-w0GXAWAS.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CmZrT8nE.css">
   </head>
   <body class="auth-pending">
     <a class="skip-link" href="#main" data-management-shell hidden inert>跳到主要内容</a>
@@ -52,13 +52,17 @@
             ><span id="session-role" class="quiet-badge">连接中</span>
           </div>
           <div class="topbar-right">
+            <span id="exit-bandwidth" class="exit-bandwidth" hidden></span>
             <span id="runtime-status" class="status"><i></i>读取状态中</span
             ><button
               id="lifecycle-toggle"
-              class="button primary compact"
+              class="proxy-switch"
+              role="switch"
+              aria-checked="false"
+              aria-label="启用代理"
               disabled
             >
-              启用接管
+              启用代理
             </button>
           </div>
         </header>
@@ -67,7 +71,7 @@
           <div class="loading-state">
             <span class="spinner"></span>
             <h1>正在连接 KONE</h1>
-            <p>管理界面与流量接管独立运行。</p>
+            <p>管理界面与流量代理独立运行。</p>
           </div>
         </main>
         <footer class="workspace-footer" data-management-shell hidden inert>

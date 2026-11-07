@@ -19,6 +19,7 @@ import { createConfigurationPages, outboundAddress, currentHealth, needsDirectCo
 import { outboundProtocols, parseOutboundFields, buildOutboundURL, defaultOutboundName, outboundCredentialAction } from "./outbound-editor.js";
 import { ruleTypes, rulePatternInfo, validateRulePattern, countryOptions, classifyRuleDecision, ruleScope } from "./rule-editor.js";
 import "./outbounds.css";
+import { groupFlows } from "./flow-groups.js";
 
 const pages = [
   ["home", "首页", "◈", "OVERVIEW", "看清流量，掌握每一次连接。"],
@@ -145,19 +146,19 @@ const runtime = () =>
   "idle";
 const running = () => ["running", "degraded"].includes(runtime());
 const stateLabels = {
-  idle: "尚未接管",
-  stopped: "尚未接管",
-  ready: "尚未接管",
-  paused: "已暂停接管",
-  running: "正在接管",
+  idle: "尚未代理",
+  stopped: "尚未代理",
+  ready: "尚未代理",
+  paused: "已停用代理",
+  running: "正在代理",
   degraded: "部分连接异常",
   starting: "正在启用",
   stopping: "正在停用",
   pausing: "正在暂停",
   preflight: "预检中",
   error: "需要处理",
-  recovery_failed: "尚未接管",
-  recovery_required: "尚未接管",
+  recovery_failed: "尚未代理",
+  recovery_required: "尚未代理",
   invalid_config: "配置待修复",
 };
 const statusLabels = {
@@ -339,7 +340,7 @@ function revokeAuthentication(clear = true) {
     logFrom: "", logTo: "", logFromInput: "", logToInput: "", logFilterError: "",
     logError: "", logLoading: false, lan: {}, sessions: [], geoip: null,
     recovery: null, geoFile: null, geoExpected: "", geoHash: "",
-    graphSelection: null, graphSnapshot: null, graphFrozen: null, frozen: null,
+    graphSelection: null, graphSnapshot: null, graphFrozen: null, frozen: null, connectionGroupsOpen: new Set(),
     lastSuccess: null, notice: null, pendingTask: null,
   });
   model.logGeneration++;
@@ -358,16 +359,44 @@ function revokeAuthentication(clear = true) {
   updateAuthPresentation();
   return epoch;
 }
+let localRenewal = null;
+function renewLocalSession() {
+  if (localRenewal) return localRenewal;
+  const epoch = revokeAuthentication();
+  model.authPending = true;
+  render();
+  localRenewal = (async () => {
+    try {
+      const state = await bootstrap();
+      if (epoch !== model.authEpoch) return;
+      model.state = state;
+      setSession(state);
+      model.authenticated = true;
+      model.online = true;
+      await refreshAll();
+    } catch (error) {
+      if (epoch === model.authEpoch) {
+        model.auth = { local_access: true };
+        model.notice = { message: "本机管理连接暂不可用，请重新连接。", kind: "error" };
+      }
+    } finally {
+      if (epoch === model.authEpoch) { model.authPending = false; render(); }
+      localRenewal = null;
+    }
+  })();
+  return localRenewal;
+}
 function failure(error) {
   if (error.details?.session_changed) return;
   if (error.status === 401) {
+    if (model.state.local_access) { renewLocalSession(); return; }
     if (model.authenticated) revokeAuthentication();
     render();
     return;
   }
   const captureIsLocked = error.details?.code === "capture_locked";
   const message = captureIsLocked
-    ? "接管运行期间不能修改这些捕获设置。请先暂停接管，当前草稿已保留。"
+    ? "代理运行期间不能修改这些捕获设置。请先停用代理，当前草稿已保留。"
     : isConflict(error)
     ? error.details?.code === "geoip"
       ? "GeoIP 数据或设置版本已变化，请刷新后重新核对待导入文件。"
@@ -542,7 +571,7 @@ async function validateConfig() {
     const result = await endpoints.validate(configBody());
     const issues = result.issues || result.warnings || [];
     const message = result.restart_required
-      ? "配置有效。该修改需要重启接管；保存不会自动中断现有连接。"
+      ? "配置有效。该修改需要重启代理；保存不会自动中断现有连接。"
       : "配置有效。规则与出站更新将影响新连接，已有连接保留原策略。";
     notice(
       `${message}${issues.length ? ` ${issues.map((item) => item.message || item).join("；")}` : ""}`,
@@ -590,9 +619,9 @@ async function saveConfig(apply, prevalidated = null) {
     } else
       notice(
         !running()
-          ? "已保存，下次启用接管时生效。"
+          ? "已保存，下次启用代理时生效。"
           : validation.restart_required
-          ? "已保存，等待你确认重启接管。现有连接未被中断。"
+          ? "已保存，等待你确认重启代理。现有连接未被中断。"
           : "已保存，当前运行设置尚未更新，请检查运行状态。",
         !running() ? "success" : "warning",
       );
@@ -679,14 +708,16 @@ function updateShell() {
     ? "管理会话"
     : "只读会话";
   const toggle = document.querySelector("#lifecycle-toggle");
-  toggle.textContent = model.busy
-    ? "处理中…"
-    : running()
-      ? "暂停接管"
-      : "启用接管";
-  toggle.disabled =
-    !canManage() ||
-    ["starting", "stopping", "pausing", "preflight"].includes(state);
+  toggle.replaceChildren(h("span", { class: "switch-track", "aria-hidden": true }, h("span")), h("span", {}, model.busy ? "处理中…" : "代理"));
+  toggle.setAttribute("aria-checked", String(model.online && running()));
+  toggle.setAttribute("aria-label", "启用代理");
+  toggle.disabled = !canManage() || model.busy || ["starting", "stopping", "pausing", "preflight"].includes(state);
+  const bandwidth = document.querySelector("#exit-bandwidth");
+  bandwidth.hidden = !model.authenticated || !running();
+  const stats = model.traffic.stats || {};
+  const live = model.online && !model.traffic.frozen && !model.trafficError;
+  bandwidth.textContent = live ? `↑ ${bytes(stats.upload_rate || 0, true)}  ↓ ${bytes(stats.download_rate || 0, true)}` : "速率暂不可用";
+  bandwidth.setAttribute("aria-label", `出口带宽 ${bandwidth.textContent}`);
   const banner = document.querySelector("#connection-banner");
   let text = !model.authenticated ? model.auth?.setup_required ? "首次使用请先设置管理密码。" : "请登录后查看和管理 KONE。" : !model.online
     ? `管理连接中断，当前状态未知。最后更新：${time(model.lastSuccess)}。写操作暂不可用。`
@@ -739,7 +770,10 @@ async function refreshState() {
   } catch (error) {
     if (epoch !== model.authEpoch || error.details?.session_changed) return false;
     model.online = false;
-    if (error.status === 401) revokeAuthentication();
+    if (error.status === 401) {
+      if (model.state.local_access && !localRenewal) { await renewLocalSession(); return false; }
+      revokeAuthentication();
+    }
     updateShell();
     if (wasOnline) renderPreserving();
     throw error;
@@ -748,7 +782,7 @@ async function refreshState() {
 async function lifecycle(actionName) {
 	if (actionName === "recover") {
 		if (!canManage() || captureLocked() || model.state.remote_session) return;
-		return dialog("确认恢复 KONE 网络", "仅清理已验证属于 KONE 且已经失效的 DNS 记录；外部修改和所有权不明的记录会保留。", note("Windows 普通权限运行时，仅在确有可恢复 DNS 记录时请求管理员授权。不会启用接管或修改 HTTP 代理。", "warning"), [
+		return dialog("确认恢复 KONE 网络", "仅清理已验证属于 KONE 且已经失效的 DNS 记录；外部修改和所有权不明的记录会保留。", note("Windows 普通权限运行时，仅在确有可恢复 DNS 记录时请求管理员授权。不会启用代理或修改 HTTP 代理。", "warning"), [
 			button("取消", closeDialog, "ghost", false),
 			button("确认检查并恢复", () => action(async () => {
 				closeDialog();
@@ -767,19 +801,19 @@ async function lifecycle(actionName) {
   }
   return action(async () => {
     await watchOperation(await endpoints.lifecycle(actionName));
-    notice(actionName === "pause" ? "接管已暂停。" : "网络维护已完成。", "success");
+    notice(actionName === "pause" ? "代理已暂停。" : "网络维护已完成。", "success");
   });
 }
 function startReadyCapture() {
   return action(async () => {
     await watchOperation(await endpoints.lifecycle("start"));
-    notice("接管已启用。", "success");
+    notice("代理已启用。", "success");
   });
 }
 function confirmDirectCapture(document) {
-  dialog("启用直连接管", "当前规则仅使用直连或拒绝，不经过代理。", null, [
+  dialog("启用 TUN（仅直连）", "当前规则仅使用直连或拒绝，不经过代理服务器。", null, [
     button("取消", closeDialog, "ghost", false),
-    button("确认启用接管", () => action(async () => {
+    button("确认启用代理", () => action(async () => {
       const epoch = model.authEpoch;
       const editor = model.editor;
       const sameBase = model.config?.version === document.version && !model.versionConflict;
@@ -800,7 +834,7 @@ function confirmDirectCapture(document) {
       } else await loadConfig(true);
       closeDialog();
       await watchOperation(await endpoints.lifecycle("start"));
-      notice("接管已启用。", "success");
+      notice("代理已启用。", "success");
     }), "primary", !canManage(), { id: "confirm-direct-only" }),
   ]);
 }
@@ -1071,6 +1105,14 @@ function readonlyNote() {
       );
 }
 
+function showFailureGroup(group) {
+  if (group.flows.length === 1) { showFlow(group.latest); return; }
+  model.frozen = { label: group.target, snapshot: structuredClone(model.traffic), ids: group.flows.map(flow => flow.id) };
+  Object.assign(model, { tableQuery: "", tableStatus: "", tableProtocol: "", tablePage: 0 });
+  model.connectionGroupsOpen ||= new Set();
+  model.connectionGroupsOpen.add(group.target);
+  navigate("connections");
+}
 function renderHome() {
   const flows = model.traffic.flows;
   const stats = model.traffic.stats;
@@ -1360,11 +1402,11 @@ function renderHome() {
         model.trafficError
           ? `数据暂不可用，显示上次采样 · ${time(graphData?.at)}`
           : model.traffic.frozen
-          ? `接管已停止，显示保留采样 · ${time(graphData?.at)}`
+          ? `代理已停止，显示保留采样 · ${time(graphData?.at)}`
           : model.graphPaused && !model.online
-          ? "图形已固定；管理连接中断，当前接管状态未知。"
+          ? "图形已固定；管理连接中断，当前代理状态未知。"
           : model.graphPaused
-          ? "图形已暂停；实时计数与接管继续运行。"
+          ? "图形已暂停；实时计数与代理继续运行。"
           : `同一业务量按每层各投影一次 · ${model.metric === "rate" ? "B/s" : "字节"} · ${time(graphData?.at)}`,
       ),
       h(
@@ -1374,12 +1416,11 @@ function renderHome() {
       ),
     ),
   );
-  const failures = flows
+  const failures = groupFlows(flows
     .filter(
       (flow) => flow.error || ["failed", "rejected"].includes(flow.status),
     )
-    .slice(-4)
-    .reverse();
+    ).slice(0, 4);
   const nextSteps = h(
     "div",
     { class: "panel-list" },
@@ -1392,8 +1433,8 @@ function renderHome() {
       ],
       [
         "02",
-        "确认接管范围",
-        "选择性接管或全 IPv4 接管，启用前先完成预检。",
+        "确认代理范围",
+        "选择性代理或全 IPv4 代理，启用前先完成预检。",
         "inbounds",
       ],
       [
@@ -1415,8 +1456,8 @@ function renderHome() {
     (model.traffic.frozen || model.trafficError) &&
       note(
         model.trafficError
-          ? `数据暂不可用：这里是 ${time(model.traffic.at)} 的上次快照，速率与活动数量尚未更新；接管状态以顶部管理状态为准。`
-          : `接管已停止：这里是 ${time(model.traffic.at)} 的保留快照，速率与活动数量属于停止前的采样，不会继续实时更新。`,
+          ? `数据暂不可用：这里是 ${time(model.traffic.at)} 的上次快照，速率与活动数量尚未更新；代理状态以顶部管理状态为准。`
+          : `代理已停止：这里是 ${time(model.traffic.at)} 的保留快照，速率与活动数量属于停止前的采样，不会继续实时更新。`,
         "warning",
       ),
     metrics,
@@ -1431,17 +1472,17 @@ function renderHome() {
           ? h(
               "div",
               { class: "panel-list" },
-              failures.map((flow) =>
+              failures.map((group) =>
                 row(
-                  flow.target,
-                  flow.error || flow.stage || "策略拒绝",
-                  button("详情", () => showFlow(flow), "ghost compact", false),
+                  group.target,
+                  `${group.flows.length} 次 · ${group.latest.error || group.latest.stage || "策略拒绝"} · ${time(group.latest.started_at)}`,
+                  button("详情", () => showFailureGroup(group), "ghost compact", false),
                 ),
               ),
             )
           : empty("暂未发现失败事件", "已观察的失败与策略拒绝会保留在这里。"),
       ),
-      card("从这里开始", "先让管理可用，再按需启用接管。", nextSteps),
+      card("从这里开始", "先让管理可用，再按需启用代理。", nextSteps),
     ),
   ];
 }
@@ -1467,12 +1508,14 @@ function renderConnections() {
       String(b.started_at).localeCompare(String(a.started_at)) ||
       a.id.localeCompare(b.id),
   );
+  const groups = groupFlows(flows);
+  model.connectionGroupsOpen ||= new Set();
   const pageSize = 30;
-  const pageCount = Math.max(1, Math.ceil(flows.length / pageSize));
+  const pageCount = Math.max(1, Math.ceil(groups.length / pageSize));
   model.tablePage = Math.min(model.tablePage, pageCount - 1);
   const table = h(
     "table",
-    { class: "data-table" },
+    { class: "data-table connections-table" },
     h(
       "thead",
       {},
@@ -1493,9 +1536,17 @@ function renderConnections() {
     h(
       "tbody",
       {},
-      flows
+      groups
         .slice(model.tablePage * pageSize, (model.tablePage + 1) * pageSize)
-        .map((flow) =>
+        .flatMap((group) => [h("tr", { class: "connection-group" },
+          h("td", {}, `${group.active} 活动`, h("small", { class: "cell-sub" }, `${group.failed} 异常`)),
+          h("td", {}, button(group.target, () => { model.connectionGroupsOpen.has(group.target) ? model.connectionGroupsOpen.delete(group.target) : model.connectionGroupsOpen.add(group.target); renderPreserving(); }, "ghost compact group-toggle", false, { "aria-label": group.target, "aria-expanded": String(model.connectionGroupsOpen.has(group.target)) }), h("small", { class: "cell-sub" }, `${group.flows.length} 条连接`)),
+          h("td", {}, [...new Set(group.flows.map(flow => flow.protocol.toUpperCase()))].join(" / ")),
+          h("td", {}, [...new Set(group.flows.map(flow => flow.outbound))].join(" / ")),
+          h("td", {}, `${bytes(group.upload)} / ${bytes(group.download)}`, h("small", { class: "cell-sub" }, `↑ ${bytes(group.upload_rate, true)} / ↓ ${bytes(group.download_rate, true)}`)),
+          h("td", {}, time(group.latest.started_at)),
+          h("td", {}, button("详情", () => showFlow(group.latest), "ghost compact", false)),
+        ), ...(model.connectionGroupsOpen.has(group.target) ? group.flows.map((flow) =>
           h(
             "tr",
             {},
@@ -1521,7 +1572,7 @@ function renderConnections() {
               button("详情", () => showFlow(flow), "ghost compact", false),
             ),
           ),
-        ),
+        ) : [])]),
     ),
   );
   const tools = h(
@@ -1606,7 +1657,7 @@ function renderConnections() {
       h(
         "div",
         { class: "search-summary" },
-        `当前筛选 ${flows.length} 条 · 已载入 ${(model.frozen?.snapshot || model.traffic).flows.length} 条 / 保留 ${(model.frozen?.snapshot || model.traffic).total ?? model.traffic.flows.length} 条；筛选作用于已载入记录${model.traffic.dropped ? ` · ${model.traffic.dropped} 条明细因容量限制未保留` : ""}`,
+        `当前筛选 ${flows.length} 条 / ${groups.length} 个目标 · 已载入 ${(model.frozen?.snapshot || model.traffic).flows.length} 条 / 保留 ${(model.frozen?.snapshot || model.traffic).total ?? model.traffic.flows.length} 条；筛选作用于已载入记录${model.traffic.dropped ? ` · ${model.traffic.dropped} 条明细因容量限制未保留` : ""}`,
       ),
       flows.length
         ? h("div", { class: "table-wrap" }, table)
@@ -1741,8 +1792,8 @@ function renderInboundsEditor() {
       "当前提供单个 TUN 入站。Fake-IP 按域名分配，同一域名的 UDP 也会受所选出站能力影响。",
     ),
     card(
-      "TUN 接管入口",
-      "保存设置不会自动启用或重启网络接管。",
+      "TUN 代理入口",
+      "保存设置不会自动启用或重启网络代理。",
       h(
         "div",
         { class: "form-grid" },
@@ -1753,7 +1804,7 @@ function renderInboundsEditor() {
             model.inbound.enabled = value;
             markDirty();
           },
-          "仅将入口加入下次接管；保存后仍需由你发起“启用接管”。",
+          "仅将入口加入下次代理；保存后仍需由你发起“启用代理”。",
           "inbound-enabled",
         ),
         field(
@@ -1791,11 +1842,11 @@ function renderInboundsEditor() {
           {
             id: "inbound-outbound-interface",
             placeholder: "例如 Ethernet、eth0、en0",
-            hint: "全 IPv4 接管必须指定，不能是 TUN 自身。",
+            hint: "全 IPv4 代理必须指定，不能是 TUN 自身。",
           },
         ),
         check(
-          "接管全部 IPv4 流量",
+          "代理全部 IPv4 流量",
           Boolean(core["auto-route"]),
           (value) => configSet("core", "auto-route", value),
           "添加两条捕获路由，保留原默认路由；更具体的系统路由仍优先。",
@@ -1812,12 +1863,12 @@ function renderInboundsEditor() {
               !canManage() ||
               (!model.state.capabilities?.ipv6 && !core["ipv6-network"]),
             hint: model.state.capabilities?.ipv6
-              ? "本构建支持显式启用；必须为 ULA /64..120，默认关闭。"
-              : "本平台/构建不支持 IPv6 接管；保持留空，可清除已有配置。",
+              ? "主机 IPv6 可用时，新配置会自动填写；必须为 ULA /64..120，留空可关闭。"
+              : "本平台/构建不支持 IPv6 代理；保持留空，可清除已有配置。",
           },
         ),
         check(
-          "接管全部 IPv6 流量",
+          "代理全部 IPv6 流量",
           Boolean(core["auto-route6"]),
           (value) => configSet("core", "auto-route6", value),
           "需当前构建支持并先设置 IPv6 网段与真实出口。保存不会自动添加路由。",
@@ -1861,7 +1912,7 @@ function renderInboundsEditor() {
         "运行预检",
         () =>
           action(async () =>
-            showResult("接管预检", await endpoints.lifecycle("preflight")),
+            showResult("代理预检", await endpoints.lifecycle("preflight")),
           ),
         "primary",
       ),
@@ -1878,10 +1929,10 @@ function renderInboundsEditor() {
           [
             "支持范围",
             model.state.capabilities?.ipv6
-              ? "IPv4 TCP / UDP；IPv6 需显式配置，代理能力另行检查"
-              : "IPv4 TCP / UDP；本平台暂不支持 IPv6 接管",
+              ? "IPv4 TCP / UDP；配置 IPv6 网段后支持双栈，出站能力另行检查"
+              : "IPv4 TCP / UDP；本平台暂不支持 IPv6 代理",
           ],
-          ["管理服务", "暂停接管后仍保留"],
+          ["管理服务", "停用代理后仍保留"],
         ]),
       ),
     ),
@@ -2436,7 +2487,7 @@ function renderDNSEditor() {
           "引导本机系统 DNS",
           Boolean(dns.system),
           (value) => configSet("dns", "system", value),
-          "在支持的平台使用本次接管专属的 DNS 引导，监听就绪后启用，停止先恢复；保留更具体的内网/VPN 解析域，不修改 HTTP 代理或其他设备 DNS。",
+          "在支持的平台使用本次代理专属的 DNS 引导，监听就绪后启用，停止先恢复；保留更具体的内网/VPN 解析域，不修改 HTTP 代理或其他设备 DNS。",
           "dns-system",
           !canManage() ||
             (!model.state.capabilities?.system_dns && !dns.system),
@@ -2556,7 +2607,7 @@ function renderDNSEditor() {
               ? "支持，与 UDP 共用解析策略"
               : "尚未运行或未提供能力",
           ],
-          ["IPv6 DNS 地址", "不代表已启用 IPv6 流量接管"],
+          ["IPv6 DNS 地址", "不代表已启用 IPv6 流量代理"],
         ]),
       ),
       configFooter(),
@@ -3031,9 +3082,9 @@ function renderDiagnosticsEditor() {
                       task.request?.target ||
                       {
                         apply: "应用设置",
-                        start: "启用接管",
-                        pause: "暂停接管",
-                        restart: "重启接管",
+                        start: "启用代理",
+                        pause: "停用代理",
+                        restart: "重启代理",
                         recover: "网络恢复",
                       }[task.kind] ||
                       "诊断任务",
@@ -3147,7 +3198,7 @@ function renderSettingsEditor() {
     readonlyNote(),
     card(
       "配置与生命周期",
-      "保存、应用与接管是三个不同步骤，暂停接管会保留管理服务。",
+      "保存、应用与代理是三个不同步骤，停用代理会保留管理服务。",
       detailPairs([
         ["控制层", model.state.control_state || "管理可用"],
         ["数据面", stateLabels[runtime()] || runtime()],
@@ -3177,10 +3228,10 @@ function renderSettingsEditor() {
           "primary",
         ),
         button(
-          "重启接管",
+          "重启代理",
           () =>
             dialog(
-              "确认重启接管",
+              "确认重启代理",
               "重启将中断现有业务连接。新配置启用失败时，管理入口保持可用。",
               note("请先完成预检并确认网段、真实出口和 DNS 设置。", "warning"),
               [
@@ -3209,7 +3260,7 @@ function renderSettingsEditor() {
     ),
     card(
       "导入与恢复配置",
-      "导入先校验，再由你确认保存；不会自动启用接管。最近有效设置可从上方撤销恢复。",
+      "导入先校验，再由你确认保存；不会自动启用代理。最近有效设置可从上方撤销恢复。",
       h(
         "div",
         { class: "button-row" },
@@ -3218,7 +3269,7 @@ function renderSettingsEditor() {
     ),
     card(
       "网络恢复",
-      "接管停止后会自动恢复网络；启动时自动处理可安全确认的上次残留。系统 DNS 中无法自动处理的记录需在本机确认，不覆盖其他程序或用户的新设置。",
+      "代理停止后会自动恢复网络；启动时自动处理可安全确认的上次残留。系统 DNS 中无法自动处理的记录需在本机确认，不覆盖其他程序或用户的新设置。",
       button("查看运行日志", () => navigate("diagnostics"), "ghost", !model.online),
       list(network.system_dns).length ? h("div", { class: "panel-list", "data-system-dns-recovery": "" },
         h("h3", {}, "系统 DNS 恢复记录"),
@@ -3331,7 +3382,7 @@ function renderSettingsEditor() {
           () =>
             dialog(
               "清空本机观察记录",
-              "清空 KONE 保留的连接、DNS 查询与 KONE 解析缓存，不改变系统 DNS、接管范围或代理设置。",
+              "清空 KONE 保留的连接、DNS 查询与 KONE 解析缓存，不改变系统 DNS、代理范围或代理设置。",
               null,
               [
                 button("取消", closeDialog, "ghost", false),
@@ -3370,7 +3421,7 @@ function renderSettingsEditor() {
           "当前协议边界",
           model.state.capabilities?.ipv6
             ? "IPv4；可显式配置 IPv6；代理 UDP 能力由出站检查决定"
-            : "IPv4 接管；代理 UDP 能力由出站检查决定",
+            : "IPv4 代理；代理 UDP 能力由出站检查决定",
         ],
         ["许可", "GPL-3.0-or-later；组件保留独立许可"],
         ["观察范围", "仅进入 KONE 的连接；DNS、诊断与业务分开计量"],
@@ -3438,11 +3489,11 @@ function renderGeoIP() {
     ),
     running() &&
       note(
-        "先暂停接管，才能更换或回退 GeoIP。保存后需显式启用接管加载。",
+        "先停用代理，才能更换或回退 GeoIP。保存后需显式启用代理加载。",
         "warning",
       ),
     model.geoip?.restart_required &&
-      note("已保存数据与运行快照不同，请在暂停后显式启用接管。", "warning"),
+      note("已保存数据与运行快照不同，请在暂停后显式启用代理。", "warning"),
     h(
       "div",
       { class: "form-section form-grid" },
@@ -3515,7 +3566,7 @@ function renderGeoIP() {
           const baseSHA = saved.sha256;
           dialog(
             "确认更新 GeoIP",
-            "校验通过。只保存该数据，不自动启用接管；新会话使用新数据，旧连接历史保持原解释。",
+            "校验通过。只保存该数据，不自动启用代理；新会话使用新数据，旧连接历史保持原解释。",
             detailPairs([
               ["文件", model.geoFile.name],
               ["数据格式", isMMDB ? `${provider?.name || providerID} MMDB` : "KONE JSON"],
@@ -3542,7 +3593,7 @@ function renderGeoIP() {
                     model.geoFile = null;
                     model.geoExpected = "";
                     model.geoError = null;
-                    notice("GeoIP 已保存，下次显式启用接管时加载。", "success");
+                    notice("GeoIP 已保存，下次显式启用代理时加载。", "success");
                     if (model.editor?.kind === "geoip") finishEditor(true);
                   });
                 },
@@ -3561,7 +3612,7 @@ function renderGeoIP() {
             "回退 GeoIP",
             model.geoError
               ? "当前数据无法读取。主机将重新校验已保存 previous 元数据及数据文件，成功后恢复；不会猜测或自动替换成内置版。"
-              : "将保存上一份有效数据，不自动启用接管。",
+              : "将保存上一份有效数据，不自动启用代理。",
             detailPairs([
               ["回退版本", model.geoip?.previous?.version],
               ["SHA-256", model.geoip?.previous?.sha256],
@@ -3579,7 +3630,7 @@ function renderGeoIP() {
                     });
                     model.geoError = null;
                     notice(
-                      "已保存上一份 GeoIP，下次显式启用接管时加载。",
+                      "已保存上一份 GeoIP，下次显式启用代理时加载。",
                       "success",
                     );
                     if (model.editor?.kind === "geoip") finishEditor(true);
@@ -3655,8 +3706,8 @@ function importConfig() {
             dialog(
               "确认导入设置",
               result.restart_required
-                ? "配置有效。保存后需显式重启接管，当前连接不自动中断。"
-                : "配置有效。保存后需显式应用到新连接或启用接管。",
+                ? "配置有效。保存后需显式重启代理，当前连接不自动中断。"
+                : "配置有效。保存后需显式应用到新连接或启用代理。",
               detailPairs([
                 [
                   "代理数量",
@@ -3795,7 +3846,7 @@ function renderLANSettings() {
             const result = await endpoints.pair({ role: "admin" });
             dialog(
               "手机管理授权",
-              "管理会话可修改配置和启停接管，仅授权给可信设备。",
+              "管理会话可修改配置和启停代理，仅授权给可信设备。",
               detailPairs([
                 ["访问地址", result.address || lan.url || lan.address],
                 ["授权代码", result.code || result.pairing_code],
@@ -3851,11 +3902,12 @@ async function exportData() {
 }
 
 function renderPasswordChange() {
-  const current = h("input", { id: "current-password", type: "password", autocomplete: "current-password", required: true, disabled: !canManage() });
+  const setup = model.state.local_access && model.state.password_configured === false;
+  const current = h("input", { id: "current-password", type: "password", autocomplete: "current-password", required: !setup, disabled: !canManage() });
   const next = h("input", { id: "new-password", type: "password", autocomplete: "new-password", required: true, disabled: !canManage() });
   const confirm = h("input", { id: "confirm-new-password", type: "password", autocomplete: "new-password", required: true, disabled: !canManage() });
   const errors = h("div", { role: "alert" });
-  const submit = button("确认修改密码", () => form.requestSubmit(), "primary", !canManage());
+  const submit = button(setup ? "确认设置密码" : "确认修改密码", () => form.requestSubmit(), "primary", !canManage());
   const cancel = button("取消修改", () => { form.reset(); errors.replaceChildren(); model.settingsLocalDirty = false; }, "ghost", false);
   const form = h("form", { onsubmit: async event => {
     event.preventDefault();
@@ -3875,11 +3927,14 @@ function renderPasswordChange() {
     for (const control of [current, next, confirm, submit, cancel]) control.disabled = true;
     updateShell();
     try {
-      const result = await endpoints.changePassword({ current_password: current.value, password: next.value, confirm_password: confirm.value });
+      const result = setup
+        ? await endpoints.setPassword({ password: next.value, confirm_password: confirm.value })
+        : await endpoints.changePassword({ current_password: current.value, password: next.value, confirm_password: confirm.value });
       if (!currentAuth(epoch)) return;
       form.reset();
       model.settingsLocalDirty = false;
       setSession(result);
+      if (setup) clearSettingsPresentation();
       await refreshAll();
       if (currentAuth(epoch)) notice("管理密码已修改，其他登录和待用配对代码已失效。", "success");
     } catch (error) {
@@ -3894,15 +3949,15 @@ function renderPasswordChange() {
         renderPreserving();
       }
     }
-  } }, h("div", { class: "form-grid password-grid" }, ...[["当前管理密码", current], ["新管理密码", next], ["再次输入新密码", confirm]].map(([text, input]) => h("div", { class: "field" }, h("label", { for: input.id }, text), input))), errors);
+  } }, h("div", { class: "form-grid password-grid" }, ...[["当前管理密码", current], ["新管理密码", next], ["再次输入新密码", confirm]].filter((_, index) => !setup || index > 0).map(([text, input]) => h("div", { class: "field" }, h("label", { for: input.id }, text), input))), errors);
   form.append(h("div", { class: "settings-form-actions" }, cancel, submit));
-  return card("修改管理密码", "请输入当前密码验证身份。修改成功后保留本页登录，其他登录和配对代码失效。", form);
+  return card(setup ? "设置远程管理密码" : "修改管理密码", setup ? "本机访问无需密码；启用远程管理前请设置密码。" : "请输入当前密码验证身份。修改成功后保留本页登录，其他登录和配对代码失效。", form);
 }
 
 function confirmResetConfiguration() {
   if (!canManage() || captureLocked() || model.state.remote_session || runtime() === "preflight") return;
   const baseVersion = model.config?.version;
-  dialog("重置所有配置", "重置入站、代理、规则、DNS、日志、GeoIP 和局域网访问，撤销配对代码与远程登录；管理密码与本机登录保留。", note("自定义配置将被默认值替换，接管保持暂停。重置前可先导出脱敏配置；导出不包含代理密码。", "warning"), [
+  dialog("重置所有配置", "重置入站、代理、规则、DNS、日志、GeoIP 和局域网访问，撤销配对代码与远程登录；管理密码与本机登录保留。", note("自定义配置将被默认值替换，代理保持暂停。重置前可先导出脱敏配置；导出不包含代理密码。", "warning"), [
     button("取消", closeDialog, "ghost", false),
     button("确认重置所有配置", () => action(async () => {
       try {
@@ -3918,7 +3973,7 @@ function confirmResetConfiguration() {
       await loadConfig(true);
       await loadPageData();
       model.outboundHealth = [];
-      notice("所有配置已恢复默认，接管保持暂停。启用前请重新检查设置并确认接管模式。", "success");
+      notice("所有配置已恢复默认，代理保持暂停。启用前请重新检查设置并确认代理模式。", "success");
     }), "danger"),
   ]);
 }
@@ -3947,6 +4002,7 @@ async function logout() {
   }
 }
 function renderAuth() {
+  if (model.auth?.local_access) return card("连接本机管理", "本机访问无需密码。", button("重新连接", renewLocalSession, "primary", model.authPending));
   const setup = Boolean(model.auth?.setup_required ?? model.state.setup_required);
   const authorized = Boolean(model.auth?.setup_authorized ?? model.state.role === "setup");
   const paired = model.authMode === "pairing" && !setup;
@@ -4038,7 +4094,7 @@ function openEditor(kind, index = null, mutate = null) {
   if (["logs", "lan", "geoip"].includes(kind)) { navigate(`settings/${kind}`); return; }
   if (!canManage() || !model.draft) return;
   if (["inbounds", "dns", "logs"].includes(kind) && captureLocked()) {
-    notice("请先暂停接管，再修改捕获、DNS 或日志采集设置。", "warning");
+    notice("请先停用代理，再修改捕获、DNS 或日志采集设置。", "warning");
     return;
   }
   if (model.editor) return;
@@ -4070,7 +4126,7 @@ function finishEditor(saved = false) {
 function requestCloseEditor() {
   if (!model.editor || model.busy) return;
   if (!model.dirty || JSON.stringify(editorSnapshot()) === JSON.stringify(model.editor.snapshot)) return finishEditor(false);
-  dialog("放弃未保存的修改？", "取消后恢复编辑前的草稿，不改变已保存设置或当前接管。", null, [
+  dialog("放弃未保存的修改？", "取消后恢复编辑前的草稿，不改变已保存设置或当前代理。", null, [
     button("继续编辑", closeDialog, "ghost", false),
     button("放弃修改并关闭", () => { closeDialog(); finishEditor(false); }, "danger", false),
   ]);
@@ -4157,7 +4213,7 @@ function requestSettingsNavigation(destination, destinationIndex) {
 function showPendingSettingsNavigation() {
   if (!model.authenticated || !pendingSettingsNavigation) return;
   const target = pendingSettingsNavigation;
-  dialog("放弃未保存的修改？", "离开会丢弃当前页面尚未保存的修改，已保存设置和当前接管不会改变。", null, [
+  dialog("放弃未保存的修改？", "离开会丢弃当前页面尚未保存的修改，已保存设置和当前代理不会改变。", null, [
     button("继续编辑", () => { pendingSettingsNavigation = null; closeDialog(); }, "ghost", false),
     button("放弃修改并离开", () => {
       closeDialog();
@@ -4183,7 +4239,7 @@ function renderSettingsDetail(section) {
   const result = h("section", { class: "settings-detail", "data-settings-detail": section, "aria-label": settingsSections[section][0] }, h("div", { "data-settings-access": "" }), lock, h("div", { "data-settings-conflict": "" }), content);
   for (const control of result.querySelectorAll("input,select,textarea,button")) {
     const formLocked = ["logs", "geoip"].includes(section) && captureLocked();
-    const dynamic = control.hasAttribute("data-network-recovery") || /修复网络|重启接管|创建只读授权码|创建管理授权码|校验并准备更新|回退.*GeoIP|尝试恢复/.test(control.textContent);
+    const dynamic = control.hasAttribute("data-network-recovery") || /修复网络|重启代理|创建只读授权码|创建管理授权码|校验并准备更新|回退.*GeoIP|尝试恢复/.test(control.textContent);
     control.dataset.settingsFixedDisabled = !dynamic && !control.hasAttribute("data-save") && control.disabled && canManage() && !formLocked ? "true" : "false";
   }
   // A single page title is sufficient for a focused setting.
@@ -4203,7 +4259,7 @@ function syncSettingsAccess() {
   const owner = ["manage", "admin", "owner", "local"].includes(role());
   access.replaceChildren(...(!model.online || !owner ? [note(model.online ? "当前为只读会话，可查看设置；修改需要管理授权。" : "管理连接恢复后，才能执行操作。", "warning")] : []));
   const lock = settingsDetailElement.querySelector("[data-settings-lock]");
-  lock.replaceChildren(...(locked ? [note("接管运行或切换期间不能修改此设置，请先暂停接管。未保存的内容会保留。", "warning")] : []));
+  lock.replaceChildren(...(locked ? [note("代理运行或切换期间不能修改此设置，请先停用代理。未保存的内容会保留。", "warning")] : []));
   for (const control of settingsDetailElement.querySelectorAll("input,select,textarea,button")) {
     const localOnly = section === "lan" && Boolean(model.state.remote_session);
     let disabled = !canManage() || model.authBusy || model.settingsLoading || locked || localOnly || control.dataset.settingsFixedDisabled === "true";
@@ -4212,7 +4268,7 @@ function syncSettingsAccess() {
     if (control.matches("[data-settings-save]")) disabled ||= !model.dirty;
     if (control.dataset.sessionProtected === "true") disabled = true;
     if (control.hasAttribute("data-network-recovery")) disabled ||= captureLocked() || Boolean(model.state.remote_session);
-    if (control.textContent === "重启接管") disabled ||= !running();
+    if (control.textContent === "重启代理") disabled ||= !running();
     if (["创建只读授权码", "创建管理授权码"].includes(control.textContent)) disabled ||= !model.lan.enabled;
     if (section === "geoip" && control.tagName === "BUTTON") {
       if (control.textContent.includes("校验")) disabled ||= Boolean(model.geoError);
@@ -4236,7 +4292,7 @@ function renderEditor() {
   }
   const titles = { inbounds: "编辑入站", outbound: "编辑代理出站", rule: editor.item?.type === "FINAL" ? "编辑最终规则 FINAL" : "编辑路由规则", dns: "编辑 DNS 设置", logs: "编辑日志设置", lan: "管理局域网访问", geoip: "更新 GeoIP 数据" };
   let content = [];
-  if (editor.kind === "inbounds") content = selectCards(renderInboundsEditor(), ["TUN 接管入口"]);
+  if (editor.kind === "inbounds") content = selectCards(renderInboundsEditor(), ["TUN 代理入口"]);
   if (editor.kind === "outbound") content = selectCards(renderOutboundsEditor(), ["代理出站"]);
   if (editor.kind === "rule") content = selectCards(renderRulesEditor(), ["路由规则"]);
   if (editor.kind === "dns") content = selectCards(renderDNSEditor(), ["解析设置", "按域名选择解析器"]);
@@ -4246,7 +4302,7 @@ function renderEditor() {
   if (["inbounds", "rule", "dns"].includes(editor.kind)) content = compactEditorContent(editor, content);
   if (["inbounds", "dns", "logs"].includes(editor.kind) && captureLocked()) {
     for (const node of content) node.querySelectorAll("input,select,textarea,button").forEach(input => { input.disabled = true; });
-    content.unshift(note("接管已进入运行或切换状态；这些设置不能热改，请暂停后再编辑。", "warning"));
+    content.unshift(note("代理已进入运行或切换状态；这些设置不能热改，请暂停后再编辑。", "warning"));
   }
   modal.replaceChildren(
     h("div", { class: "dialog-head" }, h("div", {}, h("h2", { id: "editor-title" }, titles[editor.kind]), h("p", {}, editor.item?.type === "FINAL" ? "最后决定其余流量的出站。" : "修改后保存，高级设置按需展开。")), button("×", requestCloseEditor, "ghost compact", model.busy, { "aria-label": "关闭编辑" })),
@@ -4334,7 +4390,7 @@ function healthResult(result) { return renderOutboundTestResult(result); }
 function renderDraftTestPanel(editor) {
   const view = outboundTestView(editor.index, editor);
   return h("section", { class: "outbound-test-panel", "data-outbound-draft-panel": "" },
-    h("h3", {}, "草稿连接测试"), h("small", { class: "muted" }, "测试当前填写内容，不保存设置或启用接管。"),
+    h("h3", {}, "草稿连接测试"), h("small", { class: "muted" }, "测试当前填写内容，不保存设置或启用代理。"),
     h("div", { "data-outbound-draft-live": "" }, renderOutboundTestResult(view.result, view)),
     h("details", { class: "disclosure compact-advanced", "data-outbound-draft-options": "" }, h("summary", {}, "测试目标与选项"),
       h("div", { class: "form-grid" },
@@ -4468,7 +4524,7 @@ async function saveEditor() {
   if (!validation || !currentAuth(epoch)) return;
   if (validation.valid === false) { notice(list(validation.issues).map(issue => issue.message || String(issue)).join("；") || validation.message || "配置未通过校验，请检查输入。", "error"); return; }
   if (body !== JSON.stringify(configBody())) { notice("草稿已变化，请核对后重新保存。", "warning"); return; }
-  if (captureLocked() && validation.restart_required) { notice("这些更改影响接管入口，请先暂停接管，再保存当前草稿。", "warning"); return; }
+  if (captureLocked() && validation.restart_required) { notice("这些更改影响代理入口，请先停用代理，再保存当前草稿。", "warning"); return; }
   const outbound = editor?.kind === "outbound" && model.draft.outbounds[editor.index];
   const references = outbound && outbound.name !== editor.originalName ? list(editor.snapshot.draft?.rules).filter(rule => rule.outbound === editor.originalName).length : 0;
   const issues = list(validation.issues || validation.warnings);
@@ -4556,7 +4612,7 @@ const configurationPages = createConfigurationPages({ model, h, card, note, butt
   logout, resetConfiguration: confirmResetConfiguration, settingsDetail: renderSettingsDetail,
   outboundTestPanel: renderOutboundTestPanel,
   stateLabel: () => stateLabels[runtime()] || runtime(), edit: openEditor, addOutbound, addRule, deleteOutbound, deleteRule, moveRule: moveSavedRule, outboundDetails, testOutbound: openOutboundTest,
-  refreshHealth: () => refreshOutboundHealth().then(renderPreserving), preflight: () => action(async () => showResult("接管预检", await endpoints.lifecycle("preflight"))),
+  refreshHealth: () => refreshOutboundHealth().then(renderPreserving), preflight: () => action(async () => showResult("代理预检", await endpoints.lifecycle("preflight"))),
   simulateRules: () => dialog("模拟规则匹配", "按输入目标和已保存规则计算，不解析 DNS 或测试连通性；域名结果不包含尚未知晓的 CNAME 或 IP 证据。", selectCards(renderRulesEditor(), ["模拟一次规则匹配"])[0]?.querySelector("#simulate-form")),
   dnsObservations: () => selectCards(renderDNSEditor(), ["系统解析范围", "查询记录"]),
   settingsObservations: () => selectCards(renderSettingsEditor(), ["配置与生命周期", "导入与恢复配置", "网络恢复", "记录、隐私与导出", "关于 KONE"]),

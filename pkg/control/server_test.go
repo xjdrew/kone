@@ -154,7 +154,7 @@ func TestConfigAPIAndRuleSimulation(t *testing.T) {
 		require.Contains(t, r.Body.String(), "config_version")
 	}
 	require.Equal(t, 400, request(t, c, token, "POST", "/api/v1/rules/simulate", map[string]any{"target": "bad/url"}).Code)
-	for _, target := range []string{"bad name", "2001:db8::1"} {
+	for _, target := range []string{"bad name", "2001:db8:::1"} {
 		exact["target"] = target
 		require.Equal(t, 400, request(t, c, token, "POST", "/api/v1/rules/exact", exact).Code)
 	}

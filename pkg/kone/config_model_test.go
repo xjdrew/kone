@@ -136,8 +136,8 @@ func TestReloadBuiltInTargetsAndCIDRProtection(t *testing.T) {
 	require.NoError(t, err)
 	updated := routed.Snapshot().Config
 	updated.Rule[0].Outbound = "A"
-	require.ErrorContains(t, routed.Reload(updated), "require restart")
-	require.Equal(t, uint64(1), routed.Snapshot().Version)
+	require.NoError(t, routed.Reload(updated))
+	require.Equal(t, uint64(2), routed.Snapshot().Version)
 }
 
 func TestReloadWithOnlyBuiltInOutbounds(t *testing.T) {

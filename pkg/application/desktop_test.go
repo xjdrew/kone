@@ -212,7 +212,8 @@ func TestDesktopBrowserFailureFeedbackDoesNotBlockHTTPOrExposeSetupSecrets(t *te
 		require.Equal(t, http.StatusOK, response.StatusCode)
 		data, err := io.ReadAll(response.Body)
 		require.NoError(t, err)
-		require.Contains(t, string(data), `"setup_required":true`)
+		require.Contains(t, string(data), `"local_access":true`)
+		require.Contains(t, string(data), `"setup_required":false`)
 	}
 	assertHTTPReady()
 	allowLaunch()
@@ -223,7 +224,7 @@ func TestDesktopBrowserFailureFeedbackDoesNotBlockHTTPOrExposeSetupSecrets(t *te
 	}
 	assertHTTPReady()
 	require.Contains(t, browserFailureMessage(), "管理服务已在后台运行")
-	require.NotContains(t, browserFailureMessage(), "接管已启用")
+	require.NotContains(t, browserFailureMessage(), "代理已启用")
 	cancel()
 	select {
 	case code := <-result:

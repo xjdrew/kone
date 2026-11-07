@@ -182,7 +182,7 @@ func TestSystemIPv6ListenerAndRouteFailureRestore(t *testing.T) {
 	cfg.Rule = []kone.RuleConfig{{Schema: "IP-CIDR6", Pattern: "2001:db8:aaa::/64", Outbound: kone.BuiltinReject}, {Schema: "IP-CIDR6", Pattern: "2001:db8:bad::/64", Outbound: kone.BuiltinReject}}
 	one, err := kone.FromConfig(cfg)
 	require.NoError(t, err)
-	require.ErrorContains(t, one.Run(context.Background()), "IPv6 route")
+	require.ErrorContains(t, one.Run(context.Background()), "add route")
 	require.NoError(t, one.Close())
 	noSystemInterface(t, cfg)
 	require.Empty(t, systemCommand(t, "-6", "route", "show", "2001:db8:aaa::/64"))

@@ -42,7 +42,7 @@ func showCaptureFailure(action string) {
 
 func captureFailureMessage(action string) string {
 	if action == "start" {
-		return "未能启用接管。请在管理页面查看诊断与日志；如果 TUN 入站尚未启用，请到“入站”启用、保存后重试。管理服务仍然可用。"
+		return "未能启用代理。请在管理页面查看诊断与日志；如果 TUN 入站尚未启用，请到“入站”启用、保存后重试。管理服务仍然可用。"
 	}
-	return "未能暂停接管。请在管理页面查看当前状态、诊断与日志，确认接管与恢复结果。管理服务仍然可用。"
+	return "未能停用代理。请在管理页面查看当前状态、诊断与日志，确认代理与恢复结果。管理服务仍然可用。"
 }

@@ -4,7 +4,7 @@ const patternInfo = {
   DOMAIN: { label: "精确域名", placeholder: "example.com", hint: "只匹配这个域名，不包含子域名。填写域名，不含协议、端口、路径或通配符。" },
   "DOMAIN-SUFFIX": { label: "域名后缀", placeholder: "example.com", hint: "匹配 example.com 及其子域名，如 www.example.com；不会匹配 notexample.com。无需前导点，不支持通配符。" },
   "DOMAIN-KEYWORD": { label: "域名关键词", placeholder: "example", hint: "匹配域名中任意位置包含的文字，例如 example 也会匹配 notexample.com；不支持通配符。" },
-  "IP-CIDR": { label: "IPv4 地址范围", placeholder: "192.0.2.0/24", hint: "使用 IPv4 地址/前缀长度，范围为 /0–/32；单个地址使用 /32。修改捕获路由可能需要暂停接管。" },
+  "IP-CIDR": { label: "IPv4 地址范围", placeholder: "192.0.2.0/24", hint: "使用 IPv4 地址/前缀长度，范围为 /0–/32；单个地址使用 /32。保存后立即应用于新连接。" },
   "IP-CIDR6": { label: "IPv6 地址范围", placeholder: "2001:db8::/32", hint: "使用 IPv6 地址/前缀长度，范围为 /0–/128；单个地址使用 /128。需要先在入站启用 IPv6 网段。" },
   GEOIP: { label: "国家或地区", placeholder: "选择国家或地区", hint: "按目标 IP 在当前 GeoIP 数据中的归属匹配；不会联网查询，也不直接匹配域名。" },
 };

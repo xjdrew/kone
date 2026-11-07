@@ -152,10 +152,11 @@ func TestWindowsIPv6AutoRouteIsCommandTestOnly(t *testing.T) {
 	}}
 	cfg := one.Snapshot().Config.Core
 	cfg.AutoRoute6 = true
-	var undo undoStack
-	require.NoError(t, one.addIPv6Routes(context.Background(), newMemoryDevice(), cfg, &undo))
-	require.Equal(t, []string{"::/1", "8000::/1"}, created)
-	require.NoError(t, undo.restore(context.Background()))
+	one.routeDevice = newMemoryDevice()
+	one.captureRoutes = map[string]Cleanup{}
+	require.NoError(t, one.updateCaptureRoutes(context.Background(), captureRoutes(cfg, one.policy.Load().rule)))
+	require.ElementsMatch(t, []string{"::/1", "8000::/1"}, created)
+	require.NoError(t, one.restoreCaptureRoutes(context.Background()))
 }
 
 func TestWindowsIPv6FirewallIncludesOnlyOwnedLocalAddresses(t *testing.T) {

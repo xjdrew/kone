@@ -184,3 +184,25 @@ func TestReadinessLeavesPreviousCaptureMaintenanceToStart(t *testing.T) {
 	require.Nil(t, report.Recovery)
 	c.state = "paused"
 }
+
+func TestRunningCIDRChangesSaveAndApplyWithoutRestart(t *testing.T) {
+	engine := newMemoryEngine()
+	c := testController(t, Options{Factory: func(*kone.KoneConfig) (Engine, error) { return engine, nil }})
+	enable(t, c)
+	require.NoError(t, c.Start(t.Context()))
+	for _, pattern := range []string{"192.0.2.0/24", "203.0.113.0/24", ""} {
+		request := currentRequest(c)
+		request.Config["rules"] = []any{map[string]any{"type": "FINAL", "outbound": "direct"}}
+		if pattern != "" {
+			request.Config["rules"] = []any{map[string]any{"type": "IP-CIDR", "pattern": pattern, "outbound": "reject"}, map[string]any{"type": "FINAL", "outbound": "direct"}}
+		}
+		validation, err := c.Validate(request)
+		require.NoError(t, err)
+		require.Equal(t, false, validation["restart_required"])
+		result, err := c.Save(request)
+		require.NoError(t, err)
+		require.Equal(t, true, result["applied"])
+		require.Equal(t, "running", c.State().DataState)
+		require.Equal(t, c.State().SavedVersion, c.State().RunningVersion)
+	}
+}

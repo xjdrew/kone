@@ -446,7 +446,7 @@ func (cfg *KoneConfig) Validate() error {
 			switch strings.ToUpper(r.Schema) {
 			case "DOMAIN", "DOMAIN-SUFFIX", "DOMAIN-KEYWORD":
 			default:
-				return fail("temporary rules support domain targets only; capture routes need an explicit restart")
+				return fail("temporary rules support domain targets only; CIDR routes require explicit removal")
 			}
 		}
 		if r.ID != "" {

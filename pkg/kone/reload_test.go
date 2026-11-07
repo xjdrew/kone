@@ -64,7 +64,6 @@ func TestReloadFailureLeavesPolicyIntact(t *testing.T) {
 	}{
 		{"core", func(c *KoneConfig) { c.Core.Network = "10.193.0.1/16" }},
 		{"logging", func(c *KoneConfig) { c.General.LogLevel = "debug" }},
-		{"route", func(c *KoneConfig) { c.Rule = []RuleConfig{{Schema: "IP-CIDR", Pattern: "8.8.8.0/24", Outbound: "A"}} }},
 		{"invalid", func(c *KoneConfig) { c.Rule[0].Outbound = "Missing" }},
 	}
 	for _, tc := range cases {

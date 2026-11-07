@@ -80,10 +80,11 @@ func (c *Controller) passwordConfigured() bool {
 
 func (c *Controller) authInformation(w http.ResponseWriter, r *http.Request) {
 	configured := c.passwordConfigured()
+	local := c.localAccess(r)
 	session, ok := c.authorize(r)
 	setup := !configured && ok && session.Role == "setup" && !session.Remote && localRemote(r)
-	info := map[string]any{"setup_required": !configured, "password_required": configured,
-		"setup_authorized": setup, "authenticated": configured && ok && session.Role != "setup"}
+	info := map[string]any{"setup_required": !configured && !local, "password_required": configured && !local, "password_configured": configured,
+		"setup_authorized": setup, "local_access": local, "local_session": ok && session.Local, "authenticated": ok && session.Role != "setup" && (configured || session.Local)}
 	if setup {
 		info["csrf_token"] = session.csrf
 	} // Resume authorized setup after a page reload.
@@ -91,7 +92,7 @@ func (c *Controller) authInformation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c *Controller) setupPassword(w http.ResponseWriter, r *http.Request, session *Session) {
-	if session.Role != "setup" || session.Remote || !localRemote(r) {
+	if (session.Role != "setup" && !session.Local) || session.Remote || !localRemote(r) {
 		apiError(w, 403, "setup_required", "Open the local tray entry to set the management password")
 		return
 	}
@@ -143,6 +144,7 @@ func (c *Controller) setupPassword(w http.ResponseWriter, r *http.Request, sessi
 	c.pairs = map[string]Pairing{}
 	c.bootstrap = ""
 	token, owner := c.newSession("admin", false)
+	owner.Local = session.Local
 	c.mu.Unlock()
 	writeSession(w, r, token, owner)
 }
@@ -237,6 +239,7 @@ func (c *Controller) changePassword(w http.ResponseWriter, r *http.Request, sess
 	c.sessions = map[string]*Session{}
 	c.pairs = map[string]Pairing{}
 	token, owner := c.newSession("admin", session.Remote)
+	owner.Local = session.Local
 	c.mu.Unlock()
 	writeSession(w, r, token, owner)
 }
@@ -261,6 +264,10 @@ func (c *Controller) createSession(w http.ResponseWriter, r *http.Request) {
 		if value != "" {
 			count++
 		}
+	}
+	if count == 0 && c.localAccess(r) {
+		c.localSession(w, r)
+		return
 	}
 	if count != 1 || len(input.Token) > 64 || len(input.PairingCode) > 16 || len(input.Password) > 128 {
 		apiError(w, 400, "request", "Supply one password, local setup token or pairing code")

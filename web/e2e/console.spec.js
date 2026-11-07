@@ -258,7 +258,7 @@ async function mount(page, options = {}) {
       deferred.started = true;
       await deferred.promise;
     }
-    if (path === "/auth") return respond({ setup_required: Boolean(data.requireSetup), setup_authorized: Boolean(data.setupSession), password_required: !data.requireSetup, authenticated: data.loggedIn !== false, ...(data.setupSession ? { csrf_token: "setup-csrf" } : {}) });
+    if (path === "/auth") return respond({ local_access: Boolean(data.localAccess), local_session: Boolean(data.localAccess && data.loggedIn), setup_required: Boolean(data.requireSetup), setup_authorized: Boolean(data.setupSession), password_required: !data.requireSetup, authenticated: data.loggedIn !== false, ...(data.setupSession ? { csrf_token: "setup-csrf" } : {}) });
     if (path === "/auth/password") {
       if (method === "POST" && !data.setupSession) return respond({ error: { message: "local setup proof required" } }, 403);
       if (method === "PUT" && data.loggedIn === false) return respond({ error: { message: "Password required" } }, 401);
@@ -273,6 +273,7 @@ async function mount(page, options = {}) {
     }
     if (path === "/session/logout") { data.loggedIn = false; return respond({ logged_out: true }); }
     if (path === "/session") {
+      if (data.localAccess && !body.password && !body.token && !body.pairing_code) data.loggedIn = true;
       if (data.requireSetup && body.token) { data.setupSession = true; return respond({ role: "setup", csrf_token: "setup-csrf", setup_required: true }); }
       if (body.pairing_code) {
         if (body.pairing_code !== data.pairingCode) return respond({ error: { message: "Password or authorization is invalid" } }, 401);
@@ -282,6 +283,7 @@ async function mount(page, options = {}) {
       return respond({
         role: data.role,
         remote_session: Boolean(data.remoteSession),
+        local_access: Boolean(data.localAccess), password_configured: !data.requireSetup,
         csrf_token: "test-csrf",
         session_id: "test-session",
       });
@@ -316,6 +318,7 @@ async function mount(page, options = {}) {
         host: "Gateway · 测试主机",
         role: data.role,
         remote_session: Boolean(data.remoteSession),
+        local_access: Boolean(data.localAccess), password_configured: !data.requireSetup,
         capabilities: {
           stacks: ["system", "gvisor", "mixed"],
           tcp: true,
@@ -344,7 +347,7 @@ async function mount(page, options = {}) {
       direct_only_confirmed: Boolean(data.config.direct_only_confirmed),
       saved_version: data.config.version,
       checks: [],
-      blockers: [...(data.disabledTUN ? [{ id: "inbound", code: "inbound_disabled", status: "failed", severity: "error", message: "请先在入站启用 TUN 入口并保存。", page: "inbounds", field: "enabled", action: "edit_inbound" }] : []), ...(data.directOnly && !data.config.direct_only_confirmed ? [{ id: "direct_only_confirmation", code: "direct_only_confirmation", status: "error", severity: "error", message: "请明确确认仅直连接管。", page: "outbounds", field: "direct_only_confirmed", action: "confirm_direct" }] : [])],
+      blockers: [...(data.disabledTUN ? [{ id: "inbound", code: "inbound_disabled", status: "failed", severity: "error", message: "请先在入站启用 TUN 入口并保存。", page: "inbounds", field: "enabled", action: "edit_inbound" }] : []), ...(data.directOnly && !data.config.direct_only_confirmed ? [{ id: "direct_only_confirmation", code: "direct_only_confirmation", status: "error", severity: "error", message: "请明确确认仅直连代理。", page: "outbounds", field: "direct_only_confirmed", action: "confirm_direct" }] : [])],
       warnings: [],
     });
     if (path === "/outbounds/health") {
@@ -727,7 +730,7 @@ async function mount(page, options = {}) {
   await expect(
     page.getByRole("heading", { name: bootstrapPage === "diagnostics" ? "诊断" : "首页", exact: true }),
   ).toBeVisible();
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   return data;
 }
 
@@ -946,7 +949,7 @@ test("@compat first-time password setup requires matching inputs and remains cap
   await expectManagementShellVisible(page);
   await expect(page.locator("[data-desktop-startup-guide]")).toHaveCount(0);
   expect(data.requests.find((request) => request.path === "/auth/password")?.headers["x-csrf-token"]).toBe("setup-csrf");
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
   await navigate(page, "settings");
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
@@ -958,7 +961,7 @@ test("@compat first-time password setup requires matching inputs and remains cap
   await expect(page.locator("#auth-error")).toContainText("Password or authorization is invalid");
   await page.locator("#login-password").fill("mock-owner-password");
   await page.getByRole("button", { name: "登录管理", exact: true }).click();
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   await expectManagementShellVisible(page);
 });
 
@@ -1054,7 +1057,7 @@ test("@compat stable settings navigation keeps saved summaries and reset permiss
   data.state = "paused";
   data.role = "read";
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   await expect(page.locator("#session-role")).toContainText("只读");
   await expect(page.locator('[data-settings-action="reset"]')).toBeDisabled();
   await expect(page.locator('[data-settings-action="logout"]')).toBeEnabled();
@@ -1314,7 +1317,7 @@ test("@compat change password validates confirmation, verifies the current passw
   const changes = data.requests.filter((request) => request.path === "/auth/password");
   expect(changes.at(-1)).toMatchObject({ method: "PUT", body: { current_password: "mock-owner-password", password: "replacement-owner-password", confirm_password: "replacement-owner-password" } });
   await expect(page.locator('[data-settings-detail="account"]')).toBeVisible();
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   await page.locator("[data-settings-back]").click();
   await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(page.locator("#login-password")).toHaveValue("");
@@ -1323,7 +1326,7 @@ test("@compat change password validates confirmation, verifies the current passw
   await expect(page.locator("#auth-error")).toContainText("Password or authorization is invalid");
   await page.locator("#login-password").fill("replacement-owner-password");
   await page.getByRole("button", { name: "登录管理", exact: true }).click();
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
 });
 
@@ -1341,8 +1344,8 @@ test("@compat reset all configuration requires confirmation and leaves capture s
   await navigate(page, "outbounds");
   await expect(page.getByText("尚未配置代理", { exact: true })).toBeVisible();
   await navigate(page, "inbounds");
-  await expect(page.locator('[data-card-title="TUN 接管入口"]')).toContainText("已启用");
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator('[data-card-title="TUN 代理入口"]')).toContainText("已启用");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
 });
 
@@ -1380,7 +1383,7 @@ test("inactive invalid configuration can be repaired by resetting all settings",
   await page.getByRole("button", { name: "重置所有配置", exact: true }).click();
   await page.getByRole("button", { name: "确认重置所有配置", exact: true }).click();
   await expect(page.locator("#page-notice")).toContainText("所有配置已恢复默认");
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   expect(data.configError).toBe("");
   expect(data.config.config.outbounds).toEqual([]);
   expect(data.writes.some((write) => write.path.startsWith("/lifecycle/"))).toBe(false);
@@ -1433,7 +1436,7 @@ test("@compat capture starts with one click without advisory readiness dialogs",
     recovery: { required: true, can_clear: true, ownership: "owned", items: [{ kind: "journal", status: "owned", message: "Old journal can be cleared" }] },
   } });
   await page.locator("#lifecycle-toggle").click();
-  await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  await expect(page.locator("#runtime-status")).toContainText("正在代理");
   await expect(page.locator("#detail-dialog")).not.toBeVisible();
   expect(data.requests.some((request) => request.path === "/readiness")).toBe(false);
   expect(data.writes).toEqual([{ path: "/lifecycle/start", body: {} }]);
@@ -1446,14 +1449,14 @@ for (const previousState of ["recovery_required", "recovery_failed"]) {
     data.recoveryRequired = true;
     data.lastError = "Previous capture stopped before reporting completion";
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    await expect(page.locator("#runtime-status")).toContainText("尚未接管");
+    await expect(page.locator("#runtime-status")).toContainText("尚未代理");
     await navigateSettings(page, "network");
     const recovery = page.locator('[data-settings-detail="network"]');
-    await expect(recovery).toContainText("接管停止后会自动恢复网络");
+    await expect(recovery).toContainText("代理停止后会自动恢复网络");
     await expect(recovery).not.toContainText("所有权判断");
     await expect(recovery).not.toContainText("下一步");
     await page.locator("#lifecycle-toggle").click();
-    await expect(page.locator("#runtime-status")).toContainText("正在接管");
+    await expect(page.locator("#runtime-status")).toContainText("正在代理");
     await expect(page.locator("#detail-dialog")).not.toBeVisible();
     expect(data.recoveryRequired).toBe(false);
     expect(data.writes).toEqual([{ path: "/lifecycle/start", body: {} }]);
@@ -1470,7 +1473,7 @@ for (const [code, message] of [
     await page.locator("#lifecycle-toggle").click();
     await expect(page.locator("#page-notice")).toContainText(message);
     await expect(page.locator("#detail-dialog")).not.toBeVisible();
-    await expect(page.locator("#runtime-status")).toContainText("已暂停");
+    await expect(page.locator("#runtime-status")).toContainText("已停用代理");
     expect(data.writes).toEqual([{ path: "/lifecycle/start", body: {} }]);
     expect(data.requests.some((request) => request.path === "/readiness")).toBe(false);
   });
@@ -1502,8 +1505,8 @@ test("@compat a late authenticated state response cannot restore a logged-out co
 test("@compat direct-only capture uses one short confirmation and remembers the choice", async ({ page }, testInfo) => {
   const data = await mount(page, { directOnly: true });
   await page.locator("#lifecycle-toggle").click();
-  await expect(page.getByRole("heading", { name: "启用直连接管", exact: true })).toBeVisible();
-  await expect(page.locator("#detail-dialog")).toContainText("当前规则仅使用直连或拒绝，不经过代理。");
+  await expect(page.getByRole("heading", { name: "启用 TUN（仅直连）", exact: true })).toBeVisible();
+  await expect(page.locator("#detail-dialog")).toContainText("当前规则仅使用直连或拒绝，不经过代理服务器。");
   await expect(page.locator("#detail-dialog").getByRole("checkbox")).toHaveCount(0);
   await expect(page.locator("#detail-dialog")).not.toContainText("系统变更");
   await expect(page.locator("#detail-dialog")).not.toContainText("恢复");
@@ -1514,16 +1517,16 @@ test("@compat direct-only capture uses one short confirmation and remembers the 
   await page.locator("#detail-dialog").getByRole("button", { name: "取消", exact: true }).click();
   expect(data.writes).toEqual([]);
   await page.locator("#lifecycle-toggle").click();
-  await page.getByRole("button", { name: "确认启用接管", exact: true }).click();
-  await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  await page.getByRole("button", { name: "确认启用代理", exact: true }).click();
+  await expect(page.locator("#runtime-status")).toContainText("正在代理");
   await expect(page.locator("#detail-dialog")).not.toBeVisible();
   expect(data.writes.find((write) => write.path === "/config")?.body.direct_only_confirmed).toBe(true);
   expect(data.writes.filter((write) => write.path === "/lifecycle/start")).toHaveLength(1);
   data.state = "paused";
   await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   await page.locator("#lifecycle-toggle").click();
-  await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  await expect(page.locator("#runtime-status")).toContainText("正在代理");
   await expect(page.locator("#detail-dialog")).not.toBeVisible();
   expect(data.writes.filter((write) => write.path === "/lifecycle/start")).toHaveLength(2);
   expect(data.writes.filter((write) => write.path === "/config")).toHaveLength(1);
@@ -1546,8 +1549,8 @@ for (const externalChange of [false, true]) {
     }
     const saved = structuredClone(data.config.config);
     await page.locator("#lifecycle-toggle").dispatchEvent("click");
-    await page.getByRole("button", { name: "确认启用接管", exact: true }).click();
-    await expect(page.locator("#runtime-status")).toContainText("正在接管");
+    await page.getByRole("button", { name: "确认启用代理", exact: true }).click();
+    await expect(page.locator("#runtime-status")).toContainText("正在代理");
     const confirmation = data.writes.find((write) => write.path === "/config");
     expect(confirmation.body.config).toEqual(saved);
     expect(confirmation.body.direct_only_confirmed).toBe(true);
@@ -1627,7 +1630,7 @@ test("@compat built-in outbounds stay first, read-only and readable with exact s
     await expect(builtin.locator("button,input,select")).toHaveCount(0);
   }
   await expect(page.locator('[data-builtin-outbound="direct"]')).toContainText("已到期");
-  await expect(page.locator('[data-builtin-outbound="direct"]')).toContainText("FINAL");
+  await expect(page.locator('[data-builtin-outbound="direct"]')).toContainText("其余流量");
   await expect(page.locator('[data-outbound-row="0"]').getByRole("button", { name: "编辑", exact: true })).toBeDisabled();
   await expect(page.getByRole("heading", { name: "代理出站", exact: true })).toHaveCount(1);
   await page.screenshot({ path: testInfo.outputPath("outbounds-compact-with-builtins.png"), fullPage: true, animations: "disabled" });
@@ -1644,8 +1647,7 @@ test("@compat an implicit direct fallback is explained without counting a saved 
   await navigate(page, "outbounds");
   await expect(page.locator('[data-outbound-references="direct"]')).toHaveText("0 条规则");
   await page.locator('[data-builtin-outbound="direct"] > summary').click();
-  await expect(page.locator('[data-builtin-outbound="direct"]')).toContainText("没有显式 FINAL");
-  await expect(page.locator('[data-builtin-outbound="direct"]')).toContainText("内置默认兜底");
+  await expect(page.locator('[data-builtin-outbound="direct"]')).toContainText("其余流量默认直连");
   await expect(page.locator('[data-builtin-outbound="direct"] button')).toHaveCount(0);
   expect(data.writes).toEqual([]);
 });
@@ -1711,7 +1713,7 @@ test("@compat FINAL stays in its own last group and only its outbound can be edi
   await expect(page.locator("[data-rule-row]")).toHaveCount(1);
   const final = page.locator("[data-rule-final]");
   await expect(final).toHaveCount(1);
-  await expect(final).toContainText("FINAL");
+  await expect(final).toContainText("最终规则");
   await expect(final.locator("button")).toHaveCount(1);
   await expect(page.getByRole("button", { name: /添加最终/ })).toHaveCount(0);
   await expect(page.locator('[data-rule-row="0"] button[aria-label$="下移"]')).toBeDisabled();
@@ -1738,7 +1740,7 @@ test("@compat an implicit direct FINAL can be cancelled or saved as an explicit 
   const original = structuredClone(initial.config.config.rules);
   const data = await mount(page, { config: initial.config });
   await navigate(page, "rules");
-  await expect(page.locator("[data-rule-final]")).toContainText(/内置.*direct|direct.*内置/);
+  await expect(page.locator("[data-rule-final]")).toContainText("其余流量 → direct");
   await page.locator("[data-rule-final-edit]").click();
   await page.locator("#rule-outbound-1").selectOption("reject");
   await page.locator("#editor-dialog [data-editor-cancel]").click();
@@ -1879,7 +1881,7 @@ test("a rule editor retains its stable identity and draft when saved rules are r
 test("@compat running capture locks TUN while rule edits save and hot-apply", async ({ page }) => {
   const data = await mount(page);
   data.state = "running";
-  await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  await expect(page.locator("#runtime-status")).toContainText("正在代理");
   await navigate(page, "inbounds");
   await expect(page.getByRole("button", { name: "编辑入站", exact: true })).toBeDisabled();
   await navigate(page, "rules");
@@ -2389,7 +2391,7 @@ test("@compat readonly session sees every page but cannot save, diagnose, or sta
   await expect(
     page.getByRole("button", { name: "应用已保存设置" }),
   ).toBeDisabled();
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
 });
 
 test("@compat mobile 320px all pages retain navigation, editing, and no body overflow", async ({
@@ -2473,7 +2475,7 @@ test("@compat weak network recovery refreshes real state without repeating a mut
   );
   data.offline = false;
   data.delay = 200;
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   await expect(page.locator("#connection-banner")).toBeHidden();
   await expect(page.locator("#lifecycle-toggle")).toBeEnabled();
   expect(data.writes).toEqual([]);
@@ -2487,18 +2489,18 @@ test("@compat unavailable capture telemetry keeps management and rules editable,
   data.state = "running";
   data.telemetryUnavailable = true;
   await expect(page.locator("#connection-banner")).toContainText("管理连接正常，流量数据暂不可用");
-  await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  await expect(page.locator("#runtime-status")).toContainText("正在代理");
   await expect(add).toBeEnabled();
   await navigate(page, "home");
   await expect(page.getByText(/数据暂不可用：这里是/)).toBeVisible();
-  await expect(page.getByText(/接管已停止/)).toHaveCount(0);
+  await expect(page.getByText(/代理已停止/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "上次采样速率", exact: true })).toBeVisible();
   await navigate(page, "rules");
   data.offline = true;
   await expect(page.locator("#runtime-status")).toHaveText("状态未知");
   await expect(add).toBeDisabled();
   data.offline = false;
-  await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  await expect(page.locator("#runtime-status")).toContainText("正在代理");
   await expect(add).toBeEnabled();
   data.telemetryUnavailable = false;
   await expect(page.locator("#connection-banner")).toBeHidden();
@@ -2510,7 +2512,7 @@ test("@compat disabled TUN explains the saved inbound requirement without starti
   await page.locator("#lifecycle-toggle").click();
   await expect(page.locator("#page-notice")).toContainText("启用 TUN 入口并保存");
   await expect(page.locator("#detail-dialog")).not.toBeVisible();
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   expect(data.writes).toEqual([{ path: "/lifecycle/start", body: {} }]);
   expect(data.requests.some((request) => request.path === "/readiness")).toBe(false);
 });
@@ -2654,7 +2656,7 @@ test("@compat a failed older-log request keeps the current page and retries the 
   expect(await displayedLogIDs(page)).toEqual(firstIDs);
   await expect(page.locator("[data-log-page-status]")).toContainText("最新页");
   await expect(page.locator("[data-log-newer]")).toBeDisabled();
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   data.failLogBefore = false;
   await page.locator("[data-log-older]").click();
   const secondIDs = runtimeLogPage(data, { min_level: "info", limit: "100", before }).records.map(record => record.id).reverse();
@@ -2801,11 +2803,11 @@ test("@compat default INFO logs appear immediately and keep polling through capt
   await expect(page.locator("#runtime-logs")).toContainText("Management service ready");
   expect(data.writes).toEqual([]);
   await page.locator("#lifecycle-toggle").click();
-  await expect(page.locator("#runtime-status")).toContainText("正在接管");
+  await expect(page.locator("#runtime-status")).toContainText("正在代理");
   await expect(page.locator("#runtime-logs")).toContainText("Starting traffic capture");
   await expect(page.locator("#runtime-logs")).toContainText("Traffic capture ready");
   await page.locator("#lifecycle-toggle").click();
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   if (await page.locator("#detail-dialog").isVisible()) await page.getByRole("button", { name: "关闭详情", exact: true }).click();
   await expect(page.locator("#runtime-logs")).toContainText("Traffic capture paused");
   await expect(page.locator("#runtime-logs")).toContainText("Management service ready");
@@ -2831,7 +2833,7 @@ test("@compat runtime logs filter sources, pause polling and render fields as sa
   data.logsUnavailable = true;
   await page.getByRole("button", { name: "刷新日志", exact: true }).click();
   await expect(page.getByText("日志暂不可用：logs temporarily unavailable")).toBeVisible();
-  await expect(page.locator("#runtime-status")).toContainText("已暂停");
+  await expect(page.locator("#runtime-status")).toContainText("已停用代理");
   expect(data.writes).toEqual([]);
 });
 
@@ -2859,7 +2861,7 @@ test("@compat Windows DNS recovery requires confirmation and never enables captu
   await navigateSettings(page, "network");
   await expect(page.locator("[data-system-dns-recovery]")).toContainText("owned-kone");
   await page.getByRole("button", { name: "恢复已验证的 DNS 记录", exact: true }).click();
-  await expect(page.locator("#detail-dialog")).toContainText("不会启用接管或修改 HTTP 代理");
+  await expect(page.locator("#detail-dialog")).toContainText("不会启用代理或修改 HTTP 代理");
   expect(data.writes.some(write => write.path === "/lifecycle/recover")).toBe(false);
   await page.getByRole("button", { name: "取消", exact: true }).click();
   await page.getByRole("button", { name: "恢复已验证的 DNS 记录", exact: true }).click();
@@ -2876,7 +2878,7 @@ for (const condition of ["remote", "read_only", "running"]) test(`DNS recovery c
   if (condition === "running") {
     data.state = "running";
     await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    await expect(page.locator("#runtime-status")).toContainText("正在接管");
+    await expect(page.locator("#runtime-status")).toContainText("正在代理");
   }
   await navigateSettings(page, "network");
   await expect(page.getByRole("button", { name: "恢复已验证的 DNS 记录", exact: true })).toBeDisabled();
@@ -3289,11 +3291,11 @@ test("@compat retained capture observations never claim live sampling after repe
   const data = await mount(page, { frozen: true, state: "paused" });
   await expect(page.locator(".metric-label").filter({ hasText: "上次采样上传 / 下载" })).toBeVisible();
   await expect(page.locator(".metric-label").filter({ hasText: "上次采样活动连接" })).toBeVisible();
-  await expect(page.getByText(/接管已停止：这里是/)).toContainText("不会继续实时更新");
+  await expect(page.getByText(/代理已停止：这里是/)).toContainText("不会继续实时更新");
   await expect(page.getByRole("button", {name: "上次采样速率", exact: true})).toBeVisible();
-  const note = await page.getByText(/接管已停止：这里是/).textContent();
+  const note = await page.getByText(/代理已停止：这里是/).textContent();
   await expect.poll(() => data.requests.filter((request) => request.path === "/traffic").length).toBeGreaterThan(1);
-  await expect(page.getByText(/接管已停止：这里是/)).toHaveText(note);
+  await expect(page.getByText(/代理已停止：这里是/)).toHaveText(note);
   await expect(page.locator(".metric-label").filter({ hasText: "实时上传 / 下载" })).toHaveCount(0);
   await expect(page.getByRole("button", {name: "实时速率", exact: true})).toHaveCount(0);
 });
@@ -3378,3 +3380,43 @@ for (const [description, classification, decision] of [
     expect(data.writes.every(write => write.path === "/rules/simulate")).toBe(true);
   });
 }
+
+for (const width of [1440, 390]) test(`@compat local access and grouped targets at ${width}px`, async ({ page }, testInfo) => {
+  const errors = [];
+  page.on("pageerror", error => errors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+  await page.setViewportSize({ width, height: 900 });
+  const data = await mount(page, { localAccess: true, loggedIn: false });
+  await expect(page.getByRole("switch", { name: "启用代理" })).toBeVisible();
+  await expect(page.locator("#main")).not.toContainText("登录 KONE 管理");
+  data.records.push({ ...data.records[2], id: "flow-f2", target: "UNSUPPORTED.example:8443", started_at: end });
+  data.state = "running";
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(page.getByRole("switch", { name: "启用代理" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("#exit-bandwidth")).toContainText("↑ 250 B/s");
+  await page.screenshot({ path: testInfo.outputPath("proxy-header.png"), fullPage: true });
+  await expect(page.locator("#main")).toContainText("2 次");
+  await navigate(page, "connections");
+  const group = page.getByRole("button", { name: "unsupported.example", exact: true });
+  await expect(group).toHaveCount(1);
+  await expect(group).toHaveAttribute("aria-expanded", "false");
+  await group.click();
+  await expect(group).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator(".target-cell").filter({ hasText: "unsupported.example:443" })).toBeVisible();
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect(group).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("body")).toHaveJSProperty("scrollWidth", await page.evaluate(() => document.documentElement.clientWidth));
+  await page.screenshot({ path: testInfo.outputPath("grouped-connections.png"), fullPage: true });
+  await navigate(page, "home");
+  await page.getByRole("button", { name: "详情", exact: true }).first().click();
+  await expect(page.locator(".target-cell")).toHaveCount(2);
+  await expect(group).toHaveAttribute("aria-expanded", "true");
+  expect(errors).toEqual([]);
+  data.loggedIn = false;
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await expect.poll(() => data.loggedIn).toBe(true);
+  await expect(page.getByRole("switch", { name: "启用代理" })).toBeVisible();
+  await expect(page.locator("#login-password")).toHaveCount(0);
+  await expect(group).toHaveAttribute("aria-expanded", "false");
+  expect(errors.filter(message => !message.includes("401 (Unauthorized)"))).toEqual([]);
+});
