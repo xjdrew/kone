@@ -32,7 +32,7 @@ race 回归任务，包括真实 Wintun、默认复用、注入 session 失败�
 
 [sing-box 1.15 的当前文档](https://sing-box.sagernet.org/configuration/inbound/tun/#stack) 已说明改用新版 sing-tun 自有 TCP/IP 栈，并弃用其 `stack` 配置；这是更新的依赖架构，不是当前固定基线的第四种模式。本次保留已验证的设备所有权与平台修补，不顺带升级内核/API，也不将新内核的性能说明作为 KONE 的性能承诺。
 
-Wintun 内嵌 DLL 为官方未修改的 0.14.1 二进制，使用 [预编译二进制许可](../licenses/WINTUN.txt)。
+Wintun 内嵌 DLL 为官方未修改的 0.14.1 二进制，使用 [预编译二进制许可](../../licenses/WINTUN.txt)。
 四个架构的文件均已与 [官方压缩包](https://wintun.net/builds/wintun-0.14.1.zip) 逐字节核对，
 压缩包 SHA-256 为 `07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51`。
 其他组件保留各自原始许可，二进制对应源码和依赖由 CI 源码包提供。

@@ -1,3 +1,9 @@
+# 2026/11/07
+
+## Changes
+
+- Consolidate user and developer guides, replace historical notes with current instructions, and define product and Web requirements for future redesigns, including transparent routing, performance and payload privacy goals.
+
 # 2026/11/01
 
 ## Features

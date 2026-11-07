@@ -1,6 +1,6 @@
 # Docker（Linux）
 
-源码镜像的构建和烟雾检查从仓库根目录统一执行 [just 开发任务](../../docs/development.md)：
+源码镜像的构建和烟雾检查从仓库根目录统一执行 [just 开发任务](../../docs/development/development.md)：
 
 ```sh
 just ci docker-build

@@ -84,7 +84,7 @@ stack = "system"
 # JSON 上限 32 MiB；MMDB 上限 64 MiB。builtin 时必须留空。
 # file = ""
 # 外部数据必填：整个解压后文件的 64 位小写 SHA256，启动前验证。
-# builtin 时留空；更换来源、文件或摘要需要重启。获取方式与许可见 docs/geoip.md。
+# builtin 时留空；更换来源、文件或摘要需要重启。获取方式与许可见 docs/user/configuration.md。
 # sha256 = ""
 
 # 出站数组只需声明代理，填写 name（规则引用的唯一名称）和 url 即可。

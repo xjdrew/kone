@@ -23,7 +23,7 @@ DNS 服务、sing-tun 协议栈、流处理器和出站执行器属于同一数�
 
 完整 `gvisor` 模式通过有界 channel endpoint 将 IP 报文交给 netstack，仅在协议栈初始化完成后开始投递报文，TUN 读写仍经过 KONE 的故障监督；断设备会进入同一停止/恢复链路。该桥接增加报文复制和固定容量队列，不代表比其他模式更快。system/mixed 的既有透明 TCP 路径和网关捕获能力保留。当前固定依赖仍是较早的三栈实现，不包含 sing-box 1.15 引入的新自有 TCP/IP 栈，见 [依赖与模式边界](sing-tun.md)。
 
-旧的自建报文分发器、NAT、TCP/UDP relay 和 `pkg/tcpip` 已删除。生产入口只沿 [stack.go](../pkg/kone/stack.go) → [flow.go](../pkg/kone/flow.go) → [outbounds.go](../pkg/kone/outbounds.go) 阅读；Fake-IP 地址池和 CIDR 匹配使用 `net/netip`。
+旧的自建报文分发器、NAT、TCP/UDP relay 和 `pkg/tcpip` 已删除。生产入口只沿 [stack.go](../../pkg/kone/stack.go) → [flow.go](../../pkg/kone/flow.go) → [outbounds.go](../../pkg/kone/outbounds.go) 阅读；Fake-IP 地址池和 CIDR 匹配使用 `net/netip`。
 
 ## 2. example.com 如何经 Fake-IP 往返
 
@@ -52,7 +52,7 @@ sequenceDiagram
 
 `[dns]` 可省略：启动前读取系统解析环境，热更新不重新发现已被 KONE 改写的 DNS。显式 `dns.servers` 可覆盖自动发现，`[[dns.rules]]` 可将私有后缀限定到指定解析器及接口；命中后不会因失败向公共解析器回退。DNS 客户端和服务端支持 UDP/TCP，上游 UDP 响应截断时重试 TCP。
 
-DNS 服务监听与引导系统使用该服务是两件事。Linux 通过自有 resolved link 引导默认解析，macOS 通过自有临时解析服务引导；先预检，监听就绪后才启用，停机前恢复。macOS 临时服务的会话或所有权失效会触发统一停止，防止引导失效后继续显示正常；Windows 保留自有适配器 DNS，不提供 `dns.system` 开关。不会解密应用自己的 DoH/DoT。LAN 客户端仍需按部署指南配置网关和 DNS。平台与内网边界见 [系统 DNS 引导](system-dns.md) 和 [验收记录](acceptance.md)。
+DNS 服务监听与引导系统使用该服务是两件事。Linux 通过自有 resolved link 引导默认解析，macOS 通过自有临时解析服务引导；先预检，监听就绪后才启用，停机前恢复。macOS 临时服务的会话或所有权失效会触发统一停止，防止引导失效后继续显示正常；Windows 保留自有适配器 DNS，不提供 `dns.system` 开关。不会解密应用自己的 DoH/DoT。LAN 客户端仍需按部署指南配置网关和 DNS。平台与内网边界见 [系统 DNS 引导](dns.md#系统-dns-引导) 和 [验收记录](../development/development.md#5-验收按风险定位)。
 
 Fake-IP 映射与配置快照独立：热更新保留虚拟地址，新流量按最新规则选择出站；活动会话固定其映射，避免地址过早改指其他域名。TUN 地址及其后继地址留给设备/协议栈，不参与分配；未知或已过期的 Fake-IP 会失败，不能凭地址猜测域名。协议/端口规则在 DNS 阶段只建立捕获入口，到业务流到达时再作最终决定。
 
@@ -104,7 +104,7 @@ sequenceDiagram
 
 代理路径通常有三段 TCP：客户端到 KONE、KONE 到代理、代理到目标，各自维护 TCP 状态。HTTPS CONNECT 额外加密代理传输；KONE 无需解密应用自己的 TLS。选择 `direct` 时直接连接真实目标，省去代理段，响应恢复过程相同；选择 `reject` 时不建立出站连接。
 
-代码：[DNS](../pkg/kone/dns.go)、[映射表](../pkg/kone/dns_table.go)、[地址池](../pkg/kone/dns_ip_pool.go)、[流处理器](../pkg/kone/flow.go)、[TCP 双向复制](../pkg/kone/copy.go)。
+代码：[DNS](../../pkg/kone/dns.go)、[映射表](../../pkg/kone/dns_table.go)、[地址池](../../pkg/kone/dns_ip_pool.go)、[流处理器](../../pkg/kone/flow.go)、[TCP 双向复制](../../pkg/kone/copy.go)。
 
 ## 3. UDP：先判断规则，再检查出站能力
 
@@ -170,11 +170,11 @@ sequenceDiagram
 
 ## 4. 网关、生命周期与统计边界
 
-Linux/Raspberry Pi 网关保留两种捕获方式：Fake-IP 子网/显式 CIDR 路由，或 `core.auto-route = true` 的两条 IPv4 `/1` 路由。后者保留原默认路由，更具体的系统路由仍优先；进入 TUN 后再按规则选择代理、直连或拒绝。管理员负责 LAN forwarding、DHCP、NAT/防火墙和回程路由，见[网关指南](guides/how-to-use-with-raspberry-pi.md)。
+Linux/Raspberry Pi 网关保留两种捕获方式：Fake-IP 子网/显式 CIDR 路由，或 `core.auto-route = true` 的两条 IPv4 `/1` 路由。后者保留原默认路由，更具体的系统路由仍优先；进入 TUN 后再按规则选择代理、直连或拒绝。管理员负责 LAN forwarding、DHCP、NAT/防火墙和回程路由，见[网关指南](../user/usage.md#6-linux--raspberry-pi-网关)。
 
-`core.outbound-interface` 把代理传输、直连 TCP/UDP 和默认上游 DNS 绑定到真实出口，避免再次被全局路由捕获；专用 DNS 可绑定所属接口。回环代理和本地 DNS stub 保留回环路径。Linux/macOS/Windows 显式设置 `core.ipv6-network` 后支持 Fake-AAAA、CIDR6、TCP/UDP 和独立的 IPv6 捕获路由；默认不启用，见 [IPv6 边界](ipv6.md)。未启用时，IPv6 业务可能绕过 KONE。
+`core.outbound-interface` 把代理传输、直连 TCP/UDP 和默认上游 DNS 绑定到真实出口，避免再次被全局路由捕获；专用 DNS 可绑定所属接口。回环代理和本地 DNS stub 保留回环路径。Linux/macOS/Windows 显式设置 `core.ipv6-network` 后支持 Fake-AAAA、CIDR6、TCP/UDP 和独立的 IPv6 捕获路由；默认不启用，见 [IPv6 边界](../user/configuration.md#4-tun出口与-ipv6)。未启用时，IPv6 业务可能绕过 KONE。
 
-`Run(ctx)` 统一拥有设备、协议栈、DNS/管理监听和路由：失败逆序回滚，取消或信号退出关闭活动流量、恢复自有网络设置、关闭设备并等待任务结束。不会删除他人设备/路由；强杀和断电无法执行清理。配置快照原子发布，域名规则、代理 URL 与 UDP 回退可以热更新；core、DNS、管理/日志或 CIDR 捕获变化要求重启。详见[运行可靠性](runtime.md)。
+数据面 `Run(ctx)` 统一拥有设备、协议栈、DNS 监听和路由；持久管理监听由控制层独立管理。数据面失败逆序回滚，取消或信号退出关闭活动流量、恢复自有网络设置、关闭设备并等待任务结束。不会删除他人设备/路由；强杀和断电无法执行清理。配置快照原子发布，域名规则、代理 URL 与 UDP 回退可以热更新；core、DNS、管理/日志或 CIDR 捕获变化要求重启。详见[运行可靠性](runtime.md)。
 
 TCP 和 UDP 都在流处理器中增量记账，长连接无需结束即可观察，零字节失败也有事件。上下行按客户端视角统计业务载荷，不把 IP/TCP 头、代理封装和主动诊断混进业务总量。明细有数量/时间上限，独立累计计数不随明细淘汰而丢失；进程归属异步查询，无法验证的 PID、远端来源或已退出进程显示未知。
 
@@ -186,7 +186,7 @@ CI 在三种协议栈下使用独立 LAN、网关、上游命名空间，验证�
 
 管理服务负责保存配置，数据面引擎负责应用配置。保存成功不代表已应用；应用成功也不代表某个目标已经可达。界面同时显示保存版本、运行版本和最近确认版本，写入携带基线版本并核对磁盘内容，避免覆盖另一页面或外部编辑。
 
-域名、出站和协议选择器可原子热更新；既有连接继续使用旧决定。在已观察的域名、CNAME 和地址中按最早显式规则选择策略，后面的默认规则不能覆盖更早的直连规则。临时域名规则带明确失效时间，失效后新连接按后续规则匹配；不会强拆旧连接或复用其 Fake-IP。涉及捕获路由、DNS 或核心设置的变化仍要求重启。GeoIP 数据先验证文件格式和预期 SHA256，保留所选来源/许可说明，再显式切换并保留上一版；规则快照固定数据版本，支持离线内置库及可选双栈 MMDB，见 [GeoIP 数据源](geoip.md)。
+域名、出站和协议选择器可原子热更新；既有连接继续使用旧决定。在已观察的域名、CNAME 和地址中按最早显式规则选择策略，后面的默认规则不能覆盖更早的直连规则。临时域名规则带明确失效时间，失效后新连接按后续规则匹配；不会强拆旧连接或复用其 Fake-IP。涉及捕获路由、DNS 或核心设置的变化仍要求重启。GeoIP 数据先验证文件格式和预期 SHA256，保留所选来源/许可说明，再显式切换并保留上一版；规则快照固定数据版本，支持离线内置库及可选双栈 MMDB，见 [GeoIP 数据源](../user/configuration.md#6-geoip-数据)。
 
 网络助手和普通权限管理服务核验本机通道访问控制、双方进程和可执行文件身份：Windows 使用随机命名管道，macOS 使用私有目录内的 Unix 套接字。实际 TUN 名称/索引在网络配置前持久记录，记录失败就回滚；助手失联也走引擎清理路径。系统授权等待不会无限占住管理生命周期锁，超时后迟来的助手不能绕过已关闭的通道启动接管。
 
@@ -198,7 +198,7 @@ CI 在三种协议栈下使用独立 LAN、网关、上游命名空间，验证�
 
 TCP 成功不等于应用成功。Shadowsocks AEAD 本身没有目标连接确认，连上代理传输只能显示待确认；目标 TLS 校验成功才构成该目标 TLS 可达的证据。代理连接的对端 IP 是代理服务器，不能当作真实目标 IP。只有直连失败且代理有目标可达证据时才建议调整规则，仍需用户确认。
 
-独立 UDP 诊断要求明确指定 DNS 服务器，只有匹配本次事务和问题的 UDP/DNS 响应才是往返证据，响应码和截断标志另行展示，不重试 TCP。HTTP/HTTPS 不支持 UDP 时直接报告能力不足，不采用业务回退策略，也不据此建议修改业务规则；它不证明 QUIC 或任意应用可用。目标、地址族、超时和请求限额见 [诊断说明](diagnostics.md)。
+独立 UDP 诊断要求明确指定 DNS 服务器，只有匹配本次事务和问题的 UDP/DNS 响应才是往返证据，响应码和截断标志另行展示，不重试 TCP。HTTP/HTTPS 不支持 UDP 时直接报告能力不足，不采用业务回退策略，也不据此建议修改业务规则；它不证明 QUIC 或任意应用可用。目标、地址族、超时和请求限额见 [诊断说明](../user/troubleshooting.md)。
 
 ## 7. 名词定义
 

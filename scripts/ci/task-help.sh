@@ -73,8 +73,8 @@ task_arguments() {
     coverage-check) usage+=' [base] [head]'; defaults='coverage-base.out coverage.out'; maximum=2; TASK_ARGS=("${1-coverage-base.out}" "${2-coverage.out}"); TASK_ARG_COUNT=2 ;;
     fuzz) usage+=' [duration]'; defaults='15s'; maximum=1; TASK_ARGS=("${1-15s}"); TASK_ARG_COUNT=1 ;;
     profile) usage+=' [profile] [binary]'; defaults='baseline/cpu.out baseline/kone.test'; maximum=2; TASK_ARGS=("${1-baseline/cpu.out}" "${2-baseline/kone.test}"); TASK_ARG_COUNT=2 ;;
-    geoip-convert) usage+=' <converter arguments>'; defaults='No conversion without explicit inputs; see docs/geoip.md.'; options+='; --input, --sha256, --release, --retrieved-at, --output-dir, --json'; minimum=1; maximum=100 ;;
-    windows-firewall-update) usage+=' <PowerShell script arguments>'; defaults='Explicit administrator action; see docs/windows/README.md.'; options+='; -Program <path>'; minimum=1; maximum=100 ;;
+    geoip-convert) usage+=' <converter arguments>'; defaults='No conversion without explicit inputs; see docs/user/configuration.md.'; options+='; --input, --sha256, --release, --retrieved-at, --output-dir, --json'; minimum=1; maximum=100 ;;
+    windows-firewall-update) usage+=' <PowerShell script arguments>'; defaults='Explicit administrator action; see docs/user/usage.md.'; options+='; -Program <path>'; minimum=1; maximum=100 ;;
     icons) usage+=' [mode]'; defaults='check'; options+='; generate | check'; maximum=1; TASK_ARGS=("${1-check}"); TASK_ARG_COUNT=1 ;;
     release-version) usage+=' [format] [sha]'; defaults='json HEAD'; options+='; json | version | next-tag; HEAD or complete lowercase commit SHA'; maximum=2; TASK_ARGS=("${1-json}" "${2-HEAD}"); TASK_ARG_COUNT=2 ;;
   esac

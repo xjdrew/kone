@@ -1,8 +1,49 @@
-# 系统 DNS 引导
+# DNS 解析与系统集成
+
+本文说明上游发现、私有解析和逐平台系统引导的实现边界。用户配置见 [TOML 配置](../user/configuration.md)。
+
+## 系统上下文与私有解析
+
+不配置 `[dns].servers` 时，KONE 在创建引擎、接管系统网络之前读取当前解析器及可见作用域。这个快照服务于正常解析和代理服务器主机名解析，不使用 Fake-IP 再解析代理服务器，也不会因专用解析器失败去查询公共 DNS。配置固定到本次引擎实例，换网或修改 DNS 后需要重新创建实例。
+
+| 平台 | 只读来源 | 可以表达的部分 |
+| --- | --- | --- |
+| Windows | `Get-DnsClientNrptPolicy -Effective`、DNS 客户端/服务器/搜索域、接口路由 | NRPT 的精确名称和后缀；网卡专用后缀、服务器与可确定的出口 |
+| Linux | `resolvectl domain/dns/dnsovertls/default-route` | systemd-resolved 的 per-link 路由域、搜索域、默认上游与传输边界 |
+| macOS | `scutil --dns` | 默认与 scoped resolver 的域名、搜索域、接口、地址和端口 |
+
+Windows NRPT 有超出普通 UDP/TCP DNS 的安全、IPsec、DirectAccess 和查询策略；这些不能仅靠复制服务器 IP 保证语义。Linux 的加密 DNS 及 macOS 的多播/特殊 resolver 也不直接改成普通 UDP。已知不能安全表达的 scope 保持不可用并显示原因，匹配请求失败；它不会改走默认公共 DNS。来源文档：[Microsoft NRPT](https://learn.microsoft.com/en-us/powershell/module/dnsclient/get-dnsclientnrptpolicy)、[systemd resolvectl](https://www.freedesktop.org/software/systemd/man/261/resolvectl.html)、[Apple scutil](https://github.com/apple-oss-distributions/configd/blob/main/scutil.tproj/scutil.8)。
+
+普通模式保留既有 systemd-resolved 本机 stub 时，可以继续由系统服务处理它原有的 VPN 路由与安全策略。启用 KONE 的系统 DNS 引导后，stub 可能指回 KONE，因此必须使用发现的真实上游；无法确定真实上游时阻止启用，不猜测一个公共服务器作为替代。
+
+macOS 已有 KONE 引导会话运行时，新启动的管理进程或数据面助手会只读核对 dynamic store 中的会话所有者、utun 和完整 DNS 配置，从上游快照排除该会话自己的监听地址，保留原有默认解析器及更具体的 VPN 域。无法核实所有权、配置在读取期间发生变化或原解析器不可见时，要求显式配置 DNS；不会仅凭回环地址猜测所有权。
+
+macOS 的普通默认和全域 supplemental resolver 按 `SearchOrder` 选择，数值小的优先，展示顺序不代表优先级；接口专用和具体域的 resolver 保持各自作用域。默认解析器的优先级或传输方式无法确定、同一最低优先级指向不同服务器时，要求显式配置，不随意选择一个服务器。
+
+所有发现命令只读取本机状态，总预算四秒、标准输出最多 1 MiB，错误输出不写入日志。最多接收 64 条自动/手工规则及每条 16 个服务器；超出可表达范围时拒绝不确定的自动解析并要求显式配置。原始操作系统快照不写入 TOML，也不会被伪装成用户配置。
+
+### 手工覆盖
+
+```toml
+[[dns.rules]]
+suffix = "corp.example"
+servers = ["10.0.0.53"]
+interface = "VPN"
+```
+
+使用实际网卡名称，留空沿用核心出口。手工规则优先于自动 scope；手工规则之间最长后缀优先。域名后缀使用 ASCII，国际化域名应填写 IDNA 的 punycode。匹配规则后只使用该组服务器，连不上、返回否定回答或接口失效都不会向公共默认上游回退。反向解析名称也可配置独立后缀。
+
+搜索域作为观察到的系统上下文展示，不由 KONE任意添加到查询名称；客户端发送展开后的完整名称。自动发现不涵盖全部按应用、VPN 厂商插件、DNS 代理或加密 DNS 配置。需要这些语义的环境应核对实际系统策略、状态警示和查询记录，再明确配置；不要把发现成功当作所有企业网络行为都已经复制。
+
+DNS 查询和失败是解析事件，不证明业务连接已经进入 TUN。解析接口、查询传输、实际使用的上游和缓存分别记录；本地 stub 的实际网络接口标为 loopback，不把其内部可能使用的公网解析器伪装成 KONE 直接访问的上游。
+
+真实 DNS 响应和 Fake-IP 映射分别过期。IP/CNAME 规则依赖的真实响应到期后，新查询或新连接重新解析和判定；访问虚拟地址不会续期真实 DNS 数据。刷新保留同一域名的 Fake-IP 和活动会话引用，已建立连接继续使用原先选定的目标；刷新失败不会改用已过期地址或其他解析器。
+
+## 系统 DNS 引导
 
 `dns.system` 将“运行一个 DNS 服务”和“引导本机系统查询该服务”分开。CLI/TOML 默认 `false`；Linux/macOS/Windows 管理模式首次初始化会选择 `true`，但仍需预检通过并由用户显式启用接管。既有配置的选择不会被重置。该设置不改变 HTTP/SOCKS 代理、DHCP、路由器或其他机器的 DNS。网关上的 LAN 客户端仍需由管理员配置 DNS/网关。
 
-## Linux：只管理本次创建的 TUN link
+### Linux：只管理本次创建的 TUN link
 
 当前引导支持 systemd-resolved。系统应用必须已经使用 `127.0.0.53` 或 `127.0.0.54` stub，KONE 不改写 `/etc/resolv.conf`。`busctl` 与运行中的 resolver 必须可用；服务进程必须能验证为与 KONE 处于同一网络命名空间，避免容器或网络命名空间中的程序误改宿主 DNS。无法验证时预检失败，用户可以明确关闭此选项并采用手工 DNS 方案。
 
@@ -20,7 +61,7 @@ KONE 在创建独占 TUN、配置路由并确认所有 IPv4/IPv6 UDP/TCP DNS 监
 
 退出或启动后段失败时，先恢复 DNS 引导，再关闭 DNS 监听。清理前检查 open TUN 的身份、接口 index、resolver 的唯一 owner/PID，以及自己管理的 link 配置快照。只逐项恢复修改过的 DNS、域、默认路由和本地安全模式，保留既有 LLMNR/mDNS/NTA；不使用会重置所有 link 属性的无条件 `revert`。其他程序已经改写或替换对象时保留其新状态并报告。TUN link 被移除后，resolved 的相应临时 link 配置也随之消失；这不需要清空全机 DNS 缓存。[官方说明](https://www.freedesktop.org/software/systemd/man/latest/resolvectl.html)
 
-## macOS：自有临时解析服务
+### macOS：自有临时解析服务
 
 macOS 实现使用独立 `scutil` 会话，以随机 UUID 创建 `State:/Network/Service/<UUID>/DNS` 临时值。它使用 `add key temporary`，键已存在就失败；不覆盖物理/VPN 服务、不调用 `networksetup`，也不持久改写全机 DNS。空的 `SupplementalMatchDomains` 配合优先级表示默认解析范围，更具体的原生 VPN/内网域仍优先。`ServerPort` 支持独立监听端口，相关字段见 [Apple DNS schema](https://developer.apple.com/documentation/systemconfiguration/dns-entity-keys)。
 
@@ -32,7 +73,7 @@ Darwin utun 是点对点设备，自有 DNS 的系统入口使用已独占监听
 
 生命周期同时监测会话死亡、自有键变化与 utun 身份变化；异常会触发统一停止，避免系统引导已消失而界面继续表示正常。一次性 macOS runner 对同一程序的 system/gvisor/mixed 逐栈验收临时原始解析器、实际系统顺序与查询、DNS 就绪后的故障恢复，以及运行中第二实例的原始上游发现；另有独立的精确子进程句柄终止和会话恢复验收，前后核对物理 DNS 与默认路由。结果以对应 SHA 的实际执行为准。特殊 VPN、应用自带解析器及部署环境仍需单独验收，不能从这些用例推断全部兼容。
 
-## Windows：独占的本地 NRPT 引导
+### Windows：独占的本地 NRPT 引导
 
 Windows 支持 `system = true`，要求 `listen-port = 53`。DNS 监听就绪后，KONE 为本次 Wintun 地址创建一条本地 NRPT 根规则 `.`，并确认它在有效策略中被选中。Windows DNS API 优先查询 NRPT；单纯降低适配器 metric 不能保证所有系统查询都选择该适配器。[Windows 名称解析顺序](https://learn.microsoft.com/windows/security/operating-system-security/network-security/vpn/vpn-name-resolution)
 
@@ -46,7 +87,7 @@ Windows 支持 `system = true`，要求 `listen-port = 53`。DNS 监听就绪后
 
 应用内部缓存、已缓存 Fake-IP、DoH/DoT 或其他旁路解析有各自的生存期。暂停接管与恢复系统 DNS 不会神奇地清除所有应用缓存，也不声称观察到绕开 KONE 的查询。
 
-## 验收隔离
+### 验收隔离
 
 确定性测试覆盖每个设置阶段失败、命令超时前已生效、外部 DNS/LLMNR 改动、设备复用、resolver 换代与命名空间不匹配。Linux 原生 CI 另起 network/mount namespace，私有 `/run`、resolver 配置、D-Bus 和 systemd-resolved，执行真实 OS stub → KONE Fake-IP → 停止恢复，以及 DNS 就绪后的服务故障；system/gvisor/mixed 分别运行。测试程序在任何写入前再次验证 namespace/resolver，不能借宿主 D-Bus 做假验收。
 
