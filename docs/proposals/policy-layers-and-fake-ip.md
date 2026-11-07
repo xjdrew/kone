@@ -1,8 +1,8 @@
 # Proposal：规则分层、目标一致性与 Fake-IP 稳定归属
 
-> 2026-11-08 实施更新：本提案的一期建议已进入当前开发分支。产品契约以 [PRD](../requirements/prd.md)、[Web 规格](../requirements/web-ui.md) 与 [DNS 实现说明](../technical/dns.md) 为准；以下保留提出问题时的推理及未来范围，不把后续自动应用、代理 DNS 或新协议视为已实现能力。
+> 2026-11-08 实施更新：本提案的一期建议已进入当前开发分支。产品契约以 [PRD](../requirements/prd.md)、[Web 规格](../requirements/web-ui.md) 与 [DNS 实现说明](../technical/dns.md) 为准；以下正文为历史设计推理与未来范围，不把后续自动应用、代理 DNS 或新协议视为已实现能力。
 
-日期：2026-11-07。状态：**待评审，供后续开发；未实施。** 基线：[master 8d018cd](https://github.com/xjdrew/kone/tree/8d018cd729f7417b7202a652c65a486ae0e2f33f)。问题编号沿用[研究报告第 3 节](../research/product-direction-2026-11-07.md#3-本次实验确认的四个边界)，用户已确认四个问题属实。
+原提案日期：2026-11-07。原始研究基线：[master 8d018cd](https://github.com/xjdrew/kone/tree/8d018cd729f7417b7202a652c65a486ae0e2f33f)。问题编号沿用[研究报告第 3 节](../research/product-direction-2026-11-07.md#3-本次实验确认的四个边界)，用户已确认四个问题属实。
 
 **建议采用固定四池：系统保护 → 域名 → IP → FINAL。** 同时必须补齐“需要解析时不能提前兜底”和“决定绑定具体地址”两个约束；只对规则重新排序不能完整修复 3.1、3.3。Fake-IP 建议采用稳定候选算法加持久地址归属，不能只换哈希函数。3.2 按用户决定保留为产品限制，后续写入用户手册。
 

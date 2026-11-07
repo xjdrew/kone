@@ -3,6 +3,7 @@ package kone
 import (
 	"fmt"
 	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,6 +91,12 @@ func TestFakeIPLedgerCapacityAndCommitFailureNeverPublishNewIdentity(t *testing.
 	first := table.Set("first.example", "direct")
 	require.NotNil(t, first)
 	require.Nil(t, table.Set("overflow.example", "direct"))
+	status := table.ownershipStatus()
+	require.True(t, status.Persistent)
+	require.True(t, status.Warning)
+	require.Equal(t, 1, status.Used)
+	require.Positive(t, status.StorageBytes)
+	require.Equal(t, int64(fakeLedgerLimit), status.StorageLimit)
 	require.Equal(t, first.IP, table.Set("first.example", "direct").IP)
 	other := ledgerTable(t, "10.204.0.1/24")
 	require.NoError(t, ledger.register(other))
@@ -98,6 +105,7 @@ func TestFakeIPLedgerCapacityAndCommitFailureNeverPublishNewIdentity(t *testing.
 	require.Empty(t, other.owners)
 	require.Empty(t, other.Snapshot())
 	require.Error(t, other.ownershipError)
+	require.NotEmpty(t, other.ownershipStatus().Error)
 }
 
 func TestFakeIPRuntimeRestoresAcrossEnginesAndRejectsRetiredPools(t *testing.T) {
@@ -224,4 +232,59 @@ func TestFakeIPLedgerProcessCrashRetainsPublishedIdentity(t *testing.T) {
 	require.NoError(t, ledger.register(table))
 	require.Equal(t, strings.TrimSpace(string(output)), table.Set("published.example", "direct").IP.String())
 	require.NotEqual(t, strings.TrimSpace(string(output)), table.Set("another.example", "direct").IP.String())
+}
+
+func TestFakeIPMigrationExcludesBothFamiliesAndRefusesExhaustion(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Core.IPv6Network = "fd7a:204::1/112"
+	cfg.DNS.RetiredPools = []string{"10.193.0.0/16", "fd7a:204:1::/112"}
+	ipv4, ipv6, err := FreshFakeIPNetworks(cfg)
+	require.NoError(t, err)
+	for _, raw := range []string{ipv4, ipv6} {
+		candidate := netip.MustParsePrefix(raw)
+		for _, old := range append(cfg.DNS.RetiredPools, cfg.Core.Network, cfg.Core.IPv6Network) {
+			require.False(t, candidate.Overlaps(netip.MustParsePrefix(old)))
+		}
+	}
+	cfg.DNS.RetiredPools = []string{"fd7a:204::/32"}
+	_, _, err = FreshFakeIPNetworks(cfg)
+	require.ErrorContains(t, err, "IPv6")
+	cfg.DNS.RetiredPools = []string{"10.0.0.0/8"}
+	_, _, err = FreshFakeIPNetworks(cfg)
+	require.ErrorContains(t, err, "IPv4")
+	cfg = DefaultConfig()
+	_, err = FromConfig(cfg, WithFakeIPDirectory("relative"))
+	require.ErrorContains(t, err, "absolute")
+	one, err := FromConfig(cfg, WithFakeIPDirectory(filepath.Join(t.TempDir(), "ledger")))
+	require.NoError(t, err)
+	require.NoError(t, one.Close())
+}
+
+func TestFakeIPGenerationAndStorageLimitsPreservePublishedOwners(t *testing.T) {
+	ledger, err := openFakeIPLedger(filepath.Join(t.TempDir(), "ledger"))
+	require.NoError(t, err)
+	defer ledger.Close()
+	table := ledgerTable(t, "10.203.0.1/24")
+	require.NoError(t, ledger.register(table))
+	first := table.Set("saved.example", "direct")
+	require.NotNil(t, first)
+	require.ErrorContains(t, ledger.retire("not a pool"), "invalid")
+	require.ErrorContains(t, ledger.retire("10.203.0.0/25"), "overlaps")
+	for i := 0; i < fakeLedgerPoolLimit-1; i++ {
+		require.NoError(t, ledger.retire(fmt.Sprintf("10.%d.0.0/24", 210+i)))
+	}
+	require.ErrorContains(t, ledger.retire("10.220.0.0/24"), "limit")
+	require.ErrorContains(t, ledger.register(ledgerTable(t, "10.220.0.1/24")), "limit")
+	ledger.size = fakeLedgerLimit // Simulate the persisted-byte limit without a 64 MiB fixture.
+	require.Nil(t, table.Set("capacity.example", "direct"))
+	require.Contains(t, table.ownershipStatus().Error, "capacity")
+	require.Equal(t, first.IP, table.Set("saved.example", "office").IP)
+	require.NoError(t, ledger.Close())
+	restored, err := openFakeIPLedger(ledger.directory)
+	require.NoError(t, err)
+	defer restored.Close()
+	next := ledgerTable(t, "10.203.0.1/24")
+	require.NoError(t, restored.register(next))
+	require.Equal(t, first.IP, next.Set("saved.example", "direct").IP)
+	require.NotContains(t, next.owners, "capacity.example")
 }
