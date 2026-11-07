@@ -83,3 +83,33 @@ func TestOutboundMonitorCancelsChangedConfigurationAndUsesCustomTarget(t *testin
 		t.Fatal("new target not tested")
 	}
 }
+
+func TestOutboundMonitorChecksEveryOutboundBeforeRepeatingOverdueEntries(t *testing.T) {
+	checked := make(chan string, 8)
+	c := testController(t, Options{Probe: func(_ context.Context, _ *kone.KoneConfig, name, _ string, _ bool) ProbeResult {
+		checked <- name
+		return ProbeResult{Status: "reachable", Stage: "connect"}
+	}})
+	savedHealthOutbound(t, c, "http://127.0.0.1:8080")
+	r := currentRequest(c)
+	r.Config["outbounds"] = []any{
+		map[string]any{"id": "office", "name": "office", "url": "http://127.0.0.1:8080"},
+		map[string]any{"id": "second", "name": "second", "url": "http://127.0.0.1:8081"},
+		map[string]any{"id": "third", "name": "third", "url": "http://127.0.0.1:8082"},
+	}
+	_, err := c.Save(r)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go c.monitorOutbounds(ctx, 120*time.Millisecond)
+	// Completing a pass takes longer than the interval. Earlier entries are
+	// already due again while later entries have not yet been checked.
+	for _, expected := range []string{"office", "second", "third"} {
+		select {
+		case actual := <-checked:
+			require.Equal(t, expected, actual)
+		case <-time.After(2 * time.Second):
+			t.Fatal("an outbound was starved by earlier overdue checks")
+		}
+	}
+}

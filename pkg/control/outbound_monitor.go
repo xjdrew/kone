@@ -64,9 +64,11 @@ func (c *Controller) monitorOutbounds(ctx context.Context, interval time.Duratio
 		}
 		wait := interval
 		var selected *kone.OutboundConfig
+		var selectedDue time.Time
 		identity := ""
 		now := c.now()
-		// Configuration order makes large outbound lists fair and predictable.
+		// Oldest due first: a slow or large list must not starve its tail when
+		// early entries become due again before a full pass has completed.
 		if !broken {
 			for _, outbound := range doc.Config.Outbounds {
 				key := outboundIdentity(doc.Config, outbound)
@@ -88,8 +90,10 @@ func (c *Controller) monitorOutbounds(ctx context.Context, interval time.Duratio
 					}
 				}
 				if !due.After(now) {
-					selected, identity = &outbound, key
-					break
+					if selected == nil || due.Before(selectedDue) {
+						selected, identity, selectedDue = &outbound, key, due
+					}
+					continue
 				}
 				if delay := due.Sub(now); delay < wait {
 					wait = delay
