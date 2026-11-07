@@ -16,19 +16,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TCP and UDP have separate port spaces. Allocate TCP first so its ephemeral
-// allocator avoids Windows' TCP exclusions, then hold it while binding UDP.
-// Release the whole attempt only for an actual cross-protocol clash.
+// TCP and UDP have separate port spaces. Reserve both before starting DNS.
+// Windows can exclude a dynamic UDP range even when TCP allocates it freely;
+// use the same low candidate range as native DNS fixtures on that platform.
+var dnsFixtureSequence atomic.Uint32
+
 func dnsFixtureAddressInUse(err error) bool {
 	// Windows exposes WSAEADDRINUSE rather than its POSIX compatibility errno.
 	return errors.Is(err, syscall.EADDRINUSE) || runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(10048))
 }
 
+func dnsFixturePortUnavailable(err error) bool {
+	return dnsFixtureAddressInUse(err) || runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(10013))
+}
+
 func bindDNSFixturePair(listenPacket func(string, string) (net.PacketConn, error), listenTCP func(string, string) (net.Listener, error)) (net.PacketConn, net.Listener, error) {
 	var conflict error
 	for range 32 {
-		tcp, err := listenTCP("tcp4", "127.0.0.1:0")
+		address := "127.0.0.1:0"
+		if runtime.GOOS == "windows" {
+			address = fmt.Sprintf("127.0.0.1:%d", 20000+int(dnsFixtureSequence.Add(1)%10000))
+		}
+		tcp, err := listenTCP("tcp4", address)
 		if err != nil {
+			if dnsFixturePortUnavailable(err) {
+				conflict = err
+				continue
+			}
 			return nil, nil, err
 		}
 		udp, err := listenPacket("udp4", tcp.Addr().String())
@@ -36,7 +50,7 @@ func bindDNSFixturePair(listenPacket func(string, string) (net.PacketConn, error
 			return udp, tcp, nil
 		}
 		tcp.Close()
-		if !dnsFixtureAddressInUse(err) {
+		if !dnsFixturePortUnavailable(err) {
 			return nil, nil, err
 		}
 		conflict = err
