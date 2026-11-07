@@ -38,6 +38,7 @@ type ConfigSnapshot struct {
 }
 
 type One struct {
+	smart                *smartCoordinator
 	ip                   net.IP
 	subnet               *net.IPNet
 	policy               atomic.Pointer[runtimeSnapshot]
@@ -66,6 +67,9 @@ type One struct {
 	captureIdentity      captureDeviceIdentity
 	initialGeoIP         *geoip.Database
 	systemDNSActive      atomic.Bool
+	fakeIPDirectory      string
+	fakeIPLedger         *fakeIPLedger
+	retiredPools         []netip.Prefix
 }
 
 type Option func(*One) error
@@ -120,6 +124,7 @@ func cloneConfig(cfg *KoneConfig) *KoneConfig {
 		copy.Rule[i].Ports = slices.Clone(cfg.Rule[i].Ports)
 	}
 	copy.DNS.Servers = slices.Clone(cfg.DNS.Servers)
+	copy.DNS.RetiredPools = slices.Clone(cfg.DNS.RetiredPools)
 	copy.DNS.SystemContext = cloneDNSSystemContext(cfg.DNS.SystemContext)
 	copy.DNS.Rules = slices.Clone(cfg.DNS.Rules)
 	for i := range copy.DNS.Rules {
@@ -206,7 +211,7 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 		}
 	}
 	rule := NewRuleWithGeoIP(cfg.Rule, cfg.Outbounds, database)
-	rule.protectPolicy(cfg)
+	one.protectRule(rule, cfg)
 	p.bypassEndpoints(rule)
 	one.policy.Store(&runtimeSnapshot{version: 1, cfg: cfg, rule: rule, outbounds: p, geoIP: database})
 	one.dnsTable = NewDnsTable(ip, subnet)
@@ -234,6 +239,7 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	if direct != nil {
 		p.directDial = one.endpointDialer(direct)
 	}
+	one.smart = newSmartCoordinator(one)
 	return one, nil
 }
 
@@ -269,12 +275,13 @@ func (one *One) ReloadVersion(cfg *KoneConfig, revision uint64) error {
 	p.dial = old.outbounds.dial
 	p.directDial = old.outbounds.directDial
 	rule := NewRuleWithGeoIP(cfg.Rule, cfg.Outbounds, old.geoIP)
-	rule.protectPolicy(cfg)
+	one.protectRule(rule, cfg)
 	p.bypassEndpoints(rule)
 	if err := one.reloadCaptureRoutes(cfg.Core, rule); err != nil {
 		return err
 	}
 	one.policy.Store(&runtimeSnapshot{version: old.version + 1, configVersion: revision, cfg: cfg, rule: rule, outbounds: p, geoIP: old.geoIP, previousGeoIP: old.previousGeoIP})
+	one.smart.invalidate()
 	one.clearDirectDNSCaches()
 	return nil
 }
@@ -293,6 +300,9 @@ func (one *One) Close() error {
 	}
 	one.mu.Unlock()
 	if closeUnstarted {
+		if one.fakeIPLedger != nil {
+			one.cleanupErr = one.fakeIPLedger.Close()
+		}
 		if one.flows != nil {
 			one.flows.close()
 		}
@@ -374,6 +384,7 @@ func (one *One) Run(parent context.Context) (result error) {
 		}
 		one.flows.workers.Wait()
 		wg.Wait()
+		cleanup = append(cleanup, one.fakeIPLedger.Close())
 		one.freezeObservation()
 		one.mu.Lock()
 		one.cleanupErr = errors.Join(cleanup...)
@@ -385,6 +396,13 @@ func (one *One) Run(parent context.Context) (result error) {
 		return nil
 	}
 	cfg := one.policy.Load().cfg
+	if cfg.DNS.PersistentFakeIP {
+		if err := one.restoreFakeIPOwnership(); err != nil {
+			return &CaptureSetupError{Code: "fake_ip_ownership", Cause: err}
+		}
+	} else if err := one.verifyVolatileFakeIPPools(); err != nil {
+		return &CaptureSetupError{Code: "fake_ip_ownership", Cause: err}
+	}
 	guideSystemDNS := cfg.DNS.SystemEnabled()
 	if guideSystemDNS {
 		if _, ok := one.network.(SystemDNSConfigurer); !ok {
@@ -528,6 +546,7 @@ func (one *One) Run(parent context.Context) (result error) {
 	}
 	start("DNS cache", func() error { return one.dns.Maintain(ctx) })
 	close(one.ready)
+	start("Smart observations", func() error { return one.smart.run(ctx, device.Name()) })
 	select {
 	case err := <-errorsCh:
 		if ctx.Err() == nil {

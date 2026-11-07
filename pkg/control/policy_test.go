@@ -139,13 +139,11 @@ func TestPolicyCustomConversionAndNativeUDPScope(t *testing.T) {
 	_, err := preparePolicy(input, current)
 	require.ErrorContains(t, err, "explicitly confirm")
 	input.ConvertCustom = true
-	save, err := preparePolicy(input, current)
-	require.NoError(t, err)
-	next, err := prepareDocument(save, current)
-	require.NoError(t, err)
-	require.Equal(t, "custom", next.Config.Rule[0].ID)
-	require.Empty(t, next.Config.Rule[0].Protocol)
-	require.Empty(t, next.Config.Rule[0].Ports)
+	_, err = preparePolicy(input, current)
+	require.ErrorContains(t, err, "without losing its scope")
+	require.Equal(t, "tcp", current.Config.Rule[0].Protocol)
+	// Native UDP scope is independent of the legacy conditional FINAL guard.
+	current.Config.Rule = []kone.RuleConfig{{Schema: "FINAL", Outbound: kone.BuiltinDirect}}
 	current.Config.Outbounds = []kone.OutboundConfig{{Name: "socks", URL: "socks5://127.0.0.1:1080", UDPFallback: "direct"}}
 	input.Mode, input.Outbound, input.Interface, input.IPv4Only = "proxy-first", "socks", "test-uplink", true
 	_, err = preparePolicy(input, current)

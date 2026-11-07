@@ -70,7 +70,12 @@ export function OutboundsView() {
   }
   async function remove(outbound: Outbound) {
     const doc = context.document;
-    if (!doc || doc.config.rules.some((rule) => rule.outbound === outbound.name)) return;
+    if (
+      !doc ||
+      doc.config.policy?.["preferred-proxy-id"] === outbound.id ||
+      doc.config.rules.some((rule) => rule.outbound === outbound.name)
+    )
+      return;
     setError(null);
     try {
       await context.save(doc, {
@@ -128,6 +133,8 @@ export function OutboundsView() {
               const refs = context.document!.config.rules.filter(
                 (rule) => rule.outbound === outbound.name,
               ).length;
+              const preferred =
+                context.document!.config.policy?.["preferred-proxy-id"] === outbound.id;
               const endpoint = fields(outbound.url);
               return (
                 <tr key={outbound.id}>
@@ -140,6 +147,7 @@ export function OutboundsView() {
                       {outbound.name}
                     </button>
                     <small className="muted"> {t("rules.reference", { count: refs })}</small>
+                    {preferred && <small className="muted"> {t("smart.preferred")}</small>}
                   </td>
                   <td className="mono">
                     {schemes[endpoint.scheme as keyof typeof schemes]}
@@ -195,8 +203,8 @@ export function OutboundsView() {
                       </Button>
                       <Button
                         tone="quiet"
-                        disabled={!context.admin}
-                        title={t("outbounds.disableHint")}
+                        disabled={!context.admin || preferred}
+                        title={t(preferred ? "smart.preferredInUse" : "outbounds.disableHint")}
                         onClick={() => {
                           const doc = context.document!;
                           setError(null);
@@ -216,8 +224,14 @@ export function OutboundsView() {
                       </Button>
                       <Button
                         tone="quiet"
-                        disabled={!context.admin || refs > 0}
-                        title={refs ? t("rules.reference", { count: refs }) : undefined}
+                        disabled={!context.admin || refs > 0 || preferred}
+                        title={
+                          preferred
+                            ? t("smart.preferredInUse")
+                            : refs
+                              ? t("rules.reference", { count: refs })
+                              : undefined
+                        }
                         onClick={() => {
                           void remove(outbound);
                         }}

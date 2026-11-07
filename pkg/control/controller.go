@@ -249,7 +249,12 @@ func (c *Controller) settingsPath() string { return filepath.Join(c.directory, "
 func managementDefaults() *kone.KoneConfig {
 	cfg := kone.DefaultConfig()
 	cfg.Policy.Mode = "direct-first"
+	cfg.Policy.RuleVersion = 2
+	cfg.DNS.PersistentFakeIP = true
 	cfg.Core.IPv6Network = kone.DefaultIPv6Network()
+	if ipv4, ipv6, err := kone.FreshFakeIPNetworks(cfg); err == nil {
+		cfg.Core.Network, cfg.Core.IPv6Network = ipv4, ipv6
+	}
 	cfg.Rule = []kone.RuleConfig{{ID: "rule-default-direct", Source: "default", Schema: "FINAL", Outbound: kone.BuiltinDirect}}
 	cfg.DNS.System = kone.SupportsSystemDNS()
 	if kone.SupportsSystemDNS() {

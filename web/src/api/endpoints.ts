@@ -58,6 +58,17 @@ export const api = {
         listen_address: string;
         system_active: boolean;
         system_requested: boolean;
+        fake_ip_pools?: {
+          prefix: string;
+          persistent: boolean;
+          storage_bytes?: number;
+          storage_limit?: number;
+          used: number;
+          capacity: number;
+          warning: boolean;
+          error?: string;
+        }[];
+        retired_fake_ip_pools?: string[];
       };
       interfaces: { address: string; interface: string }[];
     }>("/dns/configuration", { signal }),

@@ -15,6 +15,9 @@ import (
 func captureRoutes(cfg CoreConfig, rule *Rule) []string {
 	seen := map[string]bool{}
 	add := func(prefix string) { seen[prefix] = true }
+	for _, prefix := range rule.retired {
+		add(prefix.String())
+	}
 	if cfg.AutoRoute {
 		add("0.0.0.0/1")
 		add("128.0.0.0/1")

@@ -188,6 +188,42 @@ export function ResolverFields({
           )}
         </div>
       </section>
+      <section className={styles.section}>
+        <h3>{t("resolvers.ownership")}</h3>
+        <div>
+          <p className={styles.description}>
+            {t(dns["persistent-fake-ip"] ? "resolvers.ownershipHint" : "resolvers.volatileHint")}
+          </p>
+          {current?.fake_ip_pools?.map((pool) => (
+            <div key={pool.prefix} className={styles.addresses}>
+              <code>{pool.prefix}</code>
+              <span>
+                {pool.used} / {pool.capacity}
+              </span>
+              {pool.warning && (
+                <span className={styles.warning} role="alert">
+                  {t("resolvers.poolCapacity")}
+                </span>
+              )}
+              {pool.error && <Details value={pool.error} />}
+            </div>
+          ))}
+          {!!current?.fake_ip_pools?.[0]?.storage_limit && (
+            <p className={styles.description}>
+              {t("resolvers.ledgerSize", {
+                used: ((current.fake_ip_pools[0].storage_bytes ?? 0) / 1048576).toFixed(1),
+                limit: ((current.fake_ip_pools[0].storage_limit ?? 0) / 1048576).toFixed(0),
+              })}
+            </p>
+          )}
+          {!!current?.retired_fake_ip_pools?.length && (
+            <p className={styles.description}>
+              {t("policy.retiredPools")}:{" "}
+              <span className="mono">{current.retired_fake_ip_pools.join(", ")}</span>
+            </p>
+          )}
+        </div>
+      </section>
       <details className={styles.advanced}>
         <summary>{t("resolvers.advanced")}</summary>
         <h3>{t("settings.privateDNS")}</h3>

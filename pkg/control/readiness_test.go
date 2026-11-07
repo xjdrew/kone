@@ -136,7 +136,7 @@ func TestRunningCaptureRejectsNetworkChangesAndHotApplyCanRetryTheSavedVersion(t
 func TestProxyToDirectEditAppliesWithoutConfirmation(t *testing.T) {
 	c := testController(t, Options{})
 	request := currentRequest(c)
-	request.Config["policy"] = map[string]any{"mode": "custom"}
+	request.Config["policy"].(map[string]any)["mode"] = "custom"
 	request.Config["outbounds"] = []any{map[string]any{"name": "Primary", "url": "http://127.0.0.1:18080"}}
 	request.Config["rules"] = []any{map[string]any{"type": "FINAL", "outbound": "Primary"}}
 	_, err := c.Save(request)

@@ -52,7 +52,7 @@ ipv4-only = true # 明确仅接管 IPv4；完整 IPv6 需 core 对应网段和 a
 udp-exception = false # HTTP 的 UDP 直连回退必须显式同意
 ```
 
-此片段还需要 `core.auto-route = true`、真实 `outbound-interface`、已启用的代理出站和指向该出站的无条件 FINAL。`direct-first` 的 FINAL 为 `direct`。已有文件省略 `[policy]` 时保持旧行为；有条件 FINAL 或无法无损识别的配置显示自定义，只有确认转换才替换原兜底条件。旧程序会严格拒绝不认识的新字段，回退需恢复旧备份。
+此片段还需要 `core.auto-route = true`、真实 `outbound-interface`、已启用的代理出站和指向该出站的无条件 FINAL。`direct-first` 的 FINAL 为 `direct`。已有文件省略 `[policy]` 时保持旧行为；有条件 FINAL 或无法无损识别的配置显示高级兜底，须先显式编辑原兜底条件。旧程序会严格拒绝不认识的新字段，回退需恢复旧备份。
 
 回环 `127.0.0.0/8`、`::1` 和本机真实单地址保留防回环保护。首次采用全局策略时，在已有用户规则之后、FINAL 之前生成局域网 `direct` 默认规则（私网、直连子网与本地发现范围）；这些是普通规则，可修改、移动或删除，后续保存/重启不会补回。代理远端内网时，在这些默认项之前添加代理规则，或删除对应 direct 项。旧全局 profile 升级时自动补入一次并保留备份，`lan-defaults-initialized` 记录初始化状态。
 
@@ -78,7 +78,7 @@ URL 必须带端口。SS 支持 `aes-128-gcm`、`aes-256-gcm`、`chacha20-ietf-p
 
 在出站编辑器的“自动连通性检查”中修改目标或关闭。对应字段为 `check-enabled`（默认 true）、`check-target`（默认 `example.com:443`）、`check-tls`（默认 true）。纯 TCP 服务应关闭目标 TLS，例如 Telegram 的 `149.154.167.50:443`。Shadowsocks 仅建立加密传输而没有目标响应时只能报告未知，不能当作目标可达。文件模式没有后台管理检查。
 
-规则按顺序匹配：
+规则池内按顺序匹配；`policy.rule-version = 2` 固定系统保护 → 原始域名/关联 CNAME → IP → FINAL。省略或设置为 1 时保持旧全局顺序。
 
 | `type` | `pattern` |
 | --- | --- |
@@ -88,6 +88,26 @@ URL 必须带端口。SS 支持 `aes-128-gcm`、`aes-256-gcm`、`chacha20-ietf-p
 | `FINAL` | 不填；若存在必须放最后，省略时隐式直连 |
 
 可用 `protocol`、`ports` 限定业务 TCP/UDP 与目标端口；域名解析阶段可能先分配 Fake-IP，实际流量进入后再匹配条件。可选 `id` 保持稳定身份；域名类临时规则可设 RFC3339 `expires-at`，到期只影响新连接，CIDR/GEOIP/FINAL 不支持临时到期。
+
+### 分层版本与 Smart
+
+```toml
+[policy]
+mode = "direct-first"
+rule-version = 2
+preferred-proxy-id = "office-id" # 对应 [[outbounds]].id，不是显示名
+
+[policy.smart]
+enabled = false
+
+[dns]
+persistent-fake-ip = true
+# retired-fake-ip-pools = ["10.192.0.0/16"]
+```
+
+以上是配置片段，应合并到现有同名段落。Smart 仅提供建议；没有首选代理时仍可观察直连，但不会声称代理可修复。默认代理模式的首选代理必须与 FINAL 出口一致。
+
+新管理配置默认使用分层规则和持久地址归属。旧配置通过“路由策略 → 升级分层规则”预览迁移，先暂停接管：规则 ID 和池内顺序保留，域名规则会先于原本更靠前的 IP 规则；旧内存池换成不重叠的新池，并列入退役池。退役地址仍捕获并拒绝，应用应重新解析。不要手动关闭持久化并复用同一池，也不要仅还原旧归属备份；需要保留完整最新状态或显式使用新池。
 
 ## 4. TUN、出口与 IPv6
 

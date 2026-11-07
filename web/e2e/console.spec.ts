@@ -529,3 +529,90 @@ test("@compat Resolvers separates Host and Gate from automatic upstream selectio
   expect(data.document.config.dns.system).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test("@compat Smart stays in policy context and previews a narrow rule before accepting", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  data.document.config.policy = {
+    mode: "direct-first",
+    "rule-version": 2,
+    smart: { enabled: true },
+  };
+  const evidence = {
+    id: "suggestion-one",
+    domain: "service.example",
+    status: "ready",
+    suggested_action: "proxy",
+    outbound: "office",
+    config_version: data.document.version,
+    network_generation: "current-network",
+    interface: "eth0",
+    expires_at: new Date(Date.now() + 240000).toISOString(),
+    candidates: ["8.8.8.8"],
+    samples: [
+      {
+        ip: "8.8.8.8",
+        outbound: "direct",
+        status: "failed",
+        stage: "connect",
+        duration_ms: 3000,
+        time: new Date().toISOString(),
+        verified_tls: false,
+      },
+      {
+        ip: "8.8.8.8",
+        outbound: "office",
+        status: "reachable",
+        stage: "target_tls",
+        duration_ms: 124,
+        time: new Date().toISOString(),
+        verified_tls: true,
+      },
+    ],
+  };
+  const actions: string[] = [];
+  await page.route("**/api/v1/smart", async (route) => {
+    const body = route.request().postDataJSON();
+    if (body) actions.push(body.action);
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        body?.action === "preview"
+          ? {
+              suggestion: evidence,
+              rule: {
+                type: "DOMAIN",
+                pattern: evidence.domain,
+                outbound: "office",
+                protocol: "tcp",
+                ports: [443],
+              },
+            }
+          : body?.action === "accept"
+            ? { ...data.document, applied: true }
+            : {
+                enabled: true,
+                status: "observing",
+                attempts: 4,
+                dropped: 0,
+                suggestions: [evidence],
+              },
+      ),
+    });
+  });
+  await page.goto("/#/policy");
+  await page.getByRole("button", { name: /service.example/ }).click();
+  await expect(page.getByText("Target TLS verified", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Port 443 is a Web default/)).toBeVisible();
+  await page.getByRole("button", { name: "Preview rule", exact: true }).click();
+  await expect(page.getByText(/DOMAIN service.example/)).toBeVisible();
+  await expect(page.getByText(/cached real IPs may need/)).toBeVisible();
+  expect(actions).toEqual(["preview"]);
+  await page.getByRole("button", { name: "Accept and save rule" }).click();
+  await expect.poll(() => actions).toEqual(["preview", "accept"]);
+  await expect(page).toHaveURL(/#\/policy/);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("heading", { name: "Routing policy", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

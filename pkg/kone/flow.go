@@ -114,6 +114,9 @@ func (h *flowHandler) destination(ctx context.Context, s *runtimeSnapshot, desti
 }
 
 func (h *flowHandler) resolveDestination(ctx context.Context, s *runtimeSnapshot, destination M.Socksaddr, udp bool, observation *ObservedFlow) (flowTarget, error) {
+	if s.rule.layered {
+		return h.resolveLayeredDestination(ctx, s, destination, udp, observation)
+	}
 	target := flowTarget{}
 	destination = destination.Unwrap()
 	if !destination.Addr.Is4() && (!destination.Addr.Is6() || h.one.dnsTable6 == nil) {

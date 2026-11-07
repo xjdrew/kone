@@ -126,7 +126,7 @@ func TestCorruptProfileIsPreservedUntilExplicitRepair(t *testing.T) {
 func TestCaptureLifecycleVersionsAndUndo(t *testing.T) {
 	c := testController(t, Options{})
 	legacy := currentRequest(c)
-	legacy.Config["policy"] = map[string]any{"mode": "custom"}
+	legacy.Config["policy"].(map[string]any)["mode"] = "custom"
 	_, saveErr := c.Save(legacy)
 	require.NoError(t, saveErr)
 	require.NoError(t, c.Start(context.Background()))
@@ -212,7 +212,7 @@ func TestStartupFailuresKeepManagementAndRollback(t *testing.T) {
 func TestConfigValidationAndExternalConflict(t *testing.T) {
 	c := testController(t, Options{})
 	r := currentRequest(c)
-	r.Config["core"].(map[string]any)["network"] = "10.193.0.1/16"
+	r.Config["core"].(map[string]any)["network"] = "10.202.0.1/16"
 	result, err := c.Validate(r)
 	require.NoError(t, err)
 	require.True(t, result["restart_required"].(bool))

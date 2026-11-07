@@ -73,6 +73,7 @@ func matchesTraffic(record *FlowRecord, query TrafficQuery) bool {
 }
 
 func cloneFlowRecord(record FlowRecord) FlowRecord {
+	record.AuthorizedCandidates = append([]string(nil), record.AuthorizedCandidates...)
 	if record.ProcessObservedAt != nil {
 		value := *record.ProcessObservedAt
 		record.ProcessObservedAt = &value

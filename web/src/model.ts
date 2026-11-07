@@ -80,6 +80,8 @@ export interface DNSRule {
   reason?: string;
 }
 export interface DNSConfig {
+  "persistent-fake-ip"?: boolean;
+  "retired-fake-ip-pools"?: string[];
   mode?: "host" | "gate";
   "listen-address"?: string;
   system: boolean;
@@ -101,7 +103,14 @@ export interface Config {
   geoip: Record<string, Json>;
   outbounds: Outbound[];
   rules: Rule[];
-  policy?: { mode: string; "ipv4-only"?: boolean; "udp-exception"?: boolean };
+  policy?: {
+    "rule-version"?: number;
+    "preferred-proxy-id"?: string;
+    smart?: { enabled: boolean };
+    mode: string;
+    "ipv4-only"?: boolean;
+    "udp-exception"?: boolean;
+  };
 }
 export interface Inbound {
   id: string;
@@ -173,6 +182,9 @@ export interface Flow {
   rule_name: string;
   rule_source: string;
   rule_order: number;
+  decision_pool?: string;
+  decision_evidence?: string;
+  authorized_candidates?: string[];
   expected_outbound: string;
   effective_outbound: string;
   attempted_outbound?: string;
@@ -293,6 +305,8 @@ export interface Readiness {
   warnings: ReadinessCheck[];
 }
 export interface PolicyState {
+  rule_version?: number;
+  persistent_fake_ip?: boolean;
   mode: string;
   outbound: string;
   explicit: boolean;
@@ -305,6 +319,7 @@ export interface PolicyState {
   protection: { prefix: string; interface?: string; kind: string }[];
 }
 export interface PolicyRequest {
+  upgrade_rules?: boolean;
   base_version: number;
   mode: string;
   outbound: string;
@@ -315,6 +330,10 @@ export interface PolicyRequest {
   convert_custom: boolean;
 }
 export interface PolicyPlan extends Validation {
+  rule_version?: number;
+  fake_ip_networks?: string[];
+  retired_fake_ip_pools?: string[];
+  cross_pool_changes?: [string, string][];
   config: Config;
   base_version: number;
   mode: string;

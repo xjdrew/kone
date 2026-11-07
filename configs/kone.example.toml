@@ -9,6 +9,8 @@
 
 # 可选基础策略元数据；省略保持旧配置行为，管理新配置默认 direct-first。
 # [policy]
+# rule-version = 1 # legacy ordered rules; 2: protection, domain, IP, FINAL
+# preferred-proxy-id = "" # stable [[outbounds]].id, shared by Global FINAL and Smart
 # mode = "direct-first" # direct-first / proxy-first / custom；须与无条件 FINAL 一致
 # ipv4-only = false # proxy-first 默认覆盖可用 IPv6；仅 IPv4 时须显式 true
 # udp-exception = false # HTTP/HTTPS 出站的 UDP direct 回退须显式同意
@@ -16,6 +18,9 @@
 
 # 管理模式首次使用全局策略后记录此标记；局域网直连规则可编辑，删除后不会补回。
 # lan-defaults-initialized = false
+
+# [policy.smart]
+# enabled = false # opt-in public TCP/443 + TLS suggestions; never auto-applies rules
 
 [core]
 # 新建的 TUN 名称；空字符串自动分配。macOS 指定时必须使用 utunN。
@@ -48,6 +53,8 @@ stack = "system"
 # [dns] 整段可省略；默认在启动前读取当前系统 DNS，用于真实域名解析。
 # 系统上游会固定到本次运行，规则热更新不会重读已指向 KONE 的网卡 DNS。
 # [dns]
+# persistent-fake-ip = false # v2: durable address ownership, administrator-owned host storage
+# retired-fake-ip-pools = [] # migration tombstones; old cached IPs remain captured and rejected
 # 模式：host 接管本机 DNS；gate 只向局域网提供 DNS，系统 DNS 保持不变。
 # 管理模式新配置默认 host。空值仅兼容旧 CLI 配置，此时由 system 决定是否接管。
 # mode = ""

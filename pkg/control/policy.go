@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"slices"
 
@@ -11,6 +12,7 @@ import (
 )
 
 type policyRequest struct {
+	UpgradeRules  bool   `json:"upgrade_rules"`
 	BaseVersion   uint64 `json:"base_version"`
 	Mode          string `json:"mode"`
 	Outbound      string `json:"outbound"`
@@ -57,7 +59,7 @@ func (c *Controller) policyState() map[string]any {
 			interfaces = append(interfaces, iface.Name)
 		}
 	}
-	return map[string]any{"mode": mode, "outbound": outbound, "explicit": doc.Config.Policy.Mode != "", "version": doc.Version, "ipv4_only": doc.Config.Policy.IPv4Only, "udp_exception": doc.Config.Policy.UDPException, "interface": doc.Config.Core.OutboundInterface, "interfaces": interfaces, "ipv6_available": kone.DefaultIPv6Network() != "", "protection": policyProtection(doc.Config)}
+	return map[string]any{"rule_version": doc.Config.Policy.RuleVersion, "persistent_fake_ip": doc.Config.DNS.PersistentFakeIP, "mode": mode, "outbound": outbound, "explicit": doc.Config.Policy.Mode != "", "version": doc.Version, "ipv4_only": doc.Config.Policy.IPv4Only, "udp_exception": doc.Config.Policy.UDPException, "interface": doc.Config.Core.OutboundInterface, "interfaces": interfaces, "ipv6_available": kone.DefaultIPv6Network() != "", "protection": policyProtection(doc.Config)}
 }
 
 func preparePolicy(request policyRequest, current Document) (SaveRequest, error) {
@@ -75,14 +77,41 @@ func preparePolicy(request policyRequest, current Document) (SaveRequest, error)
 	if mode == "custom" && !request.ConvertCustom {
 		return SaveRequest{}, errors.New("explicitly confirm conversion of a custom final rule")
 	}
+	if len(cfg.Rule) > 0 {
+		last := cfg.Rule[len(cfg.Rule)-1]
+		if last.Schema == "FINAL" && (last.Protocol != "" || len(last.Ports) > 0 || last.ExpiresAt != "" || last.Outbound == kone.BuiltinReject) {
+			return SaveRequest{}, errors.New("advanced FINAL cannot be converted without losing its scope; edit the advanced fallback rule first")
+		}
+	}
 	final := kone.RuleConfig{ID: "rule-default-policy", Source: "policy", Schema: "FINAL", Outbound: kone.BuiltinDirect}
 	if len(cfg.Rule) > 0 && cfg.Rule[len(cfg.Rule)-1].Schema == "FINAL" {
 		final.ID = cfg.Rule[len(cfg.Rule)-1].ID
 		cfg.Rule = cfg.Rule[:len(cfg.Rule)-1]
 	}
-	cfg.Policy = kone.PolicyConfig{Mode: request.Mode, IPv4Only: request.IPv4Only, UDPException: request.UDPException, LANDefaults: cfg.Policy.LANDefaults}
+	cfg.Policy.Mode, cfg.Policy.IPv4Only, cfg.Policy.UDPException = request.Mode, request.IPv4Only, request.UDPException
+	if request.UpgradeRules {
+		cfg.Policy.RuleVersion = 2
+		if !cfg.DNS.PersistentFakeIP {
+			ipv4, ipv6, err := kone.FreshFakeIPNetworks(cfg)
+			if err != nil {
+				return SaveRequest{}, err
+			}
+			for _, value := range []string{cfg.Core.Network, cfg.Core.IPv6Network} {
+				if prefix, err := netip.ParsePrefix(value); err == nil {
+					cfg.DNS.RetiredPools = append(cfg.DNS.RetiredPools, prefix.Masked().String())
+				}
+			}
+			cfg.Core.Network, cfg.Core.IPv6Network = ipv4, ipv6
+			cfg.DNS.PersistentFakeIP = true
+		}
+	}
 	if request.Mode == "proxy-first" {
 		final.Outbound = request.Outbound
+		for _, out := range cfg.Outbounds {
+			if out.Name == request.Outbound {
+				cfg.Policy.PreferredProxyID = out.ID
+			}
+		}
 		cfg.Core.AutoRoute = true
 		cfg.Core.OutboundInterface = request.Interface
 		if cfg.Core.IPv6Network == "" && !request.IPv4Only {
@@ -175,6 +204,10 @@ func (c *Controller) policyRoute(w http.ResponseWriter, r *http.Request, apply b
 		return
 	}
 	validation["protection"] = policyProtection(candidate.Config)
+	validation["rule_version"] = candidate.Config.Policy.RuleVersion
+	validation["fake_ip_networks"] = []string{candidate.Config.Core.Network, candidate.Config.Core.IPv6Network}
+	validation["retired_fake_ip_pools"] = candidate.Config.DNS.RetiredPools
+	validation["cross_pool_changes"] = crossPoolChanges(current.Config.Rule)
 	preserved := len(current.Config.Rule)
 	if preserved > 0 && current.Config.Rule[preserved-1].Schema == "FINAL" {
 		preserved--
@@ -204,4 +237,24 @@ func initializeLANRules(cfg *kone.KoneConfig) bool {
 		cfg.Rule = append(cfg.Rule, rule)
 	}
 	return true
+}
+
+// List concrete pairs whose cross-pool priority changes; preserve IDs and each
+// pool's order. The UI also explains original-query precedence over CNAME.
+func crossPoolChanges(rules []kone.RuleConfig) [][2]string {
+	changes := [][2]string{}
+	for i, earlier := range rules {
+		if kone.RulePool(earlier.Schema) != "ip" {
+			continue
+		}
+		for _, later := range rules[i+1:] {
+			if kone.RulePool(later.Schema) == "domain" {
+				changes = append(changes, [2]string{earlier.ID, later.ID})
+				if len(changes) >= 128 {
+					return changes
+				}
+			}
+		}
+	}
+	return changes
 }

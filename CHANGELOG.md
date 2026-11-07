@@ -1,3 +1,15 @@
+# 2026/11/08
+
+## Features
+
+- Add explicit layered routing upgrades, with domain rules before IP rules and decisions bound to the actual dialed address.
+- Keep Fake-IP domain ownership across restarts and profiles, with capacity visibility and an explicit fresh-pool migration for legacy configurations.
+- Add optional DNS-driven Smart suggestions with bounded TCP/TLS probes, repeat verification and inline rule previews; suggestions never change routing automatically.
+
+## Bugfixes
+
+- Preserve domain identity for direct exceptions under global capture and stop stale or unrelated DNS evidence from choosing another target.
+
 # 2026/11/07
 
 ## Features

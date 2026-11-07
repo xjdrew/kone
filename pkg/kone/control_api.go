@@ -99,6 +99,8 @@ func Preflight(ctx context.Context, cfg *KoneConfig) PreflightReport {
 	}
 	if err := checkNetworkPrivileges(); err != nil {
 		add("privileges", err.Error())
+	} else if cfg.DNS.PersistentFakeIP && FakeIPNeedsAuthorization() {
+		add("privileges", "Persistent Fake-IP state requires administrator authorization")
 	} else if SystemDNSNeedsAuthorization(cfg.DNS) {
 		add("privileges", "Host DNS requires administrator authorization to replace the local resolver entry")
 	}

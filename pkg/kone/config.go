@@ -42,6 +42,8 @@ type CoreConfig struct {
 }
 
 type DNSConfig struct {
+	PersistentFakeIP bool             `toml:"persistent-fake-ip,omitempty"`
+	RetiredPools     []string         `toml:"retired-fake-ip-pools,omitempty"`
 	Mode             string           `toml:"mode,omitempty"`
 	ListenAddress    string           `toml:"listen-address,omitempty"`
 	System           bool             `toml:"system"`
@@ -413,6 +415,23 @@ func (cfg *KoneConfig) Validate() error {
 	}
 	if cfg.DNS.ListenPort == 0 {
 		return errors.New("dns.listen-port must be nonzero")
+	}
+	if cfg.DNS.PersistentFakeIP && cfg.Policy.RuleVersion != 2 {
+		return errors.New("persistent Fake-IP ownership requires policy.rule-version = 2")
+	}
+	if len(cfg.DNS.RetiredPools) > fakeLedgerPoolLimit || len(cfg.DNS.RetiredPools) > 0 && !cfg.DNS.PersistentFakeIP {
+		return errors.New("retired Fake-IP pools require bounded persistent ownership")
+	}
+	for _, value := range cfg.DNS.RetiredPools {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || prefix != prefix.Masked() || NewDnsIPPool(prefix).Capacity() == 0 {
+			return errors.New("invalid retired Fake-IP pool")
+		}
+		for _, active := range []string{cfg.Core.Network, cfg.Core.IPv6Network} {
+			if pool, err := netip.ParsePrefix(active); err == nil && pool.Overlaps(prefix) {
+				return errors.New("active and retired Fake-IP pools must not overlap")
+			}
+		}
 	}
 	if cfg.DNS.Mode != "" && cfg.DNS.Mode != "host" && cfg.DNS.Mode != "gate" {
 		return errors.New("dns.mode must be host or gate")

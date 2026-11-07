@@ -39,5 +39,10 @@ func (one *One) ClearObservation() error {
 	one.TrafficObserver().Clear()
 	one.ClearDNSQueries()
 	one.ClearDNSCache()
+	if one.smart != nil {
+		if _, err := one.SmartAction(SmartAction{Action: "clear"}); err != nil {
+			return err
+		}
+	}
 	return nil
 }

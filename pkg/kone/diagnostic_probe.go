@@ -13,6 +13,7 @@ import (
 )
 
 type DiagnosticResult struct {
+	FailureKind            string              `json:"failure_kind,omitempty"`
 	Target                 string              `json:"target"`
 	Outbound               string              `json:"outbound"`
 	Protocol               string              `json:"protocol"`
@@ -118,6 +119,18 @@ func (one *One) ProbeDiagnostic(parent context.Context, outbound, target string,
 }
 
 func (one *One) ProbeDiagnosticVersion(parent context.Context, outbound, target string, withTLS bool, expectedVersion uint64) (result DiagnosticResult, err error) {
+	return one.probeDiagnosticPlan(parent, outbound, target, withTLS, expectedVersion, diagnosticProbePlan{})
+}
+
+type diagnosticProbePlan struct {
+	serverName string
+	tlsConfig  *tls.Config
+}
+
+// A private probe plan pins the dial address independently of the TLS service
+// name. Only the automatic scheduler can supply this override; manual APIs keep
+// their explicit host semantics.
+func (one *One) probeDiagnosticPlan(parent context.Context, outbound, target string, withTLS bool, expectedVersion uint64, plan diagnosticProbePlan) (result DiagnosticResult, err error) {
 	start := time.Now()
 	result = DiagnosticResult{Target: target, Outbound: outbound, Protocol: "tcp", Stage: "configuration", Status: "failed", Time: start, Expires: start.Add(5 * time.Minute), Scope: "diagnostic; not application traffic"}
 	result.Host = DiagnosticHost{Status: "unknown", Message: "Endpoint connection was not tested"}
@@ -246,9 +259,23 @@ func (one *One) ProbeDiagnosticVersion(parent context.Context, outbound, target 
 		result.Progress.Stage = "target_tls"
 		result.Protocols.TLS = DiagnosticCheck{Status: "testing", Message: "Verifying target TLS"}
 		reportDiagnosticProgress(parent, result)
-		client := tls.Client(conn, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+		tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+		if plan.tlsConfig != nil {
+			tlsConfig = plan.tlsConfig.Clone()
+		}
+		tlsConfig.ServerName = plan.serverName
+		if tlsConfig.ServerName == "" {
+			tlsConfig.ServerName = host
+		}
+		client := tls.Client(conn, tlsConfig)
 		if tlsErr := client.HandshakeContext(ctx); tlsErr != nil {
 			result.Message = diagnosticMessage(tlsErr, snapshot.cfg)
+			var networkErr net.Error
+			if errors.As(tlsErr, &networkErr) && networkErr.Timeout() {
+				result.FailureKind = "timeout"
+			} else {
+				result.FailureKind = "tls_verification"
+			}
 			result.Protocols.TLS = DiagnosticCheck{Status: "failed", Tested: true, Message: result.Message}
 			if errors.Is(tlsErr, context.Canceled) {
 				result.Status = "canceled"

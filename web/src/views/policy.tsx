@@ -1,3 +1,4 @@
+import { SmartPolicy } from "./smart";
 import { Link } from "@tanstack/react-router";
 import { newID } from "../browser";
 import { useState } from "react";
@@ -97,6 +98,20 @@ export function PolicyView() {
         </div>
       </header>
       <ErrorNotice error={policy.error} />
+      <div className={styles.layers}>
+        <span>
+          {t(
+            context.document?.config.policy?.["rule-version"] === 2
+              ? "policy.layeredOrder"
+              : "policy.legacyOrder",
+          )}
+        </span>
+        {context.document?.config.policy?.["rule-version"] !== 2 && (
+          <Button tone="quiet" onClick={() => setChangePolicy(true)} disabled={!context.admin}>
+            {t("policy.upgrade")}
+          </Button>
+        )}
+      </div>
       <details className={styles.protection}>
         <summary>
           {t("policy.protection")}
@@ -135,6 +150,7 @@ export function PolicyView() {
           })}
         </div>
       </details>
+      <SmartPolicy global={policy.data?.mode === "proxy-first"} />
       <RulesView onPolicy={() => setChangePolicy(true)} />
       {changePolicy && policy.data && (
         <PolicyEditor
@@ -276,6 +292,16 @@ function PolicyEditor({
               label={t("policy.convertCustom")}
             />
           )}
+          {(baseDocument?.config.policy?.["rule-version"] !== 2 ||
+            !baseDocument?.config.dns["persistent-fake-ip"]) && (
+            <Field label={t("policy.upgrade")} help={t("policy.upgradeHint")}>
+              <Toggle
+                checked={!!draft.upgrade_rules}
+                onChange={(value) => update("upgrade_rules", value)}
+                label={t("policy.upgradeToggle")}
+              />
+            </Field>
+          )}
           {plan && (
             <div className="subtlePanel">
               <KeyValues
@@ -294,6 +320,21 @@ function PolicyEditor({
                   [t("policy.protection"), plan.protection.length],
                 ]}
               />
+              {draft.upgrade_rules && (
+                <>
+                  <p>{t("policy.upgradePreview")}</p>
+                  <KeyValues
+                    entries={[
+                      [t("policy.crossPoolChanges"), plan.cross_pool_changes?.length ?? 0],
+                      [
+                        t("policy.newPools"),
+                        plan.fake_ip_networks?.filter(Boolean).join(", ") || "—",
+                      ],
+                      [t("policy.retiredPools"), plan.retired_fake_ip_pools?.join(", ") || "—"],
+                    ]}
+                  />
+                </>
+              )}
               {draft.reject_udp && (
                 <p>
                   {t("policy.rejectImpact")}:{" "}
@@ -341,7 +382,11 @@ function RulesView({ onPolicy }: { onPolicy: () => void }) {
   const [simulate, setSimulate] = useState(false);
   const doc = context.document;
   if (!doc) return <div className="loading">{t("common.loading")}</div>;
+  const layered = doc.config.policy?.["rule-version"] === 2;
+  const rulePool = (rule: Rule) => (rule.type.startsWith("DOMAIN") ? "domain" : "ip");
   const rules = doc.config.rules.filter((rule) => rule.type !== "FINAL");
+  const peers = (rule: Rule) =>
+    layered ? rules.filter((item) => rulePool(item) === rulePool(rule)) : rules;
   const visible = rules.filter((rule) =>
     `${rule.type} ${rule.pattern} ${rule.outbound}`.toLowerCase().includes(search.toLowerCase()),
   );
@@ -360,12 +405,12 @@ function RulesView({ onPolicy }: { onPolicy: () => void }) {
   }
   function move(rule: Rule, delta: number) {
     const config = structuredClone(doc!.config);
+    const pool = peers(rule);
+    const adjacent = pool[pool.findIndex((item) => item.id === rule.id) + delta];
+    if (!adjacent) return;
     const index = config.rules.findIndex((item) => item.id === rule.id);
-    if (index + delta < 0 || config.rules[index + delta]?.type === "FINAL") return;
-    [config.rules[index], config.rules[index + delta]] = [
-      config.rules[index + delta],
-      config.rules[index],
-    ];
+    const other = config.rules.findIndex((item) => item.id === adjacent.id);
+    [config.rules[index], config.rules[other]] = [config.rules[other], config.rules[index]];
     void save(config);
   }
   function remove(ids: Set<string>) {
@@ -450,95 +495,108 @@ function RulesView({ onPolicy }: { onPolicy: () => void }) {
               <th>{t("common.actions")}</th>
             </tr>
           </thead>
-          <tbody>
-            {visible.map((rule) => (
-              <tr key={rule.id}>
-                <td>
-                  <input
-                    type="checkbox"
-                    disabled={!context.admin}
-                    aria-label={`${t("common.edit")} ${rule.pattern}`}
-                    checked={selected.has(rule.id)}
-                    onChange={(event) =>
-                      setSelected((previous) => {
-                        const next = new Set(previous);
-                        if (event.target.checked) next.add(rule.id);
-                        else next.delete(rule.id);
-                        return next;
-                      })
-                    }
-                  />
-                </td>
-                <td className="muted mono">{rules.indexOf(rule) + 1}</td>
-                <td className="mono muted">{rule.type}</td>
-                <td className="targetCell mono">
-                  <button
-                    className="textButton"
-                    disabled={!context.admin}
-                    onClick={() => context.setRuleDraft(rule)}
-                  >
-                    {rule.pattern}
-                  </button>
-                  {rule.source === "policy-lan" && (
-                    <span className="pill">{t("policy.lanDefault")}</span>
-                  )}
-                  {rule["expires-at"] && (
-                    <span className="pill">
-                      {t("rules.expires")} {rule["expires-at"]}
-                    </span>
-                  )}
-                </td>
-                <td className="mono">{rule.protocol || t("common.all")}</td>
-                <td className="mono">{rule.ports?.join(", ") || "*"}</td>
-                <td>
-                  <OutboundSelect
-                    value={rule.outbound}
-                    disabled={!context.admin || busy}
-                    onChange={(outbound) => {
-                      void save({
-                        ...doc.config,
-                        rules: doc.config.rules.map((item) =>
-                          item.id === rule.id ? { ...item, outbound } : item,
-                        ),
-                      });
-                    }}
-                  />
-                </td>
-                <td>
-                  <ActionMenu
-                    actions={[
-                      {
-                        id: "edit",
-                        label: t("common.edit"),
-                        run: () => context.setRuleDraft(rule),
-                        disabled: !context.admin,
-                      },
-                      {
-                        id: "up",
-                        label: t("rules.moveUp"),
-                        run: () => move(rule, -1),
-                        disabled: !context.admin || rules.indexOf(rule) === 0 || busy,
-                      },
-                      {
-                        id: "down",
-                        label: t("rules.moveDown"),
-                        run: () => move(rule, 1),
-                        disabled:
-                          !context.admin || rules.indexOf(rule) === rules.length - 1 || busy,
-                      },
-                      {
-                        id: "delete",
-                        label: t("common.delete"),
-                        danger: true,
-                        run: () => remove(new Set([rule.id])),
-                        disabled: !context.admin || busy,
-                      },
-                    ]}
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
+          {(layered ? ["domain", "ip"] : ["legacy"]).map((pool) => (
+            <tbody key={pool}>
+              {layered && (
+                <tr className={styles.poolTitle}>
+                  <th colSpan={8} scope="rowgroup">
+                    {t(`policy.pool.${pool}`)} <span>{t(`policy.pool.${pool}Hint`)}</span>
+                  </th>
+                </tr>
+              )}
+              {visible
+                .filter((rule) => !layered || rulePool(rule) === pool)
+                .map((rule) => (
+                  <tr key={rule.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        disabled={!context.admin}
+                        aria-label={`${t("common.edit")} ${rule.pattern}`}
+                        checked={selected.has(rule.id)}
+                        onChange={(event) =>
+                          setSelected((previous) => {
+                            const next = new Set(previous);
+                            if (event.target.checked) next.add(rule.id);
+                            else next.delete(rule.id);
+                            return next;
+                          })
+                        }
+                      />
+                    </td>
+                    <td className="muted mono">{peers(rule).indexOf(rule) + 1}</td>
+                    <td className="mono muted">{rule.type}</td>
+                    <td className="targetCell mono">
+                      <button
+                        className="textButton"
+                        disabled={!context.admin}
+                        onClick={() => context.setRuleDraft(rule)}
+                      >
+                        {rule.pattern}
+                      </button>
+                      {rule.source === "policy-lan" && (
+                        <span className="pill">{t("policy.lanDefault")}</span>
+                      )}
+                      {rule["expires-at"] && (
+                        <span className="pill">
+                          {t("rules.expires")} {rule["expires-at"]}
+                        </span>
+                      )}
+                    </td>
+                    <td className="mono">{rule.protocol || t("common.all")}</td>
+                    <td className="mono">{rule.ports?.join(", ") || "*"}</td>
+                    <td>
+                      <OutboundSelect
+                        value={rule.outbound}
+                        disabled={!context.admin || busy}
+                        onChange={(outbound) => {
+                          void save({
+                            ...doc.config,
+                            rules: doc.config.rules.map((item) =>
+                              item.id === rule.id ? { ...item, outbound } : item,
+                            ),
+                          });
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <ActionMenu
+                        actions={[
+                          {
+                            id: "edit",
+                            label: t("common.edit"),
+                            run: () => context.setRuleDraft(rule),
+                            disabled: !context.admin,
+                          },
+                          {
+                            id: "up",
+                            label: t("rules.moveUp"),
+                            run: () => move(rule, -1),
+                            disabled: !context.admin || peers(rule).indexOf(rule) === 0 || busy,
+                          },
+                          {
+                            id: "down",
+                            label: t("rules.moveDown"),
+                            run: () => move(rule, 1),
+                            disabled:
+                              !context.admin ||
+                              peers(rule).indexOf(rule) === peers(rule).length - 1 ||
+                              busy,
+                          },
+                          {
+                            id: "delete",
+                            label: t("common.delete"),
+                            danger: true,
+                            run: () => remove(new Set([rule.id])),
+                            disabled: !context.admin || busy,
+                          },
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                ))}
+            </tbody>
+          ))}
         </table>
         {!visible.length && (
           <Empty title={t("policy.empty")}>
@@ -745,7 +803,12 @@ function Simulation({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const [target, setTarget] = useState("");
   const [protocol, setProtocol] = useState("tcp");
-  const [result, setResult] = useState<unknown>();
+  const [result, setResult] = useState<{
+    evidence?: string;
+    pool?: string;
+    effective_outbound?: string;
+    rule_name?: string;
+  }>();
   const [error, setError] = useState<unknown>();
   return (
     <Modal open onClose={onClose} title={t("rules.simulate")} description={t("rules.simulateHint")}>
@@ -778,7 +841,19 @@ function Simulation({ onClose }: { onClose: () => void }) {
         </Field>
         <Button type="submit">{t("rules.simulate")}</Button>
         <ErrorNotice error={error} />
-        {result !== undefined && <Details value={result} />}
+        {result !== undefined && (
+          <>
+            <output>{t(`policy.evidence.${result.evidence || "complete"}`)}</output>
+            <KeyValues
+              entries={[
+                [t("policy.rulePool"), result.pool ? t(`policy.pool.${result.pool}`) : "—"],
+                [t("common.outbound"), result.effective_outbound || "—"],
+                [t("traffic.rule"), result.rule_name || "—"],
+              ]}
+            />
+            <Details value={result} />
+          </>
+        )}
       </form>
     </Modal>
   );

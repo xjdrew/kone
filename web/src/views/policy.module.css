@@ -80,3 +80,36 @@
 .protectionEntry code {
   overflow-wrap: anywhere;
 }
+
+.layers {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.poolTitle th {
+  background: var(--surface);
+  text-align: left;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.poolTitle span {
+  margin-inline-start: 16px;
+  color: var(--muted);
+  font-weight: 400;
+}
+@media (max-width: 760px) {
+  .layers {
+    padding: 10px 12px;
+    flex-wrap: wrap;
+  }
+  .poolTitle span {
+    display: block;
+    margin: 4px 0 0;
+  }
+}

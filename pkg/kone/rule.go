@@ -24,23 +24,28 @@ import (
 const CaptureOutbound = "@capture"
 
 type RoutingDecision struct {
-	ExpiresAt         string `json:"expires_at,omitempty"`
-	ConfigVersion     uint64 `json:"config_version"`
-	GeoIPVersion      string `json:"geoip_version"`
-	GeoIPSHA256       string `json:"geoip_sha256"`
-	RuleID            string `json:"rule_id"`
-	RuleType          string `json:"rule_type"`
-	RuleName          string `json:"rule_name"`
-	RuleSource        string `json:"rule_source"`
-	RuleOrder         int    `json:"rule_order"`
-	Outbound          string `json:"outbound"`
-	EffectiveOutbound string `json:"effective_outbound"`
-	Fallback          bool   `json:"fallback"`
-	Protocol          string `json:"protocol,omitempty"`
-	Port              uint16 `json:"port,omitempty"`
-	Protected         bool   `json:"protected"`
-	CaptureOnly       bool   `json:"capture_only"`
-	Reason            string `json:"reason"`
+	Pool              string   `json:"pool,omitempty"`
+	Evidence          string   `json:"evidence,omitempty"`
+	Candidates        []string `json:"candidates,omitempty"`
+	Domain            string   `json:"domain,omitempty"`
+	DecisionSource    string   `json:"decision_source,omitempty"`
+	ExpiresAt         string   `json:"expires_at,omitempty"`
+	ConfigVersion     uint64   `json:"config_version"`
+	GeoIPVersion      string   `json:"geoip_version"`
+	GeoIPSHA256       string   `json:"geoip_sha256"`
+	RuleID            string   `json:"rule_id"`
+	RuleType          string   `json:"rule_type"`
+	RuleName          string   `json:"rule_name"`
+	RuleSource        string   `json:"rule_source"`
+	RuleOrder         int      `json:"rule_order"`
+	Outbound          string   `json:"outbound"`
+	EffectiveOutbound string   `json:"effective_outbound"`
+	Fallback          bool     `json:"fallback"`
+	Protocol          string   `json:"protocol,omitempty"`
+	Port              uint16   `json:"port,omitempty"`
+	Protected         bool     `json:"protected"`
+	CaptureOnly       bool     `json:"capture_only"`
+	Reason            string   `json:"reason"`
 }
 
 type decisionRule struct {
@@ -60,6 +65,8 @@ func (rule *Rule) ProxyDNS(domain string, msg *dns.Msg) string {
 }
 
 type Rule struct {
+	layered       bool
+	retired       []netip.Prefix
 	now           func() time.Time
 	directDomains map[string]bool // always direct connect for proxy domain
 	endpointDNS   map[string]bool // bootstrap proxy names keep real DNS answers
@@ -98,6 +105,9 @@ func (rule *Rule) Decide(val any, protocol string, port uint16) (decision Routin
 			decision.GeoIPVersion, decision.GeoIPSHA256 = metadata.Version, metadata.SHA256
 		}
 	}()
+	if rule.layered {
+		return rule.decideLayered(val, nil, protocol, port)
+	}
 	protocol = strings.ToLower(protocol)
 	now := time.Now()
 	if rule.now != nil {
@@ -178,6 +188,9 @@ func (rule *Rule) Explain(val any, protocol string, port uint16) RoutingDecision
 }
 
 func (rule *Rule) DecideDNS(domain string, msg *dns.Msg, protocol string, port uint16) RoutingDecision {
+	if rule.layered {
+		return rule.decideLayered(domain, msg, protocol, port)
+	}
 	decision := rule.Decide(domain, protocol, port)
 	if decision.Protected || msg == nil {
 		return decision

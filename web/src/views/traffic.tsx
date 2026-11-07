@@ -819,6 +819,15 @@ function FlowInspector({ flow, onClose }: { flow: Flow; onClose: () => void }) {
           [t("traffic.fakeIP"), flow.fake_ip || "—"],
           [t("traffic.process"), flow.process_name || t("common.unknown")],
           [t("traffic.rule"), flow.rule_name],
+          [
+            t("traffic.rulePool"),
+            flow.decision_pool ? t(`policy.pool.${flow.decision_pool}`) : t("policy.legacyOrder"),
+          ],
+          [
+            t("traffic.ruleEvidence"),
+            flow.decision_evidence ? t(`policy.evidence.${flow.decision_evidence}`) : "—",
+          ],
+          [t("traffic.authorizedTargets"), flow.authorized_candidates?.join(", ") || "—"],
           [t("traffic.expected"), <OutboundName key="expected" name={flow.expected_outbound} />],
           [t("traffic.actual"), <OutboundName key="actual" name={flow.effective_outbound} />],
           [t("common.version"), `v${flow.config_version}`],

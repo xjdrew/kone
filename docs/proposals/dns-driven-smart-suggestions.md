@@ -1,5 +1,7 @@
 # Proposal：两种基础模式与 Smart 双向分流建议
 
+> 2026-11-08 实施更新：本提案的一期建议已进入当前开发分支。产品契约以 [PRD](../requirements/prd.md)、[Web 规格](../requirements/web-ui.md) 与 [DNS 实现说明](../technical/dns.md) 为准；以下保留提出问题时的推理及未来范围，不把后续自动应用、代理 DNS 或新协议视为已实现能力。
+
 日期：2026-11-07。状态：**待评审，供后续开发；未实施。** 代码基线：[master 8d018cd](https://github.com/xjdrew/kone/tree/8d018cd729f7417b7202a652c65a486ae0e2f33f)。承接[产品方向研究](../research/product-direction-2026-11-07.md#5-smart可以实现什么-应该承诺什么)与[四个策略边界 proposal](policy-layers-and-fake-ip.md)。
 
 **采用“Standalone / Global 基础模式＋始终可用的自定义规则＋独立 Smart 开关”。** 两种模式决定默认 FINAL；Smart 评估未命中明确规则的目标，既可建议代理，也可建议直连。原先将 Smart、Custom 并列为全局模式的设想由本次用户澄清替代。

@@ -51,6 +51,10 @@ func explainWithRule(rule *Rule, outbounds *Outbounds, target, protocol string, 
 		return RoutingDecision{}, errors.New("IPv6 interception is not configured")
 	}
 	decision := rule.Decide(value, protocol, port)
+	if decision.CaptureOnly {
+		decision.EffectiveOutbound = ""
+		return decision, nil
+	}
 	decision.EffectiveOutbound = decision.Outbound
 	if err := outbounds.CheckEnabled(decision.Outbound); err != nil {
 		decision.Reason = err.Error()

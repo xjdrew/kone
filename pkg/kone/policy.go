@@ -12,10 +12,13 @@ import (
 // Policy records explicit template intent. The ordered rules remain the source
 // of truth for the default outbound; older files retain their original behavior.
 type PolicyConfig struct {
-	Mode         string `toml:"mode,omitempty" json:"mode"`
-	IPv4Only     bool   `toml:"ipv4-only,omitempty" json:"ipv4_only"`
-	UDPException bool   `toml:"udp-exception,omitempty" json:"udp_exception"`
-	LANDefaults  bool   `toml:"lan-defaults-initialized,omitempty" json:"lan_defaults_initialized,omitempty"`
+	PreferredProxyID string      `toml:"preferred-proxy-id,omitempty" json:"preferred_proxy_id"`
+	Smart            SmartConfig `toml:"smart,omitempty" json:"smart"`
+	RuleVersion      uint        `toml:"rule-version,omitempty" json:"rule_version"`
+	Mode             string      `toml:"mode,omitempty" json:"mode"`
+	IPv4Only         bool        `toml:"ipv4-only,omitempty" json:"ipv4_only"`
+	UDPException     bool        `toml:"udp-exception,omitempty" json:"udp_exception"`
+	LANDefaults      bool        `toml:"lan-defaults-initialized,omitempty" json:"lan_defaults_initialized,omitempty"`
 }
 
 type ProtectedNetwork struct {
@@ -51,6 +54,25 @@ func PolicyMode(cfg *KoneConfig) (mode, outbound string) {
 func (cfg *KoneConfig) ValidatePolicy() error {
 	if cfg == nil {
 		return nil
+	}
+	if cfg.Policy.RuleVersion > 2 {
+		return errors.New("policy.rule-version must be 1 (legacy) or 2 (layered)")
+	}
+	if cfg.Policy.Smart.Enabled {
+		mode, _ := PolicyMode(cfg)
+		if cfg.Policy.RuleVersion != 2 || mode == "custom" {
+			return errors.New("Smart requires layered rules and a standard base mode")
+		}
+	}
+	if cfg.Policy.PreferredProxyID != "" {
+		out, ok := preferredProxy(cfg)
+		if !ok {
+			return errors.New("preferred proxy must reference an enabled outbound ID")
+		}
+		mode, final := PolicyMode(cfg)
+		if mode == "proxy-first" && out.Name != final {
+			return errors.New("preferred proxy must agree with the global FINAL outbound")
+		}
 	}
 	if cfg.Policy.Mode == "" || cfg.Policy.Mode == "custom" {
 		return nil
@@ -176,6 +198,12 @@ func isSyntheticPrefix(prefix netip.Prefix, core CoreConfig) bool {
 }
 
 func (rule *Rule) protectPolicy(cfg *KoneConfig) {
+	rule.layered = cfg.Policy.RuleVersion == 2
+	for _, value := range cfg.DNS.RetiredPools {
+		if prefix, err := netip.ParsePrefix(value); err == nil {
+			rule.retired = append(rule.retired, prefix)
+		}
+	}
 	for _, item := range PolicyProtection(cfg.Core) {
 		if prefix, err := netip.ParsePrefix(item.Prefix); err == nil {
 			rule.protected = append(rule.protected, prefix)

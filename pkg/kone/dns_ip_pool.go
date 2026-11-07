@@ -68,6 +68,10 @@ func (pool *DnsIPPool) Alloc(hint string) netip.Addr {
 		}
 	}
 	pool.flags[index] = true
+	return pool.address(index)
+}
+
+func (pool *DnsIPPool) address(index int) netip.Addr {
 	if pool.base.Is4() {
 		raw := pool.base.As4()
 		binary.BigEndian.PutUint32(raw[:], binary.BigEndian.Uint32(raw[:])+uint32(index))

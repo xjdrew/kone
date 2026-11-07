@@ -136,6 +136,14 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
       data.state.saved_version = data.document.version;
       return respond(data.document);
     }
+    if (path === "/smart")
+      return respond({
+        enabled: false,
+        status: "disabled",
+        suggestions: [],
+        attempts: 0,
+        dropped: 0,
+      });
     if (path === "/traffic") return respond(trafficFixture());
     if (path === "/flows") return respond(trafficFixture().traffic);
     if (path.startsWith("/flows/"))
