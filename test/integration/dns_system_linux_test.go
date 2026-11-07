@@ -202,6 +202,7 @@ func TestSystemDNSHostFileGuidanceAndSymlinkRestore(t *testing.T) {
 	t.Cleanup(func() { _ = server.Shutdown(); <-dnsDone })
 	cfg := systemConfig(t)
 	cfg.DNS.Mode = "host"
+	cfg.DNS.ListenPort = 53 // resolv.conf cannot express a nonstandard port.
 	cfg.DNS.Servers = nil
 	cfg.Outbounds = []kone.OutboundConfig{{Name: "offline-proxy", URL: "http://127.0.0.1:1"}}
 	cfg.Rule = []kone.RuleConfig{{Schema: "DOMAIN", Pattern: "virtual.file.example.test", Outbound: "offline-proxy"}, {Schema: "FINAL", Outbound: kone.BuiltinDirect}}
