@@ -55,6 +55,9 @@ case "$1" in
       if [[ -f pkg/kone/policy.go ]]; then
         grep -Fq -- "--- PASS: TestSystemLifecycleGlobalPolicyAndPausedTransition (" "$baseline/$stack.log"
       fi
+      if [[ -f test/integration/helper_linux_test.go ]]; then
+        grep -Fq -- "--- PASS: TestSystemLifecycleLinuxHelper (" "$baseline/$stack.log"
+      fi
     done
     ;;
   dns-tools)

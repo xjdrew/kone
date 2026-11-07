@@ -162,10 +162,20 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
         ],
       });
     if (path === "/diagnostics" && method === "POST") {
-      const input = body as { target: string; outbounds: string[]; protocol: string; tls: boolean };
+      const input = body as {
+        target: string;
+        outbounds: string[];
+        protocol: string;
+        tls: boolean;
+        dns_name?: string;
+        dns_type?: string;
+      };
       const operation: Operation = {
         id: `op-${data.operations.length + 1}`,
         kind: "diagnostic",
+        target: input.target,
+        outbounds: input.outbounds,
+        protocol: input.protocol,
         status: "succeeded",
         stage: "complete",
         started_at: "2026-11-07T09:30:00Z",
@@ -174,6 +184,8 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
             target: input.target,
             outbound,
             protocol: input.protocol,
+            dns_name: input.dns_name ?? "",
+            dns_type: input.dns_type ?? "",
             status: outbound === "direct" ? "failed" : "reachable",
             stage: "connect",
             duration_ms: 4,

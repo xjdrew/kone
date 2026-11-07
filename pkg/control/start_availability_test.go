@@ -23,7 +23,7 @@ func TestManagementReadsRemainAvailableDuringAndAfterHelperStartupFailure(t *tes
 			// helper process, creating TUN or changing the host network.
 			select {
 			case <-reject:
-				return nil, nil, errors.New("injected helper handshake failure")
+				return nil, nil, &desktop.AuthorizationError{Code: "authorization_canceled", Cause: errors.New("injected helper handshake failure")}
 			case <-ctx.Done():
 				return nil, nil, ctx.Err()
 			}
@@ -69,7 +69,7 @@ func TestManagementReadsRemainAvailableDuringAndAfterHelperStartupFailure(t *tes
 	close(reject)
 	require.Eventually(t, func() bool {
 		operations := c.Operations()
-		return len(operations) == 1 && operations[0].Status == "failed"
+		return len(operations) == 1 && operations[0].Status == "canceled" && operations[0].ErrorCode == "authorization_canceled"
 	}, 3*time.Second, time.Millisecond)
 	require.Contains(t, read("/api/v1/state", 200).Body.String(), `"data_state":"paused"`)
 	read("/api/v1/config", 200)

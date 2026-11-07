@@ -28,6 +28,7 @@ export function Shell() {
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [error, setError] = useState<unknown>();
   const [busy, setBusy] = useState(false);
+  const [authorizationExpected, setAuthorizationExpected] = useState(false);
   const running = state.data_state === "running" || state.state === "running";
   const policyMode =
     context.document?.config.policy?.mode ||
@@ -49,6 +50,9 @@ export function Shell() {
     try {
       if (!running) {
         const result = await api.readiness();
+        setAuthorizationExpected(
+          result.checks.some((check) => check.code === "privileges" && check.severity === "info"),
+        );
         if (!canEnable(result)) {
           setReadiness(result);
           return;
@@ -334,12 +338,24 @@ export function Shell() {
         {operation && (
           <span className="operation">
             <Status value={operation.status} />
-            <span>{t(`stage.${operation.stage}`, { defaultValue: t("common.details") })}</span>
+            <span>
+              {t(
+                authorizationExpected &&
+                  operation.kind === "start" &&
+                  operation.status === "running"
+                  ? "proxy.awaitingAuthorization"
+                  : `stage.${operation.stage}`,
+                { defaultValue: t("common.details") },
+              )}
+            </span>
             {operation.error && (
               <button
                 onClick={() => {
                   setError(
-                    new ApiError("request", 0, { code: "request", details: operation.error }),
+                    new ApiError(operation.error_code ?? "request", 0, {
+                      code: operation.error_code ?? "request",
+                      details: operation.error,
+                    }),
                   );
                 }}
               >

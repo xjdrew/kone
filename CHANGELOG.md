@@ -2,6 +2,9 @@
 
 ## Features
 
+- Enable Linux capture through a native polkit authorization dialog while keeping management unprivileged.
+- Recall up to 20 recent diagnostic targets, separate DNS queries from connection tests, and show total test time in result summaries.
+
 - Choose a local private address or all IPv4 interfaces for remote management, use HTTP or HTTPS, and set a password as part of first-time enablement; HTTPS includes CA trust guidance.
 - Rebuild the Web console around Traffic, Routing policy and Outbounds workspaces, with contextual rule editing, keyboard commands and persistent diagnostics/log tools.
 - Add editable direct-first and global-proxy policies with loop prevention and editable LAN direct defaults, country exceptions, IPv6 scope and explicit UDP fallback consent; existing profiles retain their intent.

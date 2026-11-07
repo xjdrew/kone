@@ -120,6 +120,7 @@ type Operation struct {
 	Finished  *time.Time `json:"finished_at,omitempty"`
 	Result    any        `json:"result,omitempty"`
 	Error     string     `json:"error,omitempty"`
+	ErrorCode string     `json:"error_code,omitempty"`
 	cancel    context.CancelFunc
 }
 

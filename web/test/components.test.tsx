@@ -5,6 +5,8 @@ import i18next from "i18next";
 import { initReactI18next } from "react-i18next";
 import english from "../../pkg/locale/catalog/en.json";
 import chinese from "../../pkg/locale/catalog/zh.json";
+import { DiagnosticTarget } from "../src/components/diagnostic-target";
+import { readDiagnosticHistory } from "../src/diagnostic-history";
 import { FlowGraph } from "../src/components/flow-graph";
 import { ErrorNotice, Status } from "../src/components/ui";
 import { ApiError } from "../src/api/client";
@@ -58,4 +60,29 @@ test("error codes translate without matching raw technical prose", async () => {
   );
   expect(screen.getByRole("alert").textContent).toContain(chinese.messages["api.version_conflict"]);
   expect(screen.getByText("disk revision changed").closest("details")).not.toBeNull();
+});
+
+test("target history supports keyboard selection and Escape without submitting", () => {
+  const selected: string[] = [];
+  render(
+    <DiagnosticTarget
+      label="Target"
+      value=""
+      history={readDiagnosticHistory(null)}
+      onChange={() => {}}
+      onClear={() => {}}
+      onSelect={(entry) => selected.push(entry.target)}
+      placeholder="host:port"
+    />,
+  );
+  const input = screen.getByRole("combobox", { name: "Target" });
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(selected).toEqual(["149.154.167.50:443"]);
+  expect(screen.queryByRole("listbox")).toBeNull();
+  fireEvent.keyDown(input, { key: "ArrowDown" });
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(screen.queryByRole("listbox")).toBeNull();
+  expect(selected).toHaveLength(1);
 });

@@ -104,7 +104,7 @@ func (c *Controller) readiness(ctx context.Context, doc Document, state, configE
 			if strings.Contains(issue.Code, "dns") {
 				page, field, action = "dns", "dns", "edit_dns"
 			}
-			if issue.Code == "privileges" {
+			if issue.Code == "privileges" || issue.Code == "authorization_unavailable" {
 				page, field, action = "settings", "privileges", "authorize"
 			}
 			status := "ready"

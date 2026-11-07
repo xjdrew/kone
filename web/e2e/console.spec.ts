@@ -91,7 +91,16 @@ test("@compat default direct routing starts immediately; only real blockers requ
   await enable.click();
   await expect(enable).toBeDisabled();
   expect(data.requests.filter(({ path }) => path === "/lifecycle/start")).toHaveLength(1);
-  data.readiness = { ...data.readiness, ready: true, blockers: [], checks: [] };
+  data.readiness = {
+    ...data.readiness,
+    ready: true,
+    blockers: [],
+    checks: [{ ...permissions, severity: "info", status: "ready" }],
+  };
+  await dialog.getByRole("button", { name: "Check again" }).click();
+  await dialog.getByText("Passed checks · 1").click();
+  await expect(dialog.getByText("System authorization on enable", { exact: true })).toBeVisible();
+  await expect(dialog.getByText(/No restart is required/)).toBeVisible();
   await dialog.getByRole("button", { name: "Check again" }).click();
   await enable.click();
   await expect(dialog).not.toBeVisible();
@@ -167,7 +176,8 @@ test("DNS context stays unscoped and Telegram comparison disables TLS", async ({
   await expect(dialog.getByLabel("Ports", { exact: true })).toBeEmpty();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
-  await page.getByLabel("Optional preset…", { exact: true }).selectOption("telegram");
+  await page.getByRole("button", { name: "Recent targets", exact: true }).click();
+  await page.getByRole("option", { name: /149.154.167.50/ }).click();
   await expect(page.getByLabel("Verify target TLS")).toBeDisabled();
   await page.getByRole("button", { name: "Start comparison" }).click();
   await expect
@@ -383,9 +393,9 @@ test("@compat generic diagnostics keep per-outbound progress and expand one resu
   await expect(page.getByRole("heading", { name: "Outbounds", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Connection diagnostics", exact: true }),
+    page.getByRole("heading", { name: "Network diagnostics", exact: true }),
   ).toBeVisible();
-  await expect(page.getByLabel("Optional preset…")).toHaveValue("");
+  await expect(page.getByRole("combobox", { name: "Target · domain or IP:port" })).toBeVisible();
   await expect(page.getByLabel("Target · domain or IP:port", { exact: true })).toHaveValue("");
   const summaries = page.locator("summary").filter({ hasText: target });
   await expect(summaries).toHaveCount(3);
@@ -408,7 +418,64 @@ test("@compat generic diagnostics keep per-outbound progress and expand one resu
   };
   data.operations[0]!.status = "canceled";
   await expect(summaries.nth(1)).toHaveAttribute("aria-busy", "false");
-  await expect(summaries.nth(1)).toContainText("12 ms");
+  await expect(summaries.nth(1)).toContainText("19 ms");
   await expect(summaries.nth(2)).toContainText("Not run");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("@compat diagnostic history survives reload and DNS keeps server and query separate", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  await page.goto("/#/outbounds");
+  await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
+  await page
+    .getByRole("combobox", { name: "Target · domain or IP:port" })
+    .fill("internal.example:9443");
+  await page.getByRole("button", { name: "Start comparison", exact: true }).click();
+  await expect.poll(() => data.operations.length).toBe(1);
+  await page.reload();
+  await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
+  await page.getByRole("button", { name: "Recent targets", exact: true }).click();
+  await page.getByRole("option", { name: /internal.example:9443/ }).click();
+  await expect(page.getByRole("combobox", { name: "Target · domain or IP:port" })).toHaveValue(
+    "internal.example:9443",
+  );
+  await page.getByRole("button", { name: "DNS query", exact: true }).click();
+  await expect(page.getByLabel("Verify target TLS")).not.toBeVisible();
+  const server = page.getByRole("combobox", { name: "DNS server · IP or domain:port" });
+  await expect(server).toHaveValue("");
+  await server.fill("192.168.1.53:53");
+  await page.getByLabel("Query name", { exact: true }).fill("service.internal");
+  await page.getByLabel("DNS query type", { exact: true }).selectOption("AAAA");
+  await page.getByRole("button", { name: "Compare DNS queries" }).click();
+  await expect.poll(() => data.operations.length).toBe(2);
+  const body = data.requests
+    .filter((entry) => entry.path === "/diagnostics" && entry.method === "POST")
+    .at(-1)?.body;
+  expect(body).toMatchObject({
+    target: "192.168.1.53:53",
+    protocol: "udp",
+    tls: false,
+    dns_name: "service.internal",
+    dns_type: "AAAA",
+  });
+  await expect(
+    page.locator("summary").filter({ hasText: "192.168.1.53:53" }).first(),
+  ).toContainText("service.internal");
+  await page.getByRole("button", { name: "Connection", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Target · domain or IP:port" })).toHaveValue(
+    "internal.example:9443",
+  );
+  await page.getByRole("button", { name: "Recent targets", exact: true }).click();
+  await expect(
+    page.getByRole("listbox", { name: "Recent targets" }).getByRole("option"),
+  ).toHaveCount(3);
+  await page.getByRole("option", { name: /internal.example:9443/ }).click();
+  await page.getByRole("button", { name: "Start comparison", exact: true }).click();
+  await expect.poll(() => data.operations.length).toBe(3);
+  await page.getByRole("button", { name: "Recent targets", exact: true }).click();
+  await expect(
+    page.getByRole("listbox", { name: "Recent targets" }).getByRole("option"),
+  ).toHaveCount(3);
 });

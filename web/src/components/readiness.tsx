@@ -32,13 +32,20 @@ export function ReadinessDialog({
     (check) => !blockerIDs.has(check.id) && check.severity !== "warning",
   );
   function entry(check: ReadinessCheck, blocked: boolean) {
-    const titleKey = `check.${check.code}`;
-    const detailKey =
-      check.code === "outbound_health"
+    const deferred = check.code === "privileges" && check.severity === "info";
+    const titleKey = deferred ? "check.authorization" : `check.${check.code}`;
+    const detailKey = deferred
+      ? "readiness.authorization"
+      : check.code === "outbound_health"
         ? `readiness.outbound_${check.status}`
         : `readiness.${check.code}`;
     const action = (() => {
-      if (check.code === "privileges" || check.code === "canceled") return null;
+      if (
+        check.code === "privileges" ||
+        check.code === "authorization_unavailable" ||
+        check.code === "canceled"
+      )
+        return null;
       if (check.code === "configuration")
         return (
           <Link to="/settings" search={{ section: "data" }} onClick={onClose}>

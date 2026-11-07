@@ -143,6 +143,13 @@ func (c *Controller) beginOperationAdmitted(kind, key string, timeout time.Durat
 				op.Status = "canceled"
 			}
 			op.Error = safeMessage(err, c.doc.Config)
+			var coded interface{ ErrorCode() string }
+			if errors.As(err, &coded) {
+				op.ErrorCode = coded.ErrorCode()
+				if op.ErrorCode == "authorization_canceled" {
+					op.Status = "canceled"
+				}
+			}
 		}
 	}()
 	return copy, nil

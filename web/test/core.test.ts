@@ -9,6 +9,11 @@ import {
   flowTarget,
   pathDrill,
 } from "../src/domain";
+import {
+  readDiagnosticHistory,
+  rememberDiagnostic,
+  diagnosticElapsed,
+} from "../src/diagnostic-history";
 import { diagnosticRequest } from "../src/diagnostic-request";
 import { graphLayout } from "../src/graph-layout";
 import { ApiError, clearSession, request, setSession } from "../src/api/client";
@@ -232,4 +237,42 @@ test("uncertain write timeout is distinguished from a rejected operation", async
   }
   expect(error).toBeInstanceOf(ApiError);
   expect(error).toMatchObject({ code: "timeout", uncertain: true });
+});
+
+test("diagnostic history keeps 20 recent unique targets and round-trips test parameters", () => {
+  let history = readDiagnosticHistory(null);
+  expect(history).toHaveLength(2);
+  expect(history[1]?.tls).toBe(false);
+  for (let index = 0; index < 25; index++)
+    history = rememberDiagnostic(history, {
+      mode: "connection",
+      target: `host${index}.example:443`,
+      tls: true,
+    });
+  expect(history).toHaveLength(20);
+  expect(history[0]?.target).toBe("host24.example:443");
+  history = rememberDiagnostic(history, {
+    mode: "connection",
+    target: " HOST20.EXAMPLE.:0443 ",
+    tls: false,
+  });
+  expect(history).toHaveLength(20);
+  expect(history[0]).toMatchObject({ target: "host20.example:443", tls: false });
+  expect(history.filter((entry) => entry.target === "host20.example:443")).toHaveLength(1);
+  history = rememberDiagnostic(history, {
+    mode: "dns",
+    target: "192.168.1.1:53",
+    tls: false,
+    dnsName: "Internal.EXAMPLE.",
+    dnsType: "AAAA",
+  });
+  expect(readDiagnosticHistory(JSON.stringify(history))).toEqual(history);
+  expect(readDiagnosticHistory("[]")).toEqual([]);
+  expect(readDiagnosticHistory("broken")).toHaveLength(2);
+  expect(readDiagnosticHistory('[{"mode":"dns","target":"secret@host:53","tls":false}]')).toEqual(
+    [],
+  );
+  expect(diagnosticElapsed(0)).toBe("<1 ms");
+  expect(diagnosticElapsed(125)).toBe("125 ms");
+  expect(diagnosticElapsed(undefined)).toBe("—");
 });

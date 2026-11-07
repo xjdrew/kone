@@ -148,6 +148,7 @@ export interface Operation {
   started_at: string;
   finished_at?: string;
   error?: string;
+  error_code?: string;
   result?: Json;
 }
 export interface Flow {
