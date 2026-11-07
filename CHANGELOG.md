@@ -14,6 +14,7 @@
 
 ## Changes
 
+- Document routing and cache limitations, compare proxy tools, and assess application routing and adaptive proxy strategies.
 - Reduce contributor wait time for automated checks across supported platforms.
 - Specify editable direct-first and global-proxy base policies and extensible English/Chinese interface localization in the product and design documents.
 - Define Web console design rules around traffic and policy workspaces, contextual tools, dense layouts and efficient keyboard workflows.
