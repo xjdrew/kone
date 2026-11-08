@@ -28,50 +28,54 @@ type ObservationOptions struct {
 }
 
 type FlowRecord struct {
-	ID                string     `json:"id"`
-	SessionID         string     `json:"session_id"`
-	ConfigVersion     uint64     `json:"config_version"`
-	Inbound           string     `json:"inbound"`
-	Protocol          string     `json:"protocol"`
-	Source            string     `json:"source"`
-	Destination       string     `json:"destination"`
-	Target            string     `json:"target"`
-	Domain            string     `json:"domain,omitempty"`
-	DomainSource      string     `json:"domain_source"`
-	FakeIP            string     `json:"fake_ip,omitempty"`
-	RealDestination   string     `json:"real_destination,omitempty"`
-	ProcessStatus     string     `json:"process_status"`
-	ProcessReason     string     `json:"process_reason,omitempty"`
-	ProcessPID        uint32     `json:"process_pid,omitempty"`
-	ProcessName       string     `json:"process_name,omitempty"`
-	ProcessPath       string     `json:"process_path,omitempty"`
-	ProcessSource     string     `json:"process_source,omitempty"`
-	ProcessObservedAt *time.Time `json:"process_observed_at,omitempty"`
-	ProcessStartedAt  *time.Time `json:"process_started_at,omitempty"`
-	GeoIPVersion      string     `json:"geoip_version,omitempty"`
-	GeoIPSHA256       string     `json:"geoip_sha256,omitempty"`
-	RuleID            string     `json:"rule_id"`
-	RuleName          string     `json:"rule_name"`
-	RuleSource        string     `json:"rule_source"`
-	RuleOrder         int        `json:"rule_order"`
-	ExpectedOutbound  string     `json:"expected_outbound"`
-	EffectiveOutbound string     `json:"effective_outbound"`
-	AttemptedOutbound string     `json:"attempted_outbound"`
-	Fallback          bool       `json:"fallback"`
-	Protected         bool       `json:"protected"`
-	Stage             string     `json:"stage"`
-	Status            string     `json:"status"`
-	Error             string     `json:"error,omitempty"`
-	ErrorKind         string     `json:"error_kind,omitempty"`
-	StartedAt         time.Time  `json:"started_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
-	EndedAt           *time.Time `json:"ended_at,omitempty"`
-	Upload            uint64     `json:"upload"`
-	Download          uint64     `json:"download"`
-	UploadPackets     uint64     `json:"upload_packets"`
-	DownloadPackets   uint64     `json:"download_packets"`
-	sequence          uint64
-	pathID            string
+	DecisionPool         string     `json:"decision_pool,omitempty"`
+	DecisionEvidence     string     `json:"decision_evidence,omitempty"`
+	DecisionSource       string     `json:"decision_source,omitempty"`
+	AuthorizedCandidates []string   `json:"authorized_candidates,omitempty"`
+	ID                   string     `json:"id"`
+	SessionID            string     `json:"session_id"`
+	ConfigVersion        uint64     `json:"config_version"`
+	Inbound              string     `json:"inbound"`
+	Protocol             string     `json:"protocol"`
+	Source               string     `json:"source"`
+	Destination          string     `json:"destination"`
+	Target               string     `json:"target"`
+	Domain               string     `json:"domain,omitempty"`
+	DomainSource         string     `json:"domain_source"`
+	FakeIP               string     `json:"fake_ip,omitempty"`
+	RealDestination      string     `json:"real_destination,omitempty"`
+	ProcessStatus        string     `json:"process_status"`
+	ProcessReason        string     `json:"process_reason,omitempty"`
+	ProcessPID           uint32     `json:"process_pid,omitempty"`
+	ProcessName          string     `json:"process_name,omitempty"`
+	ProcessPath          string     `json:"process_path,omitempty"`
+	ProcessSource        string     `json:"process_source,omitempty"`
+	ProcessObservedAt    *time.Time `json:"process_observed_at,omitempty"`
+	ProcessStartedAt     *time.Time `json:"process_started_at,omitempty"`
+	GeoIPVersion         string     `json:"geoip_version,omitempty"`
+	GeoIPSHA256          string     `json:"geoip_sha256,omitempty"`
+	RuleID               string     `json:"rule_id"`
+	RuleName             string     `json:"rule_name"`
+	RuleSource           string     `json:"rule_source"`
+	RuleOrder            int        `json:"rule_order"`
+	ExpectedOutbound     string     `json:"expected_outbound"`
+	EffectiveOutbound    string     `json:"effective_outbound"`
+	AttemptedOutbound    string     `json:"attempted_outbound"`
+	Fallback             bool       `json:"fallback"`
+	Protected            bool       `json:"protected"`
+	Stage                string     `json:"stage"`
+	Status               string     `json:"status"`
+	Error                string     `json:"error,omitempty"`
+	ErrorKind            string     `json:"error_kind,omitempty"`
+	StartedAt            time.Time  `json:"started_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
+	EndedAt              *time.Time `json:"ended_at,omitempty"`
+	Upload               uint64     `json:"upload"`
+	Download             uint64     `json:"download"`
+	UploadPackets        uint64     `json:"upload_packets"`
+	DownloadPackets      uint64     `json:"download_packets"`
+	sequence             uint64
+	pathID               string
 }
 
 type TrafficTotals struct {
@@ -313,6 +317,8 @@ func (f *ObservedFlow) Decision(decision RoutingDecision, effective, realDestina
 		record.GeoIPVersion, record.GeoIPSHA256 = decision.GeoIPVersion, decision.GeoIPSHA256
 		record.ExpectedOutbound, record.AttemptedOutbound = decision.Outbound, effective
 		record.Protected = decision.Protected
+		record.DecisionPool, record.DecisionEvidence, record.DecisionSource = decision.Pool, decision.Evidence, decision.DecisionSource
+		record.AuthorizedCandidates = append([]string(nil), decision.Candidates...)
 		record.Fallback = effective != "" && effective != decision.Outbound
 		if connected {
 			record.EffectiveOutbound, record.Status = effective, "active"

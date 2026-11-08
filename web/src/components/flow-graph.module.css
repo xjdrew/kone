@@ -1,0 +1,41 @@
+.graph {
+  padding: 12px 0 4px;
+  overflow: auto;
+}
+.graph svg {
+  display: block;
+  width: 100%;
+  min-width: 1080px;
+  max-height: 560px;
+}
+.heading {
+  fill: var(--muted);
+  font-size: 12px;
+}
+.link {
+  opacity: 0.18;
+  cursor: pointer;
+  outline: none;
+}
+.link:hover,
+.link:focus-visible {
+  opacity: 0.55;
+  stroke: var(--text);
+  stroke-width: 1;
+}
+.node {
+  cursor: pointer;
+  outline: none;
+}
+.node text {
+  fill: var(--text);
+  font: 12px var(--mono);
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.node:focus-visible rect {
+  stroke: var(--text);
+  stroke-width: 3px;
+}

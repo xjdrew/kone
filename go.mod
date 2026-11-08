@@ -9,6 +9,7 @@ require (
 	github.com/oschwald/maxminddb-golang/v2 v2.9.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/sagernet/gvisor v0.0.0-20260727.0-sing-box-mod.1
+	github.com/sagernet/netlink v0.0.0-20240612041022-b9a21c07ac6a
 	github.com/sagernet/sing v0.8.12-0.20260717023913-84ab32b56cb8
 	github.com/sagernet/sing-shadowsocks2 v0.2.2-0.20260929152114-a69d1086332b
 	github.com/sagernet/sing-tun v0.9.7-0.20261023115432-040db71fcd33
@@ -27,7 +28,6 @@ require (
 	github.com/mdlayher/netlink v1.11.2 // indirect
 	github.com/mdlayher/socket v0.6.0 // indirect
 	github.com/sagernet/fswatch v0.1.2 // indirect
-	github.com/sagernet/netlink v0.0.0-20240612041022-b9a21c07ac6a // indirect
 	github.com/sagernet/nftables v0.3.0-mod.4 // indirect
 	github.com/vishvananda/netns v0.0.4 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect

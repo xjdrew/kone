@@ -39,8 +39,7 @@ func TestInterruptedStartupRecoveryAllowsCaptureEndToEnd(t *testing.T) {
 	call := recoveryConsole(t, c)
 	status, doc := call("GET", "config", nil)
 	require.Equal(t, 200, status)
-	status, _ = call("PUT", "config", map[string]any{"base_version": doc["version"], "config": doc["config"], "inbound": doc["inbound"], "direct_only_confirmed": true})
-	require.Equal(t, 200, status)
+	require.Equal(t, false, doc["direct_only_confirmed"], "legacy confirmation flag is not required")
 	status, readiness := call("GET", "readiness", nil)
 	require.Equal(t, 200, status)
 	require.True(t, readiness["ready"].(bool))
@@ -58,6 +57,8 @@ func TestInterruptedStartupRecoveryAllowsCaptureEndToEnd(t *testing.T) {
 			return status == 200 && value["status"] == "succeeded"
 		}, 2*time.Second, time.Millisecond)
 		if action == "start" {
+			_, state := call("GET", "state", nil)
+			require.Equal(t, doc["version"], state["saved_version"], "default startup needs no configuration write")
 			current, readErr := os.ReadFile(journal)
 			require.NoError(t, readErr)
 			require.NotContains(t, string(current), "interrupted-startup-1234")

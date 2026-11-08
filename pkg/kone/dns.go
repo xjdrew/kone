@@ -59,7 +59,7 @@ func (d *Dns) ResolveContext(ctx context.Context, domain string) (*dns.Msg, erro
 func (d *Dns) ResolveTypeContext(ctx context.Context, domain string, kind uint16) (*dns.Msg, error) {
 	r := new(dns.Msg)
 	r.SetQuestion(dns.Fqdn(domain), kind)
-	meta := &dnsQueryMeta{}
+	meta := &dnsQueryMeta{Origin: DNSOriginInternal}
 	start := time.Now()
 	msg, err := d.resolve(context.WithValue(ctx, dnsMetaKey{}, meta), r)
 	version := uint64(0)
@@ -134,6 +134,13 @@ func (d *Dns) resolve(parent context.Context, r *dns.Msg) (*dns.Msg, error) {
 		return nil, err
 	}
 	meta, _ := parent.Value(dnsMetaKey{}).(*dnsQueryMeta)
+	if d.one != nil && d.one.health != nil && parent.Value(healthNativeDNSKey{}) != true && (r.Question[0].Qtype == dns.TypeA || r.Question[0].Qtype == dns.TypeAAAA) {
+		if evidence := d.one.health.dnsEvidence(normalizeDomain(r.Question[0].Name), d.one.policy.Load()); evidence != nil && healthDNSFamily(evidence, r.Question[0].Qtype) {
+			evidence.Id = r.Id
+			evidence.Question = append([]dns.Question(nil), r.Question...)
+			return evidence, nil
+		}
+	}
 	servers, route, routeKey, routeErr := d.selectResolverRoute(r.Question[0].Name)
 	if meta != nil {
 		meta.Route = route
@@ -225,6 +232,9 @@ func (d *Dns) doIPv4Query(r *dns.Msg) (*dns.Msg, error) {
 	return d.query(d.ctx, d.one.policy.Load(), r)
 }
 func (d *Dns) query(ctx context.Context, s *runtimeSnapshot, r *dns.Msg) (*dns.Msg, error) {
+	if s.rule.layered {
+		return d.queryLayered(ctx, s, r)
+	}
 	domain := normalizeDomain(r.Question[0].Name)
 	table := d.one.dnsTable
 	if r.Question[0].Qtype == dns.TypeAAAA {
@@ -310,7 +320,10 @@ func (d *Dns) HandleQuery(ctx context.Context, r *dns.Msg, transport, source str
 		return nil, errors.New("DNS query must contain exactly one question")
 	}
 	s := d.one.policy.Load()
-	meta := &dnsQueryMeta{}
+	meta := &dnsQueryMeta{Origin: DNSOriginBusiness}
+	if transport == "control" {
+		meta.Origin = DNSOriginDiagnostic
+	}
 	start := time.Now()
 	ctx = context.WithValue(ctx, dnsMetaKey{}, meta)
 	var msg *dns.Msg
@@ -328,6 +341,36 @@ func (d *Dns) HandleQuery(ctx context.Context, r *dns.Msg, transport, source str
 		}
 	}
 	d.recordQuery(r, msg, err, transport, source, s.configurationVersion(), start, meta)
+	if meta.Origin == DNSOriginBusiness && (r.Question[0].Qtype == dns.TypeA || r.Question[0].Qtype == dns.TypeAAAA) {
+		evidence := msg
+		if meta.Resolved != nil {
+			evidence = meta.Resolved
+		} else if len(meta.Virtual) > 0 {
+			evidence = nil
+		}
+		reason := ""
+		dnsCode, messageText := "", ""
+		if msg != nil {
+			dnsCode = dns.RcodeToString[msg.Rcode]
+		}
+		if err != nil {
+			messageText = diagnosticMessage(err, s.cfg)
+			dnsCode = "ERROR"
+			if errors.Is(err, context.DeadlineExceeded) {
+				dnsCode = "TIMEOUT"
+			}
+		}
+		status := "answered"
+		if err != nil || msg != nil && msg.Rcode != dns.RcodeSuccess && msg.Rcode != dns.RcodeRefused {
+			reason = "dns_failed"
+			status = "failed"
+		}
+		d.one.health.offer(healthEvent{domain: normalizeDomain(r.Question[0].Name), scope: meta.Route, reason: reason, version: s.version, message: evidence, result: HealthResult{Protocol: "dns", DNSCode: dnsCode, Message: messageText, Source: "business", Status: status, Stage: "dns", Time: start, DurationMS: time.Since(start).Milliseconds()}})
+	}
+
+	if err == nil && meta.Origin == DNSOriginBusiness {
+		d.one.smart.observe(s, normalizeDomain(r.Question[0].Name), meta)
+	}
 	return msg, err
 }
 
@@ -378,6 +421,15 @@ func NewDns(one *One, cfg DNSConfig) (*Dns, error) {
 	d.server, d.tcpServer = makeServer("udp"), makeServer("tcp")
 	configureDNSListenerFamilies(d)
 	d.ipv6 = d.ipv6Servers(cfg)
+	if cfg.Mode == "gate" {
+		address := net.JoinHostPort(cfg.ListenAddress, strconv.Itoa(int(cfg.ListenPort)))
+		d.server.Addr, d.tcpServer.Addr = address, address
+		d.server.Net, d.tcpServer.Net = "udp4", "tcp4"
+		if net.ParseIP(cfg.ListenAddress).To4() == nil {
+			d.server.Net, d.tcpServer.Net = "udp6", "tcp6"
+		}
+		d.ipv6 = nil // Gate binds the explicitly selected LAN address, not a TUN address.
+	}
 	client := dns.Client{UDPSize: cfg.PacketSize, Timeout: time.Duration(cfg.ReadTimeout+cfg.WriteTimeout) * time.Second, ReadTimeout: time.Duration(cfg.ReadTimeout) * time.Second, WriteTimeout: time.Duration(cfg.WriteTimeout) * time.Second}
 	udpClient, tcpClient := client, client
 	udpClient.Net, tcpClient.Net = "udp", "tcp"

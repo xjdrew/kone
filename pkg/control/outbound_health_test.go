@@ -23,6 +23,7 @@ import (
 func savedHealthOutbound(t *testing.T, c *Controller, endpoint string) kone.OutboundConfig {
 	t.Helper()
 	r := currentRequest(c)
+	r.Config["policy"].(map[string]any)["mode"] = "custom"
 	r.Config["outbounds"] = []any{map[string]any{"id": "outbound-health-test", "name": "office", "url": endpoint}}
 	r.Config["rules"] = []any{map[string]any{"type": "FINAL", "outbound": "office"}}
 	dns := r.Config["dns"].(map[string]any)
@@ -47,6 +48,39 @@ func healthStatuses(t *testing.T, c *Controller) []OutboundHealth {
 	cfg := cloneDocument(c.doc).Config
 	c.mu.Unlock()
 	return c.outboundStatuses(cfg)
+}
+
+func TestOutboundTestDefaultsToSavedCheckTargetAndAllowsOverride(t *testing.T) {
+	observed := make(chan string, 3)
+	c := testController(t, Options{Probe: func(_ context.Context, _ *kone.KoneConfig, _, target string, tls bool) ProbeResult {
+		observed <- fmt.Sprintf("%s:%t", target, tls)
+		return ProbeResult{Status: "reachable", Stage: "connect"}
+	}})
+	outbound := savedHealthOutbound(t, c, "socks5://127.0.0.1:1080")
+	r := currentRequest(c)
+	row := r.Config["outbounds"].([]any)[0].(map[string]any)
+	row["check-target"], row["check-tls"] = "149.154.167.50:443", false
+	_, err := c.Save(r)
+	require.NoError(t, err)
+	request := OutboundTestRequest{BaseVersion: c.doc.Version, OutboundID: outbound.ID}
+	op, err := c.TestOutbound(request, "")
+	require.NoError(t, err)
+	healthResult(t, c, op)
+	require.Equal(t, "149.154.167.50:443:false", <-observed)
+	target, tls := "example.com:443", true
+	request.Target, request.TLS = &target, &tls
+	op, err = c.TestOutbound(request, "")
+	require.NoError(t, err)
+	healthResult(t, c, op)
+	require.Equal(t, "example.com:443:true", <-observed)
+	target = "example.net"
+	op, err = c.TestOutbound(request, "")
+	require.NoError(t, err)
+	healthResult(t, c, op)
+	require.Equal(t, "example.net:80:true", <-observed)
+	target = "example.net:"
+	_, err = c.TestOutbound(request, "")
+	require.Error(t, err)
 }
 
 func TestOutboundHealthExpiresAndChangesInvalidateWithoutCredentialHashes(t *testing.T) {
@@ -273,10 +307,7 @@ func TestOutboundHealthHTTPUsesActualProxyAuthenticationAndConnect(t *testing.T)
 	require.Equal(t, "unhealthy", failed.Status)
 	require.Equal(t, "proxy_auth", failed.Stage)
 	require.NotContains(t, failed.Message, "incorrect-password")
-	readPair, err := c.pair("read")
-	require.NoError(t, err)
-	readToken, _, err := c.claim("", readPair.Code, true)
-	require.NoError(t, err)
+	readToken, _ := roleSession(c, "read")
 	require.Equal(t, 200, request(t, c, readToken, "GET", "/api/v1/outbounds/health", nil).Code)
 	require.Equal(t, 403, request(t, c, readToken, "POST", "/api/v1/outbounds/test", map[string]any{}).Code)
 	require.Equal(t, 400, request(t, c, ownerToken, "GET", "/api/v1/outbounds/health?target=hidden", nil).Code)

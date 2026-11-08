@@ -29,6 +29,7 @@ type DNSSystemScope struct {
 // DNSSystemContext is an observed, read-only startup snapshot. It is never
 // persisted as user configuration and does not claim complete VPN semantics.
 type DNSSystemContext struct {
+	PublicFallback       bool             `json:"public_fallback"`
 	Source               string           `json:"source"`
 	DefaultServers       []string         `json:"default_servers"`
 	StubServers          []string         `json:"stub_servers,omitempty"`
@@ -65,13 +66,16 @@ func cloneDNSSystemContext(value DNSSystemContext) DNSSystemContext {
 
 func mergeSystemDNSContext(cfg DNSConfig, observed DNSSystemContext, discoveryErr error) DNSConfig {
 	observed = cloneDNSSystemContext(observed)
+	if cfg.SystemContext.PublicFallback {
+		observed.PublicFallback = true
+	}
 	if observed.ownedDefaultExcluded {
 		cfg.Servers = append([]string(nil), observed.DefaultServers...)
 		if len(cfg.Servers) == 0 {
 			observed.RequireManual = true
 		}
 	}
-	if !cfg.System && len(observed.StubServers) > 0 {
+	if !cfg.SystemEnabled() && len(observed.StubServers) > 0 {
 		observed.RequireManual = false
 	}
 	if len(observed.SearchDomains) > 32 {
@@ -95,7 +99,7 @@ func mergeSystemDNSContext(cfg DNSConfig, observed DNSSystemContext, discoveryEr
 			continue
 		}
 		route := DNSRouteConfig{Suffix: normalizeDNSSuffix(scope.Suffix), Servers: append([]string(nil), scope.Servers...), Interface: scope.Interface, Automatic: true, Exact: scope.Exact, Unavailable: scope.Unavailable, Reason: scope.Reason}
-		if len(observed.StubServers) > 0 && !cfg.System {
+		if len(observed.StubServers) > 0 && !cfg.SystemEnabled() {
 			route.Servers = append([]string(nil), observed.StubServers...)
 			route.Interface = ""
 			route.Unavailable, route.Reason = false, ""
@@ -106,7 +110,7 @@ func mergeSystemDNSContext(cfg DNSConfig, observed DNSSystemContext, discoveryEr
 				route.Reason = "system DNS scope has no usable upstream"
 			}
 		}
-		if cfg.System {
+		if cfg.SystemEnabled() {
 			for _, server := range route.Servers {
 				host, _, _ := net.SplitHostPort(server)
 				if ip, err := netip.ParseAddr(host); err == nil && ip.IsLoopback() {
@@ -144,7 +148,7 @@ func mergeSystemDNSContext(cfg DNSConfig, observed DNSSystemContext, discoveryEr
 		}
 		cfg.Rules = append(cfg.Rules, route)
 	}
-	if cfg.System && len(observed.StubServers) > 0 {
+	if cfg.SystemEnabled() && len(observed.StubServers) > 0 {
 		var realServers []string
 		for _, server := range observed.DefaultServers {
 			host, _, _ := net.SplitHostPort(server)
@@ -153,11 +157,20 @@ func mergeSystemDNSContext(cfg DNSConfig, observed DNSSystemContext, discoveryEr
 			}
 		}
 		if len(realServers) == 0 {
-			observed.RequireManual = true
-			observed.Warnings = append(observed.Warnings, "System DNS capture requires real upstreams; the system stub would recurse")
+			if cfg.Mode != "" {
+				cfg.Servers = PublicDNSDefaults()
+				observed.PublicFallback = true
+			} else {
+				observed.RequireManual = true
+				observed.Warnings = append(observed.Warnings, "System DNS capture requires real upstreams; the system stub would recurse")
+			}
 		} else {
 			cfg.Servers = realServers
 		}
+	}
+	if observed.PublicFallback {
+		observed.Source = "public_fallback"
+		observed.Warnings = append(observed.Warnings, "System DNS discovery found no usable default upstream; public DNS defaults are in use")
 	}
 	cfg.SystemContext = observed
 	return cfg
@@ -202,14 +215,14 @@ func readDNSSystemContext() (DNSSystemContext, error) {
 	if runtime.GOOS == "windows" {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		base := dnsconfig.ReadDnsConfig()
+		base := readPlatformDNSConfig()
 		var servers []string
 		if base != nil {
 			servers = base.Servers
 		}
 		return readWindowsOwnedDNSContext(ctx, servers)
 	}
-	return readDNSSystemContextFor(runtime.GOOS, dnsconfig.ReadDnsConfig(), readDNSCommand, readDarwinDNSStore)
+	return readDNSSystemContextFor(runtime.GOOS, readPlatformDNSConfig(), readDNSCommand, readDarwinDNSStore)
 }
 
 func readDNSSystemContextFor(platform string, base *dnsconfig.DnsConfig, read func(context.Context, string, ...string) ([]byte, error), readStore func(context.Context, string) ([]byte, error)) (DNSSystemContext, error) {
@@ -221,6 +234,7 @@ func readDNSSystemContextFor(platform string, base *dnsconfig.DnsConfig, read fu
 	observed := DNSSystemContext{Source: platform, SearchDomains: append([]string(nil), base.Search...), UseTCP: base.UseTCP}
 	switch platform {
 	case "linux":
+		observed.DefaultServers = append([]string(nil), base.Servers...)
 		for _, server := range base.Servers {
 			if server == "127.0.0.53:53" || server == "127.0.0.54:53" {
 				observed.StubServers = append(observed.StubServers, server)
@@ -228,6 +242,9 @@ func readDNSSystemContextFor(platform string, base *dnsconfig.DnsConfig, read fu
 		}
 		domains, err := read(ctx, "resolvectl", "domain")
 		if err != nil {
+			if len(observed.StubServers) == 0 {
+				return observed, nil
+			}
 			return observed, err
 		}
 		servers, serversErr := read(ctx, "resolvectl", "dns")

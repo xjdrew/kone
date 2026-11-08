@@ -13,12 +13,9 @@ const types = {
 http
   .createServer(async (req, res) => {
     try {
-      const path = decodeURIComponent(
-        new URL(req.url, "http://localhost").pathname,
-      );
+      const path = decodeURIComponent(new URL(req.url, "http://localhost").pathname);
       const file = resolve(root, `.${path === "/" ? "/index.html" : path}`);
-      if (!file.startsWith(root.endsWith(sep) ? root : `${root}${sep}`))
-        throw new Error("path");
+      if (!file.startsWith(root.endsWith(sep) ? root : `${root}${sep}`)) throw new Error("path");
       const data = await readFile(file);
       res.writeHead(200, {
         "Content-Type": types[extname(file)] || "application/octet-stream",
@@ -32,6 +29,4 @@ http
       res.end("Not found");
     }
   })
-  .listen(4173, "127.0.0.1", () =>
-    console.log("Isolated UI test host: http://127.0.0.1:4173"),
-  );
+  .listen(4173, "127.0.0.1", () => console.log("Isolated UI test host: http://127.0.0.1:4173"));

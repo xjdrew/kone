@@ -29,10 +29,11 @@ type Inbound struct {
 	Enabled bool   `json:"enabled"`
 }
 type Document struct {
-	Version             uint64           `json:"version"`
-	Config              *kone.KoneConfig `json:"-"`
-	Inbound             Inbound          `json:"inbound"`
-	DirectOnlyConfirmed bool             `json:"direct_only_confirmed"`
+	Version uint64           `json:"version"`
+	Config  *kone.KoneConfig `json:"-"`
+	Inbound Inbound          `json:"inbound"`
+	// Retained for profile/API compatibility; direct routing no longer requires consent.
+	DirectOnlyConfirmed bool `json:"direct_only_confirmed"`
 }
 type storedDocument struct {
 	Version             uint64  `json:"version"`
@@ -322,6 +323,9 @@ func readDocument(path string) (Document, error) {
 		return Document{}, errors.New("saved configuration is invalid; restore a backup or save a corrected configuration")
 	}
 	assignReadIDs(cfg)
+	if cfg.DNS.Mode == "" && cfg.DNS.System {
+		cfg.DNS.Mode = "host"
+	}
 	confirmed := true // Preserve the established intent of pre-confirmation profiles.
 	if stored.DirectOnlyConfirmed != nil {
 		confirmed = *stored.DirectOnlyConfirmed

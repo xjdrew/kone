@@ -1,6 +1,10 @@
 # Proposal：两种基础模式与 Smart 双向分流建议
 
-日期：2026-11-07。状态：**待评审，供后续开发；未实施。** 代码基线：[master 8d018cd](https://github.com/xjdrew/kone/tree/8d018cd729f7417b7202a652c65a486ae0e2f33f)。承接[产品方向研究](../research/product-direction-2026-11-07.md#5-smart可以实现什么-应该承诺什么)与[四个策略边界 proposal](policy-layers-and-fake-ip.md)。
+> 2026-11-08 实施更新：本提案的一期建议已进入当前开发分支。产品契约以 [PRD](../requirements/prd.md)、[Web 规格](../requirements/web-ui.md) 与 [DNS 实现说明](../technical/dns.md) 为准；以下正文为历史设计推理与未来范围，不把后续自动应用、代理 DNS 或新协议视为已实现能力。
+
+> 后续设计已确认：连接健康与 Smart 在 Overview 合并，Smart 控制临时自动出口选择，并可一键固定手工规则；异常保留至重测成功或已处理，端口结果合并一列。目标契约见 [PRD 5.7](../requirements/prd.md#57-连接健康与-smart-智能分流)，差距见 [B14](../requirements/backlog.md#连接健康实施)。本文的“仅建议、443 探针、不自动应用”继续描述一期实现，不再作为后续范围限制。
+
+原提案日期：2026-11-07。原始研究基线：[master 8d018cd](https://github.com/xjdrew/kone/tree/8d018cd729f7417b7202a652c65a486ae0e2f33f)。承接[产品方向研究](../research/product-direction-2026-11-07.md#5-smart可以实现什么-应该承诺什么)与[四个策略边界 proposal](policy-layers-and-fake-ip.md)。
 
 **采用“Standalone / Global 基础模式＋始终可用的自定义规则＋独立 Smart 开关”。** 两种模式决定默认 FINAL；Smart 评估未命中明确规则的目标，既可建议代理，也可建议直连。原先将 Smart、Custom 并列为全局模式的设想由本次用户澄清替代。
 
@@ -27,7 +31,7 @@
 
 本 proposal 的自动发现范围只承诺：**KONE 观察到的域名解析，以及按限定目标发起的主动探测。** 在未来更完整的流量接管下，Smart 也可以处理字面 IP；“只支持域名”是本阶段的范围，不是所有 Smart 技术路线的永久限制。
 
-## 2 路由策略模型与配置优化
+## 2 代理规则模型与配置优化
 
 ### 2.1 两种基础模式 规则始终生效
 

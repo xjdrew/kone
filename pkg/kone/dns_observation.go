@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -13,7 +14,16 @@ import (
 
 // DNSQueryEvent is a query observation, never evidence of a business connection.
 // Event addresses distinguish virtual answers from upstream answers.
+// Origins separate application DNS, explicit diagnostics and engine resolution.
+// Transport describes the wire, never the authority to launch background probes.
+const (
+	DNSOriginBusiness   = "business"
+	DNSOriginDiagnostic = "diagnostic"
+	DNSOriginInternal   = "internal"
+)
+
 type DNSQueryEvent struct {
+	Origin             string    `json:"origin"`
 	ID                 string    `json:"id"`
 	Time               time.Time `json:"time"`
 	Name               string    `json:"name"`
@@ -37,6 +47,9 @@ type DNSQueryEvent struct {
 
 type dnsMetaKey struct{}
 type dnsQueryMeta struct {
+	Origin                                    string
+	Routing                                   RoutingDecision
+	Resolved                                  *dns.Msg
 	Upstream, UpstreamTransport, Cache, Route string
 	Virtual, Real                             []string
 	AttemptedResolvers                        []string
@@ -150,6 +163,7 @@ func (d *Dns) recordQuery(request, reply *dns.Msg, err error, transport, source 
 		event.Error = err.Error()
 	}
 	if meta != nil {
+		event.Origin = meta.Origin
 		event.Upstream, event.UpstreamTransport, event.Route = meta.Upstream, meta.UpstreamTransport, meta.Route
 		event.ResolverInterface = meta.ResolverInterface
 		event.AttemptedResolvers = append([]string(nil), meta.AttemptedResolvers...)
@@ -262,20 +276,27 @@ func (d *Dns) Maintain(ctx context.Context) error {
 }
 
 type DNSRuntimeStatus struct {
-	Automatic               bool             `json:"automatic"`
-	Servers                 []string         `json:"servers"`
-	Rules                   []DNSRouteConfig `json:"rules"`
-	HistoryLimit            int              `json:"history_limit"`
-	HistoryRetentionSeconds int64            `json:"history_retention_seconds"`
-	HistoryDropped          uint64           `json:"history_dropped"`
-	CacheEntries            int              `json:"cache_entries"`
-	CacheLimit              int              `json:"cache_limit"`
-	TCP                     bool             `json:"tcp"`
-	UpstreamTCP             bool             `json:"upstream_tcp"`
-	IPv6                    bool             `json:"ipv6"`
-	SystemSource            string           `json:"system_source"`
-	SearchDomains           []string         `json:"search_domains"`
-	Warnings                []string         `json:"warnings"`
+	FakeIPPools             []FakeIPPoolStatus `json:"fake_ip_pools"`
+	RetiredPools            []string           `json:"retired_fake_ip_pools"`
+	Mode                    string             `json:"mode"`
+	ListenAddress           string             `json:"listen_address"`
+	PublicFallback          bool               `json:"public_fallback"`
+	SystemRequested         bool               `json:"system_requested"`
+	SystemActive            bool               `json:"system_active"`
+	Automatic               bool               `json:"automatic"`
+	Servers                 []string           `json:"servers"`
+	Rules                   []DNSRouteConfig   `json:"rules"`
+	HistoryLimit            int                `json:"history_limit"`
+	HistoryRetentionSeconds int64              `json:"history_retention_seconds"`
+	HistoryDropped          uint64             `json:"history_dropped"`
+	CacheEntries            int                `json:"cache_entries"`
+	CacheLimit              int                `json:"cache_limit"`
+	TCP                     bool               `json:"tcp"`
+	UpstreamTCP             bool               `json:"upstream_tcp"`
+	IPv6                    bool               `json:"ipv6"`
+	SystemSource            string             `json:"system_source"`
+	SearchDomains           []string           `json:"search_domains"`
+	Warnings                []string           `json:"warnings"`
 }
 
 func (one *One) DNSQueries() []DNSQueryEvent {
@@ -300,10 +321,20 @@ func (one *One) DNSStatus() DNSRuntimeStatus {
 		return status
 	}
 	d := one.dns
+	if d.server != nil {
+		status.ListenAddress = d.server.Addr
+	}
+	status.PublicFallback = d.systemContext.PublicFallback
 	status.SystemSource = d.systemContext.Source
 	status.SearchDomains = append([]string(nil), d.systemContext.SearchDomains...)
 	status.Warnings = append([]string(nil), d.systemContext.Warnings...)
 	status.IPv6 = one.dnsTable6 != nil
+	for _, table := range []*DnsTable{one.dnsTable, one.dnsTable6} {
+		if table != nil {
+			status.FakeIPPools = append(status.FakeIPPools, table.ownershipStatus())
+		}
+	}
+	status.SystemActive = one.systemDNSActive.Load()
 	status.Servers = append(status.Servers, d.nameservers...)
 	for _, route := range d.routes {
 		copy := route
@@ -311,6 +342,15 @@ func (one *One) DNSStatus() DNSRuntimeStatus {
 		status.Rules = append(status.Rules, copy)
 	}
 	if snapshot := one.policy.Load(); snapshot != nil {
+		if snapshot.rule != nil {
+			for _, prefix := range snapshot.rule.retired {
+				if !slices.Contains(status.RetiredPools, prefix.String()) {
+					status.RetiredPools = append(status.RetiredPools, prefix.String())
+				}
+			}
+		}
+		status.Mode = snapshot.cfg.DNS.Mode
+		status.SystemRequested = snapshot.cfg.DNS.SystemEnabled()
 		status.Automatic = len(snapshot.cfg.DNS.Servers) == 0
 	}
 	if d.history != nil {

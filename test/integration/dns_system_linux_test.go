@@ -146,3 +146,96 @@ func TestSystemDNSOwnedLinkRollsBackLateStartupFailure(t *testing.T) {
 		t.Fatal("failed startup modified original DNS")
 	}
 }
+
+// The harness gives this test private /etc, /run, /var/lib, network and mount
+// namespaces. The fixture deliberately resembles WSL's shared resolver symlink.
+func TestSystemDNSHostFileGuidanceAndSymlinkRestore(t *testing.T) {
+	privateResolvedCommand(t, "status")
+	local, err := os.Stat("/etc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := os.Stat("/proc/1/root/etc")
+	if err != nil || os.SameFile(local, host) {
+		t.Fatal("requires a private resolver parent directory")
+	}
+	oldLink, linkErr := os.Readlink("/etc/resolv.conf")
+	oldContent, err := os.ReadFile("/etc/resolv.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove("/etc/resolv.conf")
+		if linkErr == nil {
+			_ = os.Symlink(oldLink, "/etc/resolv.conf")
+		} else {
+			_ = os.WriteFile("/etc/resolv.conf", oldContent, 0644)
+		}
+	})
+	fixture := t.TempDir()
+	shared := fixture + "/shared-resolv.conf"
+	original := []byte("nameserver 192.0.2.53\noptions timeout:1 attempts:1\n")
+	if err := os.WriteFile(shared, original, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove("/etc/resolv.conf"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(shared, "/etc/resolv.conf"); err != nil {
+		t.Fatal(err)
+	}
+	packet, err := net.ListenPacket("udp4", "192.0.2.53:53")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := make(chan struct{})
+	dnsDone := make(chan struct{})
+	server := &dns.Server{PacketConn: packet, NotifyStartedFunc: func() { close(ready) }, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, r *dns.Msg) {
+		reply := new(dns.Msg).SetReply(r)
+		if r.Question[0].Qtype == dns.TypeA {
+			reply.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 0}, A: net.IPv4(192, 0, 2, 9)}}
+		}
+		_ = w.WriteMsg(reply)
+	})}
+	go func() { defer close(dnsDone); _ = server.ActivateAndServe() }()
+	<-ready
+	t.Cleanup(func() { _ = server.Shutdown(); <-dnsDone })
+	cfg := systemConfig(t)
+	cfg.DNS.Mode = "host"
+	cfg.DNS.ListenPort = 53 // resolv.conf cannot express a nonstandard port.
+	cfg.DNS.Servers = nil
+	cfg.Outbounds = []kone.OutboundConfig{{Name: "offline-proxy", URL: "http://127.0.0.1:1"}}
+	cfg.Rule = []kone.RuleConfig{{Schema: "DOMAIN", Pattern: "virtual.file.example.test", Outbound: "offline-proxy"}, {Schema: "FINAL", Outbound: kone.BuiltinDirect}}
+	one, stop, done := systemStart(t, cfg)
+	if !one.DNSStatus().SystemActive {
+		t.Fatal("Host DNS was not connected")
+	}
+	query := func(name, want string) {
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		output, err := exec.CommandContext(ctx, "getent", "ahostsv4", name).Output()
+		if err != nil || !strings.Contains(string(output), want) {
+			t.Fatalf("OS query %s: %s (%v)", name, output, err)
+		}
+	}
+	query("virtual.file.example.test", "10.203.0.")
+	query("direct.file.example.test", "192.0.2.9")
+	stop()
+	if err := systemWait(t, done); err != nil {
+		t.Fatal(err)
+	}
+	noSystemInterface(t, cfg)
+	link, err := os.Readlink("/etc/resolv.conf")
+	if err != nil || link != shared {
+		t.Fatal("original resolver symlink was not restored", err)
+	}
+	data, err := os.ReadFile(shared)
+	if err != nil || string(data) != string(original) {
+		t.Fatal("shared resolver target was modified", err)
+	}
+	query("after.file.example.test", "192.0.2.9")
+	entries, err := kone.InspectSystemDNSRecovery(t.Context())
+	if err != nil || len(entries) != 0 {
+		t.Fatal("DNS lease survived clean shutdown", err, entries)
+	}
+}

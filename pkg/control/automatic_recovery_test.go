@@ -102,10 +102,14 @@ func TestCaptureStartPreservesUnverifiableRecordsAndLogsEvidence(t *testing.T) {
 
 func TestCaptureChecksSavedIntentBeforePreviousRecordMaintenance(t *testing.T) {
 	c := testController(t, Options{})
-	require.NoError(t, c.writeRecoveryJournal(c.doc.Config, "unconfirmed-start-1234"))
+	request := currentRequest(c)
+	request.Inbound.Enabled = false
+	_, err := c.Save(request)
+	require.NoError(t, err)
+	require.NoError(t, c.writeRecoveryJournal(c.doc.Config, "disabled-start-1234"))
 	before, err := os.ReadFile(c.journalPath())
 	require.NoError(t, err)
-	require.ErrorContains(t, c.Start(t.Context()), "direct-only")
+	require.ErrorContains(t, c.Start(t.Context()), "enable the TUN inbound")
 	after, err := os.ReadFile(c.journalPath())
 	require.NoError(t, err)
 	require.Equal(t, before, after)

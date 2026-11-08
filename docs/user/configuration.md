@@ -6,11 +6,12 @@
 
 | 对象 | 用途 | 管理模式修改方式 |
 | --- | --- | --- |
+| `[policy]` | 基础模式及明确接受的 IPv4/UDP 范围 | 切换基础模式先暂停、预览，再保存；保留用户规则 |
 | `[general]` | 日志级别与格式 | 暂停后保存，重新启用 |
 | `[core]` | TUN 地址、栈、捕获路由与出口 | 暂停后保存，重新启用 |
 | `[dns]`、`[[dns.rules]]` | 系统引导、上游、缓存、私有解析 | 暂停后保存，重新启用 |
 | `[geoip]` | 文件模式的数据来源 | 修改后重启；管理界面使用独立上传仓库 |
-| `[[outbounds]]` | 代理地址、凭据、启停和 UDP 回退 | 兼容修改自动应用到新连接 |
+| `[[outbounds]]` | 代理地址、凭据、启停、UDP 回退和后台检查 | 兼容修改自动应用到新连接 |
 | `[[rules]]` | 有序匹配与出站选择 | 包括 IPv4/IPv6 CIDR 在内的增删改与排序可在线应用到新连接 |
 
 后端校验结果决定能否在线保存；运行中不允许保存需重启的配置。保存失败保留原配置；保存成功而应用失败时显示版本分歧。CIDR 路由先更新成功，再发布新策略；已有连接所需的旧路由保留到连接结束。路由操作失败时回滚；回滚无法完成则停止代理并报告错误。文件模式没有热更新管理接口，编辑后重启。
@@ -40,6 +41,23 @@ outbound = "direct"
 
 替换为真实代理地址，先执行 `kone -check -config config.toml`。`direct`、`reject` 是内置出站，无需声明；纯直连可省略整个出站数组。网段必须与现有 LAN/VPN 不冲突。
 
+### 基础策略
+
+新管理配置采用 `direct-first`，启动保持暂停。在“代理规则”切换为 `proxy-first` 时，需要可用的默认出站与真实物理出口；预览显示保留规则、IPv4/IPv6 接管、保护和 UDP 行为。HTTP/HTTPS 无原生 UDP：保留直连回退必须明确同意，或改为拒绝 UDP；后一动作会影响引用同一出站的其他规则。
+
+```toml
+[policy]
+mode = "proxy-first"
+ipv4-only = true # 明确仅接管 IPv4；完整 IPv6 需 core 对应网段和 auto-route6
+udp-exception = false # HTTP 的 UDP 直连回退必须显式同意
+```
+
+此片段还需要 `core.auto-route = true`、真实 `outbound-interface`、已启用的代理出站和指向该出站的无条件 FINAL。`direct-first` 的 FINAL 为 `direct`。已有文件省略 `[policy]` 时保持旧行为；有条件 FINAL 或无法无损识别的配置显示高级兜底，须先显式编辑原兜底条件。旧程序会严格拒绝不认识的新字段，回退需恢复旧备份。
+
+回环 `127.0.0.0/8`、`::1` 和本机真实单地址保留防回环保护。首次采用全局策略时，在已有用户规则之后、FINAL 之前生成局域网 `direct` 默认规则（私网、直连子网与本地发现范围）；这些是普通规则，可修改、移动或删除，后续保存/重启不会补回。代理远端内网时，在这些默认项之前添加代理规则，或删除对应 direct 项。旧全局 profile 升级时自动补入一次并保留备份，`lan-defaults-initialized` 记录初始化状态。
+
+Fake-IP 先还原业务事实；代理和 DNS 的自身传输通过原生出口绕过 TUN，不把端点 IP 上的其他业务一律直连。直连按启动前的原生路由选择 LAN/VPN 接口；复杂 Linux 策略路由表、特殊 VPN 与物理 IPv6 仍需在部署环境验证，不能把任意 VPN 网段自动当作可信 LAN。换网后暂停并重新预检。
+
 ## 3. 出站与规则
 
 | 出站 | TCP | UDP |
@@ -50,11 +68,17 @@ outbound = "direct"
 | `socks5://` | SOCKS5 | UDP ASSOCIATE |
 | `ss://` | AEAD2017 | AEAD2017 |
 
-URL 必须带端口。SS 支持 `aes-128-gcm`、`aes-256-gcm`、`chacha20-ietf-poly1305`，可用 `ss://方法:密码@主机:端口` 或 SIP002 用户信息编码；不支持旧流密码、AEAD-2022 或插件。
+URL 可省略端口，默认 80；明确填写的端口保持原值。SS 支持 `aes-128-gcm`、`aes-256-gcm`、`chacha20-ietf-poly1305`，可用 `ss://方法:密码@主机:端口` 或 SIP002 用户信息编码；不支持旧流密码、AEAD-2022 或插件。
 
 无 UDP 能力时，文件配置省略 `udp-fallback` 默认拒绝；可显式设为 `direct` 或 `reject`。**Web 新建出站当前显式选择 `direct` 回退，已有策略保留。** 回退只用于协议缺少 UDP 实现；认证或连接失败不会回退直连。禁用出站后新连接明确拒绝。
 
-规则按顺序匹配：
+### 出站连通性检查
+
+管理服务默认每分钟自动检查已启用出站；关闭页面、暂停业务代理不停止检查。默认通过所配置的代理协议连接 `example.com:443` 并验证目标 TLS，不下载测速文件、不读取业务内容，也不自动切换路由。
+
+在出站编辑器的“自动连通性检查”中修改目标或关闭。对应字段为 `check-enabled`（默认 true）、`check-target`（默认 `example.com:443`）、`check-tls`（默认 true）。纯 TCP 服务应关闭目标 TLS，例如 Telegram 的 `149.154.167.50:443`。Shadowsocks 仅建立加密传输而没有目标响应时只能报告未知，不能当作目标可达。文件模式没有后台管理检查。
+
+规则池内按顺序匹配；`policy.rule-version = 2` 固定系统保护 → 原始域名/关联 CNAME → IP → FINAL。省略或设置为 1 时保持旧全局顺序。
 
 | `type` | `pattern` |
 | --- | --- |
@@ -64,6 +88,30 @@ URL 必须带端口。SS 支持 `aes-128-gcm`、`aes-256-gcm`、`chacha20-ietf-p
 | `FINAL` | 不填；若存在必须放最后，省略时隐式直连 |
 
 可用 `protocol`、`ports` 限定业务 TCP/UDP 与目标端口；域名解析阶段可能先分配 Fake-IP，实际流量进入后再匹配条件。可选 `id` 保持稳定身份；域名类临时规则可设 RFC3339 `expires-at`，到期只影响新连接，CIDR/GEOIP/FINAL 不支持临时到期。
+
+### 分层版本与 Smart
+
+```toml
+[policy]
+mode = "direct-first"
+rule-version = 2
+preferred-proxy-id = "office-id" # 对应 [[outbounds]].id，不是显示名
+
+[policy.smart]
+auto-enabled = false
+candidates = ["office-id"]
+allow-direct = false
+
+[dns]
+persistent-fake-ip = true
+# retired-fake-ip-pools = ["10.192.0.0/16"]
+```
+
+以上是配置片段，应合并到现有同名段落。连接健康随代理引擎监控，Smart 的 `auto-enabled` 仅授权临时选择；旧 `enabled=true` 不会自动获得此授权。`candidates` 使用已启用出站的稳定 ID，省略时可使用首选代理；默认代理模式的首选代理须与 FINAL 一致，其他候选可另行添加。全局代理只有显式 `allow-direct=true` 才可回退直连。
+
+公网域名缺少地址证据时，可通过候选代理访问 Cloudflare HTTPS DNS，取得地址后仍执行保护和用户 IP 规则；私有解析范围不使用此公共回退。临时选择最长有效 5 分钟且不超过 DNS 证据 TTL，规则、地址或网络变化后复核；固定为手工规则后独立有效。
+
+新管理配置默认使用分层规则和持久地址归属。旧配置通过“代理规则 → 升级分层规则”预览迁移，先暂停接管：规则 ID 和池内顺序保留，域名规则会先于原本更靠前的 IP 规则；旧内存池换成不重叠的新池，并列入退役池。退役地址仍捕获并拒绝，应用应重新解析。不要手动关闭持久化并复用同一池，也不要仅还原旧归属备份；需要保留完整最新状态或显式使用新池。
 
 ## 4. TUN、出口与 IPv6
 
@@ -87,11 +135,19 @@ IPv4 `auto-route` 与 IPv6 `auto-route6` 独立；全局捕获要求真实出口
 
 ## 5. DNS
 
-省略 `servers` 或设为空数组时，在启动前发现系统真实上游并固定到本次实例；失败不会猜测公共 DNS。`-check` 不探测上游是否可达。
+在“设置 → 解析”选择模式，再选择上游来源：
+
+| 模式 | 系统 DNS | 监听与部署 |
+| --- | --- | --- |
+| Host（新管理配置默认） | 启用时接管，暂停时恢复原配置 | 为本机应用服务；先保存原始系统 DNS，再作为上游 |
+| Gate | 保持原样 | 在所选局域网地址监听 UDP/TCP 53；管理员配置 DHCP/客户端 DNS，并将 Fake-IP 网段路由到 KONE |
+
+两种模式省略 `servers` 或设为 `[]` 时，都会在启用前读取系统 DNS 并固定到本次运行。获取不到可用默认上游时，界面告警并采用 `8.8.8.8`、`8.8.4.4`、`1.1.1.1`、`1.0.0.1`；这不表示已验证连通性。自定义上游和私有后缀失败不会转向公共 DNS。`-check` 不探测上游是否可达。
 
 ```toml
 [dns]
-system = true
+mode = "host"
+# Gate: mode = "gate", listen-address = "192.168.1.2", listen-port = 53
 # servers = ["192.168.1.1"]
 
 [[dns.rules]]
@@ -104,14 +160,16 @@ interface = "VPN"
 
 | 设置 | 默认与含义 |
 | --- | --- |
-| `system` | CLI 默认 false；首次管理配置默认 true；引导主机 DNS，不修改其他机器 |
-| `listen-port` | 53，UDP/TCP；Linux/Windows 监听 TUN 地址，macOS 使用回环入口 |
+| `mode` | `host` 或 `gate`；管理模式默认 Host，切换需暂停代理 |
+| `listen-address` | Gate 使用的本机网卡地址；`0.0.0.0`/`::` 表示所有相应网卡，可能与本机已有 DNS 服务冲突 |
+| `system` | 旧配置兼容字段；显式 `mode` 优先。旧 false 配置不会自动新增 LAN 监听 |
+| `listen-port` | 默认 53，UDP/TCP；Host 使用本地入口，Gate 使用所选网卡地址 |
 | `ttl` / `packet-size` | 600 秒 / 4096 字节 |
 | `read-timeout` / `write-timeout` | 各 5 秒 |
 | `history-limit` / `history-retention` | 512 条 / 3600 秒；历史条数 0 关闭记录 |
 | `cache-limit` | 1024 条；0 关闭真实响应缓存，活动 Fake-IP 映射独立保留 |
 
-系统引导：Linux 要求 systemd-resolved stub 和可验证的同命名空间服务；macOS 创建自有临时解析服务；Windows 使用自有 NRPT 根规则且要求端口 53。已有策略冲突或无法安全复制的解析语义会阻止启用或令该作用域失败。逐平台边界见 [DNS 原理](../technical/dns.md)。
+Host 接管：Linux 优先使用 systemd-resolved；非 stub 环境临时替换本机 `/etc/resolv.conf` 入口，暂停后恢复原文件或符号链接，不改写 WSL 共享目标。macOS 创建自有临时解析服务；Windows 使用自有 NRPT 根规则且要求端口 53。已有策略冲突或无法安全复制的解析语义会阻止启用或令该作用域失败。逐平台边界见 [DNS 原理](../technical/dns.md)。
 
 ## 6. GeoIP 数据
 
@@ -146,3 +204,9 @@ interface = "VPN"
 ## 7. 旧配置迁移
 
 旧 INI、`[proxies]`、规则 `proxy`、`core.dns-*`、relay/NAT 端口字段和 `general.manager-addr` 已移除。按示例转换为 TOML、`[[outbounds]]`、规则 `outbound` 与 `[dns]`，不要将旧 `type = "direct"/"reject"` 声明当代理条目。迁移后先静态校验，再在目标环境预检。
+
+## 地址与默认端口
+
+出站代理地址、出站测试目标、连接诊断和代理规则模拟均允许省略端口，默认使用 `80`。例如 `example.com` 等同 `example.com:80`，IPv6 `2001:db8::1` 等同 `[2001:db8::1]:80`；明确填写的端口原样保留，空冒号、0 和超出 65535 的端口仍报错。文件配置的代理地址保留协议前缀，例如 `http://proxy.example` 使用端口 80；其他代理协议省略端口时也按 80 处理。
+
+TLS 是否启用由独立选项决定，不因省略端口而自动切换。DNS 上游和指定服务器的 DNS 探测默认端口仍为 53；DNS 查询名、规则匹配条件和本机监听配置使用各自的字段含义。

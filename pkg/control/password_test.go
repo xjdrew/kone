@@ -37,7 +37,7 @@ func TestFirstPasswordRequiresLocalSetupProofAndNeverGrantsCaptureAccess(t *test
 	require.Equal(t, 200, info.Code)
 	require.Contains(t, info.Body.String(), `"setup_authorized":false`)
 	require.Equal(t, 401, request(t, c, "", "POST", "/api/v1/auth/password", map[string]any{"password": "owner-password", "confirm_password": "owner-password"}).Code)
-	setup, session, err := c.claim(c.BootstrapToken(), "", false)
+	setup, session, err := c.claim(c.BootstrapToken(), false)
 	require.NoError(t, err)
 	require.Equal(t, "setup", session.Role)
 	for _, path := range []string{"state", "config", "logs", "readiness", "outbounds/health"} {
@@ -50,8 +50,6 @@ func TestFirstPasswordRequiresLocalSetupProofAndNeverGrantsCaptureAccess(t *test
 	require.NoError(t, json.Unmarshal(request(t, c, setup, "GET", "/api/v1/auth", nil).Body.Bytes(), &resumed))
 	require.Equal(t, session.csrf, resumed["csrf_token"])
 	require.NotContains(t, info.Body.String(), "csrf_token", "public status cannot recover setup authorization")
-	_, err = c.pair("read")
-	require.Error(t, err)
 	for _, input := range []map[string]any{
 		{"password": "short", "confirm_password": "short"},
 		{"password": "owner-password", "confirm_password": "different"},
@@ -105,7 +103,7 @@ func TestPasswordPersistsAsSaltedHashAndBootstrapCannotBypassLogin(t *testing.T)
 
 func TestPasswordSetupValidatesCSRFOriginAndVerificationBudgets(t *testing.T) {
 	c := testController(t, Options{})
-	setup, s, err := c.claim(c.BootstrapToken(), "", false)
+	setup, s, err := c.claim(c.BootstrapToken(), false)
 	require.NoError(t, err)
 	r := request(t, c, setup, "POST", "/api/v1/auth/password", map[string]any{"password": "invalid"})
 	require.Equal(t, 400, r.Code)
@@ -130,12 +128,12 @@ func TestPasswordFileCorruptionFailsClosedAndSetupRaceHasOneWinner(t *testing.T)
 		require.Error(t, err)
 	}
 	c := testController(t, Options{})
-	first, _, err := c.claim(c.BootstrapToken(), "", false)
+	first, _, err := c.claim(c.BootstrapToken(), false)
 	require.NoError(t, err)
 	c.mu.Lock()
 	c.bootstrap = randomToken()
 	c.mu.Unlock()
-	second, _, err := c.claim(c.BootstrapToken(), "", false)
+	second, _, err := c.claim(c.BootstrapToken(), false)
 	require.NoError(t, err)
 	codes := make(chan int, 2)
 	var wg sync.WaitGroup

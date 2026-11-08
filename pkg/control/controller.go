@@ -50,6 +50,9 @@ type Options struct {
 	LogStore                 *logstore.Store
 }
 type Controller struct {
+	healthArchiveMu    sync.Mutex
+	healthArchiveError string
+
 	mu                            sync.Mutex
 	actions                       sync.Mutex
 	directory, version            string
@@ -73,7 +76,6 @@ type Controller struct {
 	bootstrap                     string
 	bootstrapExpiry               time.Time
 	sessions                      map[string]*Session
-	pairs                         map[string]Pairing
 	operations                    map[string]*Operation
 	operationOrder                []string
 	requestKeys                   map[string]string
@@ -89,6 +91,7 @@ type Controller struct {
 	configureLogging              func(kone.GeneralConfig) error
 	logs                          *logstore.Store
 	health                        *outboundHealthStore
+	healthWake                    chan struct{}
 	geoIPCache                    geoIPStatusCache
 	credentials                   *passwordCredentials
 }
@@ -109,15 +112,19 @@ type State struct {
 	CaptureLocked    bool           `json:"capture_locked"`
 }
 type Operation struct {
-	ID       string     `json:"id"`
-	Kind     string     `json:"kind"`
-	Status   string     `json:"status"`
-	Stage    string     `json:"stage"`
-	Started  time.Time  `json:"started_at"`
-	Finished *time.Time `json:"finished_at,omitempty"`
-	Result   any        `json:"result,omitempty"`
-	Error    string     `json:"error,omitempty"`
-	cancel   context.CancelFunc
+	Target    string     `json:"target,omitempty"`
+	Outbounds []string   `json:"outbounds,omitempty"`
+	Protocol  string     `json:"protocol,omitempty"`
+	ID        string     `json:"id"`
+	Kind      string     `json:"kind"`
+	Status    string     `json:"status"`
+	Stage     string     `json:"stage"`
+	Started   time.Time  `json:"started_at"`
+	Finished  *time.Time `json:"finished_at,omitempty"`
+	Result    any        `json:"result,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	ErrorCode string     `json:"error_code,omitempty"`
+	cancel    context.CancelFunc
 }
 
 func New(options Options) (*Controller, error) {
@@ -159,9 +166,10 @@ func New(options Options) (*Controller, error) {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &Controller{directory: options.Directory, version: options.Version, factory: options.Factory, preflight: options.Preflight, probe: options.Probe, now: options.Now, state: "paused", bootstrap: randomToken(), bootstrapExpiry: options.Now().Add(5 * time.Minute), sessions: map[string]*Session{}, pairs: map[string]Pairing{}, operations: map[string]*Operation{}, requestKeys: map[string]string{}, probeSlots: make(chan struct{}, 4), ctx: ctx, cancel: cancel}
+	c := &Controller{directory: options.Directory, version: options.Version, factory: options.Factory, preflight: options.Preflight, probe: options.Probe, now: options.Now, state: "paused", bootstrap: randomToken(), bootstrapExpiry: options.Now().Add(5 * time.Minute), sessions: map[string]*Session{}, operations: map[string]*Operation{}, requestKeys: map[string]string{}, probeSlots: make(chan struct{}, 4), ctx: ctx, cancel: cancel}
 	c.inspectSystemDNSRecovery, c.recoverSystemDNS = options.InspectSystemDNSRecovery, options.RecoverSystemDNS
 	c.probeUDP = options.ProbeUDP
+	c.healthWake = make(chan struct{}, 1)
 	if err := c.initAuthentication(); err != nil {
 		cancel()
 		return nil, err
@@ -188,6 +196,32 @@ func New(options Options) (*Controller, error) {
 				doc = fallback
 				c.configError = "Saved settings need repair; showing the last valid backup while preserving the original file"
 			}
+		}
+	}
+	// Convert the old implicit LAN bypass into visible, editable rules once.
+	// Keep the previous profile and keep the unconditional fallback last.
+	if c.configError == "" && doc.Config.Policy.Mode == "proxy-first" && !doc.Config.Policy.LANDefaults {
+		if doc.Version == ^uint64(0) {
+			cancel()
+			return nil, errors.New("configuration revision limit reached; cannot migrate LAN rules")
+		}
+		before := cloneDocument(doc)
+		final := doc.Config.Rule[len(doc.Config.Rule)-1]
+		doc.Config.Rule = doc.Config.Rule[:len(doc.Config.Rule)-1]
+		initializeLANRules(doc.Config)
+		doc.Config.Rule = append(doc.Config.Rule, final)
+		if err := doc.Config.Validate(); err != nil {
+			cancel()
+			return nil, err
+		}
+		doc.Version++
+		if err := writeDocument(c.settingsPath()+".previous", before); err != nil {
+			cancel()
+			return nil, err
+		}
+		if err := writeDocument(c.settingsPath(), doc); err != nil {
+			cancel()
+			return nil, err
 		}
 	}
 	c.doc = doc
@@ -217,9 +251,18 @@ func (c *Controller) settingsPath() string { return filepath.Join(c.directory, "
 
 func managementDefaults() *kone.KoneConfig {
 	cfg := kone.DefaultConfig()
+	cfg.Policy.Mode = "direct-first"
+	cfg.Policy.RuleVersion = 2
+	cfg.DNS.PersistentFakeIP = true
 	cfg.Core.IPv6Network = kone.DefaultIPv6Network()
+	if ipv4, ipv6, err := kone.FreshFakeIPNetworks(cfg); err == nil {
+		cfg.Core.Network, cfg.Core.IPv6Network = ipv4, ipv6
+	}
 	cfg.Rule = []kone.RuleConfig{{ID: "rule-default-direct", Source: "default", Schema: "FINAL", Outbound: kone.BuiltinDirect}}
 	cfg.DNS.System = kone.SupportsSystemDNS()
+	if kone.SupportsSystemDNS() {
+		cfg.DNS.Mode = "host"
+	}
 	return cfg
 }
 func (c *Controller) confirmedPath() string  { return filepath.Join(c.directory, "confirmed.json") }
@@ -259,7 +302,7 @@ func (c *Controller) State() State {
 		"inbounds": []string{"tun"}, "stacks": kone.SupportedStacks(),
 		"tcp": true, "udp_direct": true, "udp_proxy": true, "proxy_udp_schemes": []string{"socks5", "ss"},
 		"ipv6": kone.SupportsIPv6Capture(), "ipv6_available": kone.DefaultIPv6Network() != "", "ipv6_enabled": c.doc.Config.Core.IPv6Network != "",
-		"system_dns": kone.SupportsSystemDNS(), "system_dns_enabled": c.doc.Config.DNS.System,
+		"system_dns": kone.SupportsSystemDNS(), "system_dns_enabled": c.doc.Config.DNS.SystemEnabled(),
 		"process_attribution": process.Supported(), "process_scope": "best effort for local IPv4 sockets; IPv6 and unverified owners remain unknown; remote sources remain remote",
 		"tls_lan": true, "persistent_config": true, "statistics": "business payload bytes", "temporary_rules": true, "temporary_rule_scope": "domain rules only",
 	}
@@ -298,7 +341,7 @@ func (c *Controller) Validate(request SaveRequest) (map[string]any, error) {
 }
 
 func restartRequired(next, current Document) bool {
-	return next.Inbound != current.Inbound || !reflect.DeepEqual(next.Config.Core, current.Config.Core) || !reflect.DeepEqual(next.Config.DNS, current.Config.DNS) || !reflect.DeepEqual(next.Config.General, current.Config.General) || next.Config.GeoIP != current.Config.GeoIP
+	return next.Inbound != current.Inbound || next.Config.Policy.Mode != current.Config.Policy.Mode || !reflect.DeepEqual(next.Config.Core, current.Config.Core) || !reflect.DeepEqual(next.Config.DNS, current.Config.DNS) || !reflect.DeepEqual(next.Config.General, current.Config.General) || next.Config.GeoIP != current.Config.GeoIP
 }
 
 func (c *Controller) Save(request SaveRequest) (map[string]any, error) {
@@ -352,15 +395,11 @@ func (c *Controller) saveLocked(request SaveRequest) (result map[string]any, res
 	c.doc = next
 	c.configError = ""
 	c.mu.Unlock()
+	c.wakeOutboundMonitor()
 	c.logEvent(slog.LevelInfo, "Settings saved", slog.String("stage", "save"), slog.Uint64("saved_version", next.Version))
 	value := c.Document()
 	value["applied"] = false
 	if engine != nil {
-		if directOnly(next.Config) && !next.DirectOnlyConfirmed {
-			value["apply_error"] = "Saved, but confirm direct-only capture before applying"
-			c.logEvent(slog.LevelWarn, "Saved settings require direct-only confirmation before applying", slog.String("stage", "apply"), slog.Uint64("saved_version", next.Version))
-			return value, nil
-		}
 		applyCtx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
 		err = c.applyLocked(applyCtx)
 		cancel()
@@ -517,6 +556,7 @@ func (c *Controller) Start(ctx context.Context) error {
 		} else {
 			c.logEvent(slog.LevelInfo, "Capture engine stopped", slog.String("stage", "engine"))
 		}
+		c.snapshotConnectionHealth(engine)
 		cleanupErr := engine.Close()
 		if cleanupErr == nil {
 			cleanupErr = c.removeRecoveryJournal(runID)
@@ -635,6 +675,7 @@ func (c *Controller) pauseLocked(ctx context.Context) error {
 		}
 		return nil
 	}
+	c.snapshotConnectionHealth(engine)
 	c.logEvent(slog.LevelInfo, "Pausing capture and restoring network state", slog.String("stage", "pause"))
 	cancel()
 	err := engine.Close()
@@ -682,9 +723,6 @@ func (c *Controller) applyLocked(ctx context.Context) (resultErr error) {
 	}
 	if !doc.Inbound.Enabled {
 		return c.pauseLocked(ctx)
-	}
-	if directOnly(doc.Config) && !doc.DirectOnlyConfirmed {
-		return errors.New("confirm direct-only capture before applying")
 	}
 	var err error
 	if versioned, ok := engine.(interface {

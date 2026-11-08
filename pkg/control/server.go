@@ -20,6 +20,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	"github.com/xjdrew/kone/pkg/geoip"
 	"github.com/xjdrew/kone/pkg/kone"
+	"github.com/xjdrew/kone/pkg/locale"
 	web "github.com/xjdrew/kone/web"
 )
 
@@ -30,7 +31,7 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 func apiError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "message": message, "request_id": randomID("request")}})
+	writeJSON(w, status, map[string]any{"error": map[string]any{"code": code, "params": map[string]any{}, "message": message, "details": message, "request_id": randomID("request")}})
 }
 
 func writeOperation(w http.ResponseWriter, operation Operation) {
@@ -104,7 +105,7 @@ func (c *Controller) Handler() http.Handler {
 		}
 		session, ok := c.authorize(r)
 		if !ok {
-			apiError(w, 401, "unauthorized", "Authorize this browser or pair it from the local KONE window")
+			apiError(w, 401, "unauthorized", "Sign in with the management password")
 			return
 		}
 		if path == "auth/password" && r.Method == http.MethodPost {
@@ -117,7 +118,7 @@ func (c *Controller) Handler() http.Handler {
 		}
 		if path == "session/logout" && r.Method == http.MethodPost {
 			c.revoke(session.ID)
-			http.SetCookie(w, &http.Cookie{Name: "kone_session", Value: "", Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1})
+			http.SetCookie(w, &http.Cookie{Name: sessionCookieName(r), Value: "", Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode, MaxAge: -1})
 			writeJSON(w, 200, map[string]any{"logged_out": true})
 			return
 		}
@@ -158,11 +159,31 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		key = session.ID + ":" + key
 	}
 	switch {
+	case path == "policy" && r.Method == http.MethodGet:
+		writeJSON(w, 200, c.policyState())
+	case path == "policy/preview" && r.Method == http.MethodPost:
+		c.policyRoute(w, r, false)
+	case path == "policy" && r.Method == http.MethodPut:
+		c.policyRoute(w, r, true)
 	case path == "auth/password" && r.Method == http.MethodPut:
 		c.changePassword(w, r, session)
 	case path == "state" && r.Method == http.MethodGet:
 		state := c.State()
-		writeJSON(w, 200, map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role, "remote_session": session.Remote, "local_access": session.Local, "password_configured": c.passwordConfigured(), "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf, "capture_locked": state.CaptureLocked})
+		c.mu.Lock()
+		observer := c.observer
+		c.mu.Unlock()
+		value := map[string]any{"state": state.State, "control_state": state.ControlState, "data_state": state.DataState, "host": state.Host, "role": session.Role, "remote_session": session.Remote, "local_access": session.Local, "password_configured": c.passwordConfigured(), "capabilities": state.Capabilities, "version": state.Version, "saved_version": state.SavedVersion, "running_version": state.RunningVersion, "confirmed_version": state.ConfirmedVersion, "last_error": state.LastError, "config_error": state.ConfigError, "scope": state.Scope, "time": state.Time, "session_id": session.ID, "csrf_token": session.csrf, "capture_locked": state.CaptureLocked}
+		if session.Local {
+			value["locale"] = locale.HostLanguage()
+		}
+		if observer != nil {
+			totals := observer.Totals()
+			if state.DataState != "running" {
+				totals.UploadRate, totals.DownloadRate = 0, 0
+			}
+			value["totals"] = totals
+		}
+		writeJSON(w, 200, value)
 	case path == "readiness" && r.Method == http.MethodGet:
 		writeJSON(w, 200, c.Readiness(r.Context()))
 	case path == "outbounds/health" && r.Method == http.MethodGet:
@@ -355,6 +376,10 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 			return
 		}
 		apiError(w, 410, "expired", "This flow detail has expired; it was not replaced with a newer sample")
+	case path == "connection-health" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		c.connectionHealthRoute(w, r)
+	case path == "smart" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		c.smartRoute(w, r)
 	case path == "dns" && r.Method == http.MethodGet:
 		c.mu.Lock()
 		source := c.dataSource
@@ -371,6 +396,43 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		}
 	case path == "diagnostics" && r.Method == http.MethodGet:
 		writeJSON(w, 200, map[string]any{"operations": c.Operations()})
+	case path == "dns/configuration" && r.Method == http.MethodGet:
+		c.mu.Lock()
+		cfg, source := cloneDocument(c.doc).Config.DNS, c.dataSource
+		if c.engine == nil || c.state != "running" {
+			source = nil
+		}
+		c.mu.Unlock()
+		interfaces, interfaceErr := localAccessInterfaces()
+		var defaults kone.DNSDefaults
+		var status kone.DNSRuntimeStatus
+		if source != nil {
+			var err error
+			status, _, err = source.DNSData()
+			if err != nil {
+				respondError(err)
+				return
+			}
+			defaults = kone.DNSDefaults{Servers: status.Servers, Source: "running", PublicFallback: status.PublicFallback, Warnings: status.Warnings}
+		} else {
+			defaults = kone.InspectDNSDefaults(cfg)
+		}
+		writeJSON(w, 200, map[string]any{"defaults": defaults, "status": status, "running": source != nil, "interfaces": privateInterfaces(interfaces), "interfaces_unavailable": interfaceErr != nil})
+	case path == "diagnostics/dns" && r.Method == http.MethodPost:
+		var request struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		}
+		if err := readJSON(w, r, &request); err != nil {
+			respondError(err)
+			return
+		}
+		op, err := c.DiagnoseProtocol(request.Name, nil, kone.DiagnosticOptions{Protocol: "dns", DNSName: request.Name, DNSType: request.Type}, key)
+		if err != nil {
+			respondError(err)
+			return
+		}
+		writeOperation(w, op)
 	case path == "diagnostics" && r.Method == http.MethodPost:
 		var request struct {
 			Target    string   `json:"target"`
@@ -415,27 +477,6 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 			return
 		}
 		writeJSON(w, 200, map[string]any{"sessions": c.sessionList()})
-	case path == "pairing" && r.Method == http.MethodPost:
-		if !localRemote(r) {
-			apiError(w, 403, "local_owner", "Create pairing codes on the KONE host")
-			return
-		}
-		var request struct {
-			Role string `json:"role"`
-		}
-		if err := readJSON(w, r, &request); err != nil {
-			respondError(err)
-			return
-		}
-		if request.Role == "" {
-			request.Role = "read"
-		}
-		pair, err := c.pair(request.Role)
-		if err != nil {
-			respondError(err)
-			return
-		}
-		writeJSON(w, 200, pair)
 	case strings.HasPrefix(path, "sessions/") && strings.HasSuffix(path, "/revoke") && r.Method == http.MethodPost:
 		id := strings.TrimSuffix(strings.TrimPrefix(path, "sessions/"), "/revoke")
 		writeJSON(w, 200, map[string]any{"revoked": c.revoke(id)})
@@ -465,20 +506,27 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		}
 		writeJSON(w, 200, map[string]any{"cleared": true, "network_changed": false})
 	case path == "access/lan" && r.Method == http.MethodPost:
-		if !localRemote(r) {
+		if !c.localAccess(r) {
 			apiError(w, 403, "local_owner", "LAN access is controlled on the KONE host")
 			return
 		}
 		var request struct {
 			Enabled bool   `json:"enabled"`
 			Address string `json:"address"`
+			HTTPS   *bool  `json:"https"`
 		}
 		if err := readJSON(w, r, &request); err != nil {
 			respondError(err)
 			return
 		}
-		value, err := c.SetLAN(request.Enabled, request.Address)
+		https := request.HTTPS == nil || *request.HTTPS
+		value, err := c.SetRemoteAccess(request.Enabled, request.Address, https)
 		if err != nil {
+			var failure *accessError
+			if errors.As(err, &failure) {
+				apiError(w, 400, failure.code, failure.Error())
+				return
+			}
 			respondError(err)
 			return
 		}
@@ -521,7 +569,7 @@ func (c *Controller) Serve(ctx context.Context, address string, ready func(strin
 	}
 	ip, err := netip.ParseAddr(host)
 	if err != nil || !ip.IsLoopback() {
-		return errors.New("local control must listen on a loopback IP; enable authenticated TLS LAN access separately")
+		return errors.New("local control must listen on a loopback IP; enable authenticated remote access separately")
 	}
 	lock, err := lockInstance(filepath.Join(c.directory, "instance.lock"))
 	if err != nil {
@@ -552,6 +600,10 @@ func (c *Controller) Serve(ctx context.Context, address string, ready func(strin
 		}
 		ready(access)
 	}
+	monitorCtx, stopMonitor := context.WithCancel(c.ctx)
+	defer stopMonitor()
+	go c.monitorOutbounds(monitorCtx, outboundHealthTTL)
+	go c.mirrorConnectionHealth(monitorCtx)
 	err = server.Serve(listener)
 	closeErr := c.Close()
 	if errors.Is(err, http.ErrServerClosed) {

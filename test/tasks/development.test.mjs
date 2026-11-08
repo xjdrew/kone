@@ -28,8 +28,8 @@ async function fixture(t, options = {}) {
   await writeFile(join(cwd, "LICENSE"), "license\n");
   await writeFile(join(cwd, "LICENSE-MIT"), "legacy license\n");
   await writeFile(join(cwd, "web/package.json"), "{}\n");
-  await writeFile(join(cwd, "web/package-lock.json"), "{}\n");
-  await writeFile(join(cwd, "web/src/app.js"), "initial source\n");
+  await writeFile(join(cwd, "web/bun.lock"), "{}\n");
+  await writeFile(join(cwd, "web/src/main.tsx"), "initial source\n");
   const calls = [];
   const logs = [];
   const run = (command, args, settings = {}) => {
@@ -37,20 +37,20 @@ async function fixture(t, options = {}) {
     if (command === options.missing) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     if (command === "git") return args[0] === "rev-parse" ? sha : "git version 2.50";
     if (command === "go" && args[0] === "version") return "go version go1.27.3 windows/amd64";
+    if (command === "bun" && args[0] === "--version") return "1.4.4";
     if (command === "node") return "v26.13.0";
     if (command === "just" && args[0] === "--version") return "just 1.59.0";
     if (command === "bash" && args[0] === "--version") return "GNU bash, version 5";
     if (command === process.execPath && args.some(arg => arg.endsWith("version-policy.mjs"))) return "0.4.0-dev.20261101.1.gaaaaaaaaaaaa";
-    if (command === "bash" && args.includes("kone-npm")) {
-      const npmArgs = args.slice(args.indexOf("kone-npm") + 1);
-      if (npmArgs[0] === "--version") return "11.20.0";
-      if (npmArgs[0] === "ci") {
+    if (command === "bash" && args.includes("kone-npm") && args.includes("--version")) return "11.20.0";
+    if (command === "bun") {
+      if (args[0] === "install") {
         for (const path of ["vite", "@playwright/test"]) {
           const folder = join(cwd, "web/node_modules", path);
           mkdirSync(folder, { recursive: true });
           writeFileSync(join(folder, "package.json"), "{}");
         }
-      } else if (npmArgs.join(" ") === "run build") {
+      } else if (args.join(" ") === "run build") {
         mkdirSync(join(cwd, "web/dist"), { recursive: true });
         writeFileSync(join(cwd, "web/dist/index.html"), `built ${calls.length}`);
       }
@@ -64,16 +64,14 @@ async function fixture(t, options = {}) {
   return { cwd, calls, logs, ctx: context({ cwd, taskRoot, run, log: (message) => logs.push(message), env: {}, platform: "win32", arch: "x64", ...options }) };
 }
 
-const npmCalls = (calls, command) => calls.filter((call) =>
-  call.command === "bash" && call.args.includes("kone-npm") &&
-  call.args.slice(call.args.indexOf("kone-npm") + 1).join(" ") === command);
+const bunCalls = (calls, command) => calls.filter(call => call.command === "bun" && call.args.join(" ") === command);
 
 test("init reports missing base tools before installing any dependencies", async (t) => {
   const f = await fixture(t, { missing: "go" });
   await assert.rejects(initialize(f.ctx), /Development setup needs attention/);
   assert.match(f.logs.join("\n"), /go: not found on PATH; install Go 1.27.3/);
   assert.match(f.logs.join("\n"), /\[OK\] npm: 11.20.0/);
-  assert.equal(npmCalls(f.calls, "ci").length, 0);
+  assert.equal(bunCalls(f.calls, "install --frozen-lockfile").length, 0);
   assert.ok(!f.calls.some((call) => call.command === "go" && call.args[0] === "list"));
 });
 
@@ -81,10 +79,10 @@ test("init prepares project dependencies once and detects lockfile changes", asy
   const f = await fixture(t);
   await initialize(f.ctx);
   await initialize(f.ctx);
-  assert.equal(npmCalls(f.calls, "ci").length, 1);
-  await writeFile(join(f.cwd, "web/package-lock.json"), '{"changed":true}\n');
+  assert.equal(bunCalls(f.calls, "install --frozen-lockfile").length, 1);
+  await writeFile(join(f.cwd, "web/bun.lock"), '{"changed":true}\n');
   await initialize(f.ctx);
-  assert.equal(npmCalls(f.calls, "ci").length, 2);
+  assert.equal(bunCalls(f.calls, "install --frozen-lockfile").length, 2);
   assert.ok(!f.calls.some((call) => call.args.join(" ").includes("playwright install")));
 });
 
@@ -92,14 +90,14 @@ test("frontend rebuilds only for changed inputs or missing/changed outputs", asy
   const f = await fixture(t);
   await ensureFrontend(f.ctx);
   await ensureFrontend(f.ctx);
-  assert.equal(npmCalls(f.calls, "run build").length, 1);
-  await writeFile(join(f.cwd, "web/src/app.js"), "changed source");
+  assert.equal(bunCalls(f.calls, "run build").length, 1);
+  await writeFile(join(f.cwd, "web/src/main.tsx"), "changed source");
   await ensureFrontend(f.ctx);
-  assert.equal(npmCalls(f.calls, "run build").length, 2);
+  assert.equal(bunCalls(f.calls, "run build").length, 2);
   await rm(join(f.cwd, "web/dist/index.html"));
   await ensureFrontend(f.ctx);
-  assert.equal(npmCalls(f.calls, "run build").length, 3);
-  assert.equal(npmCalls(f.calls, "ci").length, 1);
+  assert.equal(bunCalls(f.calls, "run build").length, 3);
+  assert.equal(bunCalls(f.calls, "install --frozen-lockfile").length, 1);
   assert.ok(f.logs.some((message) => message.includes("skipped")));
 });
 
@@ -122,7 +120,7 @@ test("native builds only the host target and includes every runtime stack", asyn
   assert.deepEqual(metadata.args.slice(-2), ["--targets", "windows-amd64"]);
   assert.ok(!("KONE_BUILD_STACK" in metadata.settings.env));
   await build(f.ctx);
-  assert.equal(npmCalls(f.calls, "run build").length, 1);
+  assert.equal(bunCalls(f.calls, "run build").length, 1);
 });
 
 test("obsolete stack arguments and compiler failures stop before packaging or launching the application", async (t) => {
@@ -195,6 +193,6 @@ test("full quality restores removed dependencies even when embedded Web assets a
   assert.equal(dirname(dependencies), join(f.cwd, "web"));
   await rm(dependencies, { recursive: true, force: true });
   await quality(f.ctx, "full");
-  assert.equal(npmCalls(f.calls, "ci").length, 2);
-  assert.equal(npmCalls(f.calls, "run build").length, 1);
+  assert.equal(bunCalls(f.calls, "install --frozen-lockfile").length, 2);
+  assert.equal(bunCalls(f.calls, "run build").length, 1);
 });

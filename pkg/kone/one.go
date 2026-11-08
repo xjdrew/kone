@@ -38,6 +38,9 @@ type ConfigSnapshot struct {
 }
 
 type One struct {
+	health *connectionHealth
+
+	smart                *smartCoordinator
 	ip                   net.IP
 	subnet               *net.IPNet
 	policy               atomic.Pointer[runtimeSnapshot]
@@ -65,6 +68,10 @@ type One struct {
 	captureRecorder      func(string, int) error
 	captureIdentity      captureDeviceIdentity
 	initialGeoIP         *geoip.Database
+	systemDNSActive      atomic.Bool
+	fakeIPDirectory      string
+	fakeIPLedger         *fakeIPLedger
+	retiredPools         []netip.Prefix
 }
 
 type Option func(*One) error
@@ -105,12 +112,21 @@ func cloneConfig(cfg *KoneConfig) *KoneConfig {
 			enabled := *value
 			copy.Outbounds[i].Enabled = &enabled
 		}
+		if value := copy.Outbounds[i].CheckEnabled; value != nil {
+			checkEnabled := *value
+			copy.Outbounds[i].CheckEnabled = &checkEnabled
+		}
+		if value := copy.Outbounds[i].CheckTLS; value != nil {
+			checkTLS := *value
+			copy.Outbounds[i].CheckTLS = &checkTLS
+		}
 	}
 	copy.Rule = slices.Clone(cfg.Rule)
 	for i := range copy.Rule {
 		copy.Rule[i].Ports = slices.Clone(cfg.Rule[i].Ports)
 	}
 	copy.DNS.Servers = slices.Clone(cfg.DNS.Servers)
+	copy.DNS.RetiredPools = slices.Clone(cfg.DNS.RetiredPools)
 	copy.DNS.SystemContext = cloneDNSSystemContext(cfg.DNS.SystemContext)
 	copy.DNS.Rules = slices.Clone(cfg.DNS.Rules)
 	for i := range copy.DNS.Rules {
@@ -150,7 +166,7 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	if err := validateIPv6Platform(cfg.Core); err != nil {
 		return nil, err
 	}
-	if cfg.DNS.System && !SupportsSystemDNS() {
+	if cfg.DNS.SystemEnabled() && !SupportsSystemDNS() {
 		return nil, CheckSystemDNS(context.Background(), cfg.DNS)
 	}
 	cfg = cloneConfig(cfg)
@@ -197,6 +213,7 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 		}
 	}
 	rule := NewRuleWithGeoIP(cfg.Rule, cfg.Outbounds, database)
+	one.protectRule(rule, cfg)
 	p.bypassEndpoints(rule)
 	one.policy.Store(&runtimeSnapshot{version: 1, cfg: cfg, rule: rule, outbounds: p, geoIP: database})
 	one.dnsTable = NewDnsTable(ip, subnet)
@@ -210,6 +227,22 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 	}
 	one.dns.setDialer(dialer)
 	p.dial = one.endpointDialer(dialer)
+	direct, err := policyDirectDialer(dialer, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Core.OutboundInterface == "" && direct != nil {
+		// Snapshot native egress before installing selective capture routes.
+		// A rule may now proxy a private address or a configured endpoint; our
+		// own proxy and DNS sockets must still bypass those new TUN routes.
+		one.dns.setDialer(direct)
+		p.dial = one.endpointDialer(direct)
+	}
+	if direct != nil {
+		p.directDial = one.endpointDialer(direct)
+	}
+	one.smart = newSmartCoordinator(one)
+	one.health = newConnectionHealth(one)
 	return one, nil
 }
 
@@ -235,7 +268,7 @@ func (one *One) ReloadVersion(cfg *KoneConfig, revision uint64) error {
 		return errors.New("engine is closed")
 	}
 	old := one.policy.Load()
-	if !reflect.DeepEqual(cfg.Core, old.cfg.Core) || !reflect.DeepEqual(cfg.DNS, old.cfg.DNS) || cfg.General != old.cfg.General || cfg.GeoIP != old.cfg.GeoIP {
+	if cfg.Policy.Mode != old.cfg.Policy.Mode || !reflect.DeepEqual(cfg.Core, old.cfg.Core) || !reflect.DeepEqual(cfg.DNS, old.cfg.DNS) || cfg.General != old.cfg.General || cfg.GeoIP != old.cfg.GeoIP {
 		return errors.New("changes to general/core/dns/geoip require restart")
 	}
 	p, err := NewOutbounds(cfg.Outbounds)
@@ -243,12 +276,16 @@ func (one *One) ReloadVersion(cfg *KoneConfig, revision uint64) error {
 		return err
 	}
 	p.dial = old.outbounds.dial
+	p.directDial = old.outbounds.directDial
 	rule := NewRuleWithGeoIP(cfg.Rule, cfg.Outbounds, old.geoIP)
+	one.protectRule(rule, cfg)
 	p.bypassEndpoints(rule)
 	if err := one.reloadCaptureRoutes(cfg.Core, rule); err != nil {
 		return err
 	}
 	one.policy.Store(&runtimeSnapshot{version: old.version + 1, configVersion: revision, cfg: cfg, rule: rule, outbounds: p, geoIP: old.geoIP, previousGeoIP: old.previousGeoIP})
+	one.smart.invalidate()
+	one.health.invalidate()
 	one.clearDirectDNSCaches()
 	return nil
 }
@@ -267,6 +304,9 @@ func (one *One) Close() error {
 	}
 	one.mu.Unlock()
 	if closeUnstarted {
+		if one.fakeIPLedger != nil {
+			one.cleanupErr = one.fakeIPLedger.Close()
+		}
 		if one.flows != nil {
 			one.flows.close()
 		}
@@ -316,6 +356,7 @@ func (one *One) Run(parent context.Context) (result error) {
 		// Stop admission and active flows before restoring system networking.
 		var cleanup []error
 		if restoreSystemDNS != nil {
+			one.systemDNSActive.Store(false)
 			dnsCleanupCtx, dnsStop := context.WithTimeout(cleanupCtx, 3*time.Second)
 			cleanup = append(cleanup, restoreSystemDNS(dnsCleanupCtx))
 			dnsStop()
@@ -347,6 +388,7 @@ func (one *One) Run(parent context.Context) (result error) {
 		}
 		one.flows.workers.Wait()
 		wg.Wait()
+		cleanup = append(cleanup, one.fakeIPLedger.Close())
 		one.freezeObservation()
 		one.mu.Lock()
 		one.cleanupErr = errors.Join(cleanup...)
@@ -358,7 +400,15 @@ func (one *One) Run(parent context.Context) (result error) {
 		return nil
 	}
 	cfg := one.policy.Load().cfg
-	if cfg.DNS.System {
+	if cfg.DNS.PersistentFakeIP {
+		if err := one.restoreFakeIPOwnership(); err != nil {
+			return &CaptureSetupError{Code: "fake_ip_ownership", Cause: err}
+		}
+	} else if err := one.verifyVolatileFakeIPPools(); err != nil {
+		return &CaptureSetupError{Code: "fake_ip_ownership", Cause: err}
+	}
+	guideSystemDNS := cfg.DNS.SystemEnabled()
+	if guideSystemDNS {
 		if _, ok := one.network.(SystemDNSConfigurer); !ok {
 			return errors.New("network backend cannot configure system DNS")
 		}
@@ -366,7 +416,7 @@ func (one *One) Run(parent context.Context) (result error) {
 			CheckSystemDNS(context.Context, DNSConfig) error
 		}); ok {
 			if err := checker.CheckSystemDNS(ctx, cfg.DNS); err != nil {
-				return fmt.Errorf("system DNS preflight: %w", err)
+				return &CaptureSetupError{Code: "system_dns", Cause: fmt.Errorf("system DNS preflight: %w", err)}
 			}
 		}
 	}
@@ -410,10 +460,10 @@ func (one *One) Run(parent context.Context) (result error) {
 		return fmt.Errorf("start TUN stack: %w", err)
 	}
 	if dnsConn, err = lc.ListenPacket(ctx, one.dns.server.Net, one.dns.server.Addr); err != nil {
-		return fmt.Errorf("DNS listener: %w", err)
+		return &CaptureSetupError{Code: "dns_listener", Cause: fmt.Errorf("DNS listener: %w", err)}
 	}
 	if dnsTCP, err = lc.Listen(ctx, one.dns.tcpServer.Net, one.dns.server.Addr); err != nil {
-		return fmt.Errorf("DNS TCP listener: %w", err)
+		return &CaptureSetupError{Code: "dns_listener", Cause: fmt.Errorf("DNS TCP listener: %w", err)}
 	}
 	dnsTCP = &ownedListener{Listener: dnsTCP}
 	if err := one.dns.openIPv6Listeners(ctx, lc); err != nil {
@@ -466,7 +516,7 @@ func (one *One) Run(parent context.Context) (result error) {
 	if err := one.dns.startIPv6DNS(ctx, start, errorsCh); err != nil {
 		return err
 	}
-	if cfg.DNS.System {
+	if guideSystemDNS {
 		configurer, ok := one.network.(SystemDNSConfigurer)
 		if !ok {
 			return errors.New("network backend cannot configure system DNS")
@@ -481,8 +531,9 @@ func (one *One) Run(parent context.Context) (result error) {
 			restoreSystemDNS, err = configurer.ConfigureSystemDNS(ctx, device, cfg.Core, cfg.DNS)
 		}
 		if err != nil {
-			return fmt.Errorf("configure system DNS: %w", err)
+			return &CaptureSetupError{Code: "system_dns", Cause: fmt.Errorf("configure system DNS: %w", err)}
 		}
+		one.systemDNSActive.Store(true)
 		if leaseFailures != nil {
 			start("system DNS lease", func() error {
 				select {
@@ -499,6 +550,7 @@ func (one *One) Run(parent context.Context) (result error) {
 	}
 	start("DNS cache", func() error { return one.dns.Maintain(ctx) })
 	close(one.ready)
+	start("Connection health", func() error { return one.health.run(ctx) })
 	select {
 	case err := <-errorsCh:
 		if ctx.Err() == nil {

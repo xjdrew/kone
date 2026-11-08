@@ -3,6 +3,8 @@ package kone
 import (
 	"errors"
 	"net"
+	"runtime"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -35,7 +37,17 @@ func TestDNSFixtureRetriesCrossProtocolCollisionWithoutReleasingReservation(t *t
 		}
 		return net.ListenPacket(network, address)
 	}, func(network, address string) (net.Listener, error) {
-		require.Equal(t, "127.0.0.1:0", address, "TCP must choose the shared port")
+		if runtime.GOOS == "windows" {
+			host, port, err := net.SplitHostPort(address)
+			require.NoError(t, err)
+			require.Equal(t, "127.0.0.1", host)
+			number, err := strconv.Atoi(port)
+			require.NoError(t, err)
+			require.GreaterOrEqual(t, number, 20000)
+			require.Less(t, number, 30000, "avoid dynamic port exclusions for either transport")
+		} else {
+			require.Equal(t, "127.0.0.1:0", address, "TCP must choose the shared port")
+		}
 		conn, err := net.Listen(network, address)
 		if err == nil {
 			allocations = append(allocations, conn)
@@ -66,6 +78,10 @@ func TestDNSFixtureDoesNotRetryOtherErrorsAndBoundsPersistentCollisions(t *testi
 		{name: "persistent_collision", err: syscall.EADDRINUSE, attempts: 32},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			attempts := test.attempts
+			if runtime.GOOS == "windows" && errors.Is(test.err, syscall.Errno(10013)) {
+				attempts = 32 // WSAEACCES may identify a reserved port, not global denial.
+			}
 			var allocations []net.Listener
 			_, _, err := bindDNSFixturePair(func(string, string) (net.PacketConn, error) { return nil, test.err }, func(network, address string) (net.Listener, error) {
 				conn, err := net.Listen(network, address)
@@ -75,7 +91,7 @@ func TestDNSFixtureDoesNotRetryOtherErrorsAndBoundsPersistentCollisions(t *testi
 				return conn, err
 			})
 			require.ErrorIs(t, err, test.err)
-			require.Len(t, allocations, test.attempts)
+			require.Len(t, allocations, attempts)
 			for _, conn := range allocations {
 				conn.(*net.TCPListener).SetDeadline(time.Now().Add(time.Second))
 				_, err := conn.Accept()
@@ -83,4 +99,20 @@ func TestDNSFixtureDoesNotRetryOtherErrorsAndBoundsPersistentCollisions(t *testi
 			}
 		})
 	}
+}
+
+func TestDNSFixtureRetriesTCPConflictBeforeReservingUDP(t *testing.T) {
+	attempts := 0
+	udp, tcp, err := bindDNSFixturePair(net.ListenPacket, func(network, address string) (net.Listener, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, syscall.EADDRINUSE
+		}
+		return net.Listen(network, address)
+	})
+	require.NoError(t, err)
+	defer udp.Close()
+	defer tcp.Close()
+	require.GreaterOrEqual(t, attempts, 2)
+	require.Equal(t, udp.LocalAddr().String(), tcp.Addr().String())
 }

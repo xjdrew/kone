@@ -10,7 +10,7 @@ import (
 )
 
 var errAutomaticRecovery = errors.New("Could not restore the previous capture automatically; check the host network and runtime logs, then retry")
-var errSystemDNSRecoveryRequired = errors.New("Previous Windows system DNS requires explicit recovery from the local console; inspect the DNS lease, confirm recovery and authorize administrator access")
+var errSystemDNSRecoveryRequired = errors.New("Previous system DNS requires explicit recovery from the local console; inspect the DNS lease, confirm recovery and authorize administrator access")
 
 // Recovery never deletes an interface just because its name looks familiar.
 // Kernel-owned transient TUN resources normally disappear with the old process;

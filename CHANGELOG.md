@@ -1,6 +1,44 @@
+# 2026/11/08
+
+## Features
+
+- Rename the routing workspace to Proxy rules across navigation, messages and documentation.
+- Add explicit layered routing upgrades, with domain rules before IP rules and decisions bound to the actual dialed address.
+- Keep Fake-IP domain ownership across restarts and profiles, with capacity visibility and an explicit fresh-pool migration for legacy configurations.
+- Unify DNS and connection health in Overview with persistent attention records, retesting, combined port results and handling history.
+- Add opt-in temporary outbound selection that respects manual rules, with proxy DNS recovery and one-click pinning as a permanent rule.
+
+## Bugfixes
+
+- Simplify Overview to one health table, ignore native DNS failures on working proxy routes, and choose rule outbounds inline while allowing paused/legacy Smart preferences.
+
+- Collect repeated connection errors in timed notifications and a status-bar error history without disrupting page layout.
+- Apply Comfortable density to typography, form spacing, controls and table rows.
+
+- Accept domain/IP connection targets and proxy addresses without a port, defaulting to 80 while DNS retains port 53.
+- Preserve domain identity for direct exceptions under global capture and stop stale or unrelated DNS evidence from choosing another target.
+
+## Changes
+
+- Combine Notifications, Diagnostics and Logs in one floating tabbed tool panel without resizing the main page.
+
+- Clarify connection-health status, issue resolution and inline rule actions in the product and UI specifications.
+
 # 2026/11/07
 
 ## Features
+
+- Add Host and Gate DNS modes with system-upstream discovery, explicit public fallback warnings and a redesigned Resolvers page.
+- Compare system DNS and KONE DNS by query name, including answers and Fake-IP policy results.
+- Enable Linux capture through a native polkit authorization dialog while keeping management unprivileged.
+- Recall up to 20 recent diagnostic targets, separate DNS queries from connection tests, and show total test time in result summaries.
+
+- Choose a local private address or all IPv4 interfaces for remote management, use HTTP or HTTPS, and set a password as part of first-time enablement; HTTPS includes CA trust guidance.
+- Rebuild the Web console around Traffic, Proxy rules and Outbounds workspaces, with contextual rule editing, keyboard commands and persistent diagnostics/log tools.
+- Add editable direct-first and global-proxy policies with loop prevention and editable LAN direct defaults, country exceptions, IPv6 scope and explicit UDP fallback consent; existing profiles retain their intent.
+- Check configured outbounds periodically in turn using their actual proxy protocol, with per-outbound targets and an off switch.
+- Diagnose any domain or IP with optional presets, live per-outbound summaries and expandable details.
+- Add offline English and Chinese interfaces, system-language detection and per-client language preferences, including desktop menus and translated operation summaries.
 
 - Open the numeric loopback management address without a password while keeping remote access authenticated.
 - Apply IPv4 and IPv6 CIDR rule changes live while preserving established connections.
@@ -10,15 +48,23 @@
 
 ## Bugfixes
 
+- Enable Host DNS on Linux without systemd-resolved, preserving and restoring the original resolver file or WSL symlink.
+- Accept port-free connection targets as TCP 80, unify diagnostic history controls and keep save feedback from covering actions.
+- Allow default direct routing without configuring a proxy or confirming direct-only mode; removing proxy rules applies immediately.
+- Explain startup blockers and their next steps, keep the enable action visible, and allow readiness checks without starting capture.
+- Allow private-network proxy rules while keeping local hosts and KONE’s own proxy/DNS transports outside recursive capture; preserve deleted LAN defaults across restarts.
+
+- Keep graph labels readable on narrow screens and inspect Windows route changes without launching console commands.
+
 - Preserve the helper's final cleanup logs when stopping capture.
 
 ## Changes
 
 - Document the two-base-mode design with shared custom rules, routing and cache limitations, proxy-tool comparisons, and Windows/macOS application-rule feasibility.
 - Document proposals for fixed rule layers, consistent dial targets, durable Fake-IP ownership, and optional Smart suggestions for both proxy and direct routing.
+- Replace pairing codes with management-password sign-in and revocable remote sessions.
 - Reduce contributor wait time for automated checks across supported platforms.
-- Specify editable direct-first and global-proxy base policies and extensible English/Chinese interface localization in the product and design documents.
-- Define Web console design rules around traffic and policy workspaces, contextual tools, dense layouts and efficient keyboard workflows.
+- Define Web console design rules around traffic, proxy rules and outbounds workspaces, contextual tools, dense layouts and efficient keyboard workflows.
 - Use clearer proxy terminology throughout the console, tray and guides.
 - Consolidate user and developer guides, replace historical notes with current instructions, and define product and Web requirements for future redesigns, including transparent routing, performance and payload privacy goals.
 
@@ -70,7 +116,7 @@
 - Keep Settings menu links responsive while live status updates refresh their summaries.
 - Preserve log filters, expanded fields and reading position during automatic updates.
 - Show real outbound connection failures in runtime logs at the default log level.
-- Prevent intercepted domains from bypassing their routing policy through real IPv6 DNS answers when IPv6 capture is disabled.
+- Prevent intercepted domains from bypassing their proxy rules through real IPv6 DNS answers when IPv6 capture is disabled.
 - Reject invalid diagnostic addresses and consistently enforce probe limits.
 - Keep unsaved proxy edits when enabling direct-only capture.
 - Preserve editor drafts and return navigation during browser history changes and configuration refreshes.

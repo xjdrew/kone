@@ -33,13 +33,16 @@ func (o DiagnosticOptions) Normalize() (DiagnosticOptions, error) {
 		}
 		return o, nil
 	}
-	if o.Protocol != "udp" || o.TLS {
-		return o, errors.New("diagnostic protocol must be tcp or udp; TLS requires TCP")
+	if o.Protocol != "udp" && o.Protocol != "dns" || o.TLS {
+		return o, errors.New("diagnostic protocol must be tcp, udp or dns; TLS requires TCP")
 	}
-	if o.UDPMode == "" {
+	if o.Protocol == "dns" && (o.UDPMode != "" || o.AddressFamily != "") {
+		return o, errors.New("DNS comparison does not accept UDP transport options")
+	}
+	if o.UDPMode == "" && o.Protocol == "udp" {
 		o.UDPMode = "dns"
 	}
-	if o.UDPMode != "dns" {
+	if o.Protocol == "udp" && o.UDPMode != "dns" {
 		return o, errors.New("UDP diagnostics require a DNS server and DNS response validation")
 	}
 	if o.DNSName == "" {
@@ -58,6 +61,12 @@ func (o DiagnosticOptions) Normalize() (DiagnosticOptions, error) {
 	if o.DNSType != "A" && o.DNSType != "AAAA" {
 		return o, errors.New("diagnostic DNS query type must be A or AAAA")
 	}
+	if o.Protocol == "dns" {
+		if net.ParseIP(o.DNSName) != nil {
+			return o, errors.New("DNS comparison requires a domain name, not an IP address")
+		}
+		return o, nil
+	}
 	if o.AddressFamily == "" {
 		o.AddressFamily = "auto"
 	}
@@ -74,6 +83,9 @@ func (one *One) ProbeDiagnosticRequestVersion(ctx context.Context, outbound, tar
 	}
 	if options.Protocol == "tcp" {
 		return one.ProbeDiagnosticVersion(ctx, outbound, target, options.TLS, version)
+	}
+	if options.Protocol == "dns" {
+		return one.probeDNSQuery(ctx, outbound, options, version)
 	}
 	return one.probeUDPDiagnostic(ctx, outbound, target, options, version)
 }
@@ -165,10 +177,12 @@ func (one *One) probeUDPDiagnostic(parent context.Context, outbound, target stri
 		result.Progress.Stage = "complete"
 		reportDiagnosticProgress(parent, result)
 	}()
-	if err := ValidateDiagnosticTarget(target); err != nil {
+	target, err = NormalizeDNSTarget(target)
+	if err != nil {
 		result.Message = err.Error()
 		return result, nil
 	}
+	result.Target = target
 	result.Host.Address = target
 	snapshot := one.policy.Load()
 	if snapshot == nil {

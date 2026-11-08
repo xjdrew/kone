@@ -1,6 +1,10 @@
 // KONE's own AppKit menu only: no Apple Events, Accessibility or shell commands.
 // stdin: bounded newline-delimited state JSON. stdout: READY and action names.
 // The Go controller owns every operation; this companion never changes network state.
+function trayLabel(key) {
+  var english = {open: "Open KONE", start: "Enable proxy", pause: "Pause proxy", diagnostics: "Open diagnostics", exit: "Quit KONE", stopping: "Waiting for network cleanup", state_running: "Running", state_paused: "Paused", state_starting: "Starting", state_stopping: "Pausing", state_failed: "Failed", state_degraded: "Needs recovery", state_unknown: "Unknown"};
+  return typeof koneTrayLabels !== "undefined" && typeof koneTrayLabels[key] === "string" ? koneTrayLabels[key] : english[key] || english.state_unknown;
+}
 var koneTrayObjects; // NSMenuItem's target is weak; retain its bridged JS owner.
 
 function normalizeTrayState(input) {
@@ -90,7 +94,7 @@ function run(argv) {
       else write(output, action);
       if (action === "EXIT") {
         closing = true;
-        update({ status: "stopping", detail: "正在等待控制层完成清理" });
+        update({ status: "stopping", detail: trayLabel("stopping") });
       }
     }
     ObjC.registerSubclass({
@@ -155,14 +159,14 @@ function run(argv) {
       menu.addItem(value);
       return value;
     }
-    entry("status", "KONE · 状态未知", "");
+    entry("status", "KONE · " + trayLabel("state_unknown"), "");
     menu.addItem($.NSMenuItem.separatorItem);
-    entry("open", "打开管理界面", "open:");
-    entry("start", "启用代理", "start:");
-    entry("pause", "停用代理", "pause:");
-    entry("diagnostics", "打开诊断", "diagnostics:");
+    entry("open", trayLabel("open"), "open:");
+    entry("start", trayLabel("start"), "start:");
+    entry("pause", trayLabel("pause"), "pause:");
+    entry("diagnostics", trayLabel("diagnostics"), "diagnostics:");
     menu.addItem($.NSMenuItem.separatorItem);
-    entry("exit", "退出 KONE", "exit:");
+    entry("exit", trayLabel("exit"), "exit:");
     bar = $.NSStatusBar.systemStatusBar;
     item = bar.statusItemWithLength($.NSVariableStatusItemLength);
     if (item.isNil() || item.button.isNil()) {
@@ -186,17 +190,7 @@ function run(argv) {
     koneTrayObjects = [target, menu, item, image];
     function update(input) {
       state = normalizeTrayState(input);
-      var labels = {
-        running: "已代理",
-        paused: "已暂停",
-        starting: "启动中",
-        stopping: "暂停中",
-        failed: "失败",
-        degraded: "需处理",
-        unknown: "状态未知",
-      };
-      var label = labels[state.status];
-      if (typeof label !== "string") label = state.status;
+      var label = trayLabel("state_" + state.status);
       item.button.toolTip =
         "KONE · " + label + (state.detail ? " · " + state.detail : "");
       entries.status.title = "KONE · " + label;

@@ -1,0 +1,135 @@
+.health {
+  border-block: 1px solid var(--line);
+  background: var(--surface);
+}
+.health h2 {
+  margin: 0;
+  font-size: var(--font-body);
+}
+.hint {
+  margin: 8px 22px;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.table {
+  overflow: auto;
+}
+.ports {
+  min-width: 130px;
+}
+.ports span {
+  display: inline-block;
+  white-space: nowrap;
+  margin-inline-end: 10px;
+  font-family: var(--mono);
+}
+.candidates {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+}
+.health td {
+  vertical-align: top;
+}
+@media (max-width: 767px) {
+  .hint {
+    margin-inline: 12px;
+  }
+  .health .table {
+    max-width: 100%;
+  }
+}
+.running {
+  display: inline-block;
+  animation: health-spin 1s linear infinite;
+}
+@keyframes health-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .running {
+    animation: none;
+  }
+}
+@media (max-width: 767px) {
+  .table > table > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .table > table > tbody > tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--line);
+  }
+  .table > table > tbody > tr > td {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    height: auto;
+  }
+  .table > table > tbody > tr > td:first-child,
+  .table > table > tbody > tr > td:last-child,
+  .table > table > tbody > tr > td[colspan] {
+    grid-column: 1 / -1;
+  }
+}
+.heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 12px 22px;
+}
+.heading h2 {
+  margin-inline-end: auto;
+}
+.runtime {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.heading > details {
+  position: relative;
+}
+.heading > details > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.candidates {
+  position: absolute;
+  inset-inline-end: 0;
+  width: min(360px, calc(100vw - 32px));
+  background: var(--surface);
+  z-index: 5;
+}
+.candidates p {
+  margin: 0;
+  font-size: var(--font-small);
+  color: var(--muted);
+}
+.evidenceHeading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dns {
+  font-family: var(--mono);
+}
+@media (max-width: 767px) {
+  .heading {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+  .heading h2 {
+    width: 100%;
+  }
+  .heading > details {
+    margin-inline-start: auto;
+  }
+}

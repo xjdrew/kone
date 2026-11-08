@@ -1,6 +1,8 @@
 # Proposal：规则分层、目标一致性与 Fake-IP 稳定归属
 
-日期：2026-11-07。状态：**待评审，供后续开发；未实施。** 基线：[master 8d018cd](https://github.com/xjdrew/kone/tree/8d018cd729f7417b7202a652c65a486ae0e2f33f)。问题编号沿用[研究报告第 3 节](../research/product-direction-2026-11-07.md#3-本次实验确认的四个边界)，用户已确认四个问题属实。
+> 2026-11-08 实施更新：本提案的一期建议已进入当前开发分支。产品契约以 [PRD](../requirements/prd.md)、[Web 规格](../requirements/web-ui.md) 与 [DNS 实现说明](../technical/dns.md) 为准；以下正文为历史设计推理与未来范围，不把后续自动应用、代理 DNS 或新协议视为已实现能力。
+
+原提案日期：2026-11-07。原始研究基线：[master 8d018cd](https://github.com/xjdrew/kone/tree/8d018cd729f7417b7202a652c65a486ae0e2f33f)。问题编号沿用[研究报告第 3 节](../research/product-direction-2026-11-07.md#3-本次实验确认的四个边界)，用户已确认四个问题属实。
 
 **建议采用固定四池：系统保护 → 域名 → IP → FINAL。** 同时必须补齐“需要解析时不能提前兜底”和“决定绑定具体地址”两个约束；只对规则重新排序不能完整修复 3.1、3.3。Fake-IP 建议采用稳定候选算法加持久地址归属，不能只换哈希函数。3.2 按用户决定保留为产品限制，后续写入用户手册。
 
@@ -160,7 +162,7 @@ DNS、路由模拟、诊断和实际流处理应共享求值语义。模拟没�
 | `pkg/control` / `pkg/desktop` | 存储位置、授权与单写者、助手重建、迁移预览和生命周期恢复 |
 | 模拟/观察 API 与后续界面 | 展示池、证据、候选与实际目标；未知不伪装成 FINAL；沿用版本检查 |
 
-按用户最新澄清，基础模式为 **Standalone（FINAL direct）和 Global（FINAL 指定代理）**，两者始终执行用户规则；Smart 是独立开关，Custom 不再是模式。四池共用同一语义。Smart 第一期只提供代理/直连建议，用户接受后才形成相应规则；后续自动偏好只作为 FINAL 的决策输入，不以学习域名规则越过用户 IP 规则。详细配置、模式切换及旧条件 FINAL 的兼容状态见[Smart proposal](dns-driven-smart-suggestions.md#2-路由策略模型与配置优化)。
+按用户最新澄清，基础模式为 **Standalone（FINAL direct）和 Global（FINAL 指定代理）**，两者始终执行用户规则；Smart 是独立开关，Custom 不再是模式。四池共用同一语义。Smart 第一期只提供代理/直连建议，用户接受后才形成相应规则；后续自动偏好只作为 FINAL 的决策输入，不以学习域名规则越过用户 IP 规则。详细配置、模式切换及旧条件 FINAL 的兼容状态见[Smart proposal](dns-driven-smart-suggestions.md#2-代理规则模型与配置优化)。
 
 Global 的域名直连例外仍需可靠身份：不能因 DNS 动作是 direct 就一律返回真实 IP，导致后续全局捕获的流丢失域名并再次命中代理 FINAL。需要保留身份时继续使用 Fake-IP，出口可以是 direct；这与按真实地址猜域名、或为共享 IP 移除捕获路由不同。
 

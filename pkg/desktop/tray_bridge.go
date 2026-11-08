@@ -36,7 +36,7 @@ func nativeTrayStatus(actions TrayActions) trayStatus {
 	if status == "" {
 		status = "unknown"
 	}
-	return trayStatus{Status: status, Detail: "KONE — " + status, CanStart: actions.Start != nil && status == "paused", CanPause: actions.Pause != nil && (status == "running" || status == "starting" || status == "degraded"), CanDiagnose: actions.Diagnostics != nil}
+	return trayStatus{Status: status, Detail: "KONE — " + trayStateLabel(status), CanStart: actions.Start != nil && status == "paused", CanPause: actions.Pause != nil && (status == "running" || status == "starting" || status == "degraded"), CanDiagnose: actions.Diagnostics != nil}
 }
 
 type trayProcess struct {

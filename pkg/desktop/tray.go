@@ -1,6 +1,9 @@
 package desktop
 
-import "sync/atomic"
+import (
+	"github.com/xjdrew/kone/pkg/locale"
+	"sync/atomic"
+)
 
 type TrayActions struct {
 	Open        func()
@@ -55,11 +58,31 @@ func invokeTrayAction(actions TrayActions, id uintptr) {
 
 func trayTooltip(actions TrayActions) string {
 	if actions.State == nil {
-		return "KONE — management available"
+		return locale.Desktop("desktop.available")
 	}
 	state := actions.State()
 	if state == "" {
-		state = "state unknown"
+		state = "unknown"
 	}
-	return "KONE — " + state
+	return "KONE — " + trayStateLabel(state)
+}
+
+func trayStateLabel(state string) string {
+	key := "common." + state
+	label := locale.Desktop(key)
+	if label == key {
+		return locale.Desktop("common.unknown")
+	}
+	return label
+}
+
+func trayLabels() map[string]string {
+	labels := map[string]string{}
+	for _, key := range []string{"open", "start", "pause", "diagnostics", "exit", "stopping"} {
+		labels[key] = locale.Desktop("desktop." + key)
+	}
+	for _, key := range []string{"running", "paused", "starting", "stopping", "failed", "degraded", "unknown"} {
+		labels["state_"+key] = trayStateLabel(key)
+	}
+	return labels
 }

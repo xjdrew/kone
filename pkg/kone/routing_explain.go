@@ -20,24 +20,23 @@ func explainTarget(target, protocol string, port uint16) (any, string, uint16, e
 	if protocol != "tcp" && protocol != "udp" {
 		return nil, "", 0, errors.New("protocol must be tcp or udp")
 	}
-	if target == "" || len(target) > 300 || strings.ContainsAny(target, "\x00\r\n\t /?#@") {
-		return nil, "", 0, errors.New("target must be a domain or IP, optionally with a port")
+	// A separate port field overrides only an omitted port, never an explicit one.
+	defaultPort := "80"
+	if port != 0 {
+		defaultPort = strconv.Itoa(int(port))
 	}
-	if host, raw, err := net.SplitHostPort(target); err == nil {
-		parsed, err := strconv.ParseUint(raw, 10, 16)
-		if err != nil || parsed == 0 || port != 0 && uint16(parsed) != port {
-			return nil, "", 0, errors.New("invalid or conflicting target port")
-		}
-		target, port = host, uint16(parsed)
+	normalized, err := normalizeTargetPort(target, defaultPort)
+	if err != nil {
+		return nil, "", 0, err
 	}
-	if port == 0 {
-		return nil, "", 0, errors.New("a destination port is required for flow simulation")
+	host, raw, _ := net.SplitHostPort(normalized)
+	parsed, _ := strconv.ParseUint(raw, 10, 16)
+	if port != 0 && port != uint16(parsed) {
+		return nil, "", 0, errors.New("invalid or conflicting target port")
 	}
+	target, port = host, uint16(parsed)
 	if address, err := netip.ParseAddr(target); err == nil {
 		return address.Unmap(), protocol, port, nil
-	}
-	if strings.Contains(target, ":") || len(target) > 253 {
-		return nil, "", 0, errors.New("invalid target domain")
 	}
 	return normalizeDomain(target), protocol, port, nil
 }
@@ -51,6 +50,10 @@ func explainWithRule(rule *Rule, outbounds *Outbounds, target, protocol string, 
 		return RoutingDecision{}, errors.New("IPv6 interception is not configured")
 	}
 	decision := rule.Decide(value, protocol, port)
+	if decision.CaptureOnly {
+		decision.EffectiveOutbound = ""
+		return decision, nil
+	}
 	decision.EffectiveOutbound = decision.Outbound
 	if err := outbounds.CheckEnabled(decision.Outbound); err != nil {
 		decision.Reason = err.Error()
@@ -92,6 +95,7 @@ func ExplainRoutingWithGeoIP(config *KoneConfig, database *geoip.Database, targe
 		return RoutingDecision{}, err
 	}
 	rule := NewRuleWithGeoIP(config.Rule, config.Outbounds, database)
+	rule.protectPolicy(config)
 	outbounds.bypassEndpoints(rule)
 	return explainWithRule(rule, outbounds, target, protocol, port, config.Core.IPv6Network != "")
 }
@@ -102,6 +106,15 @@ func (one *One) ExplainDecision(target, protocol string, port uint16) (RoutingDe
 		return RoutingDecision{}, fmt.Errorf("engine policy is not initialized")
 	}
 	decision, err := explainWithRule(snapshot.rule, snapshot.outbounds, target, protocol, port, snapshot.cfg.Core.IPv6Network != "")
+	if value, proto, p, parseErr := explainTarget(target, protocol, port); parseErr == nil {
+		if domain, ok := value.(string); ok && proto == "tcp" {
+			if message := one.health.dnsEvidence(domain, snapshot); message != nil {
+				decision = snapshot.rule.DecideDNS(domain, message, proto, p)
+				decision = one.health.route(domain, p, proto, decision, snapshot)
+				decision.EffectiveOutbound = decision.Outbound
+			}
+		}
+	}
 	decision.ConfigVersion = snapshot.configurationVersion()
 	return decision, err
 }

@@ -71,7 +71,7 @@ func (c *Controller) readiness(ctx context.Context, doc Document, state, configE
 		add(ReadinessCheck{"inbound", "inbound", "ready", "info", "The configured TUN inbound is enabled; capture still starts only on explicit request", "inbounds", "inbound.enabled", "edit_inbound"})
 	}
 	if len(doc.Config.DNS.Servers) == 0 {
-		add(ReadinessCheck{"dns_source", "dns_source", "ready", "info", "Resolve through the system's current DNS configuration discovered at capture start; no public DNS fallback", "dns", "dns.servers", "edit_dns"})
+		add(ReadinessCheck{"dns_source", "dns_source", "ready", "info", "Discover the original system DNS before capture starts; Host/Gate use visible public defaults only when discovery has no usable default upstream", "dns", "dns.servers", "edit_dns"})
 	}
 	if !doc.Config.Core.AutoRoute && !doc.Config.Core.AutoRoute6 {
 		add(ReadinessCheck{"capture_scope", "capture_scope", "warning", "warning", "Selective capture covers Fake-IP and explicit CIDR routes; ordinary direct traffic can remain outside KONE", "inbounds", "core.auto-route", "edit_inbound"})
@@ -80,11 +80,7 @@ func (c *Controller) readiness(ctx context.Context, doc Document, state, configE
 		add(ReadinessCheck{"configuration", "configuration", "error", "error", configError, "settings", "config", "repair_configuration"})
 	}
 	if report.DirectOnly {
-		check := ReadinessCheck{"direct_only", "direct_only", "warning", "warning", "Current rules use no proxy outbound. Capture will only use direct/reject policies; adding a proxy alone does not change these rules.", "outbounds", "rules", "configure_rules"}
-		if !doc.DirectOnlyConfirmed {
-			check = ReadinessCheck{"direct_only_confirmation", "direct_only_confirmation", "error", "error", "Confirm direct-only capture explicitly, or select a proxy outbound in the rules", "outbounds", "direct_only_confirmed", "confirm_direct"}
-		}
-		add(check)
+		add(ReadinessCheck{"direct_only", "direct_only", "ready", "info", "No rule uses a proxy outbound. Unmatched traffic uses the built-in direct outbound; no proxy configuration or direct-only confirmation is required.", "outbounds", "rules", "configure_rules"})
 	}
 	for _, outbound := range doc.Config.Outbounds {
 		if outbound.Enabled == nil || *outbound.Enabled {
@@ -97,7 +93,7 @@ func (c *Controller) readiness(ctx context.Context, doc Document, state, configE
 			}
 		}
 	}
-	if configError == "" && state != "running" && state != "starting" && state != "pausing" {
+	if doc.Inbound.Enabled && configError == "" && state != "running" && state != "starting" && state != "pausing" {
 		preflight := c.preflight(ctx, engineConfig(doc))
 		if preflight.Changes != nil {
 			report.Changes = preflight.Changes
@@ -108,7 +104,7 @@ func (c *Controller) readiness(ctx context.Context, doc Document, state, configE
 			if strings.Contains(issue.Code, "dns") {
 				page, field, action = "dns", "dns", "edit_dns"
 			}
-			if issue.Code == "privileges" {
+			if issue.Code == "privileges" || issue.Code == "authorization_unavailable" {
 				page, field, action = "settings", "privileges", "authorize"
 			}
 			status := "ready"

@@ -1,6 +1,13 @@
 package kone
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrSystemDNSUnavailable selects the owned resolver-file adapter on Linux
+// hosts that do not use systemd-resolved. Other errors remain fatal.
+var ErrSystemDNSUnavailable = errors.New("system DNS integration is unavailable")
 
 // SystemDNSConfigurer guides the host resolver only after every KONE DNS
 // listener is ready. Cleanup must run before those listeners are closed.

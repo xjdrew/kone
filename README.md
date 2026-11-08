@@ -15,7 +15,7 @@ Its original [K1 dial mark](docs/development/development.md#6-维护资产与提
 - **Network-aware DNS:** Fake-IP routing, system resolver discovery and private DNS support for LAN and VPN environments.
 - **Traffic insights:** Live flow visualization, connection details, DNS history and runtime logs.
 - **Actionable diagnostics:** Compare connectivity, simulate routing and turn observed connections into precise rules.
-- **Easy management:** Automatic local management, password-protected remote access, desktop tray controls and optional paired mobile access, alongside TOML and CLI operation.
+- **Easy management:** Automatic local management, password-protected remote access, desktop tray controls and optional HTTP/HTTPS mobile access, alongside TOML and CLI operation.
 - **Safe lifecycle:** Startup checks, failure rollback and network restoration, with management available while capture is paused.
 - **Built-in choices:** Runtime-selectable system, gVisor and mixed stacks, plus offline and importable GeoIP data.
 
