@@ -478,3 +478,36 @@ func TestHealthHotSetRotatesAndPrivateRetestConsentIsOneShot(t *testing.T) {
 	state, _ := one.HealthData(HealthQuery{Status: "attention"})
 	require.Equal(t, 1, state.Total, "rotating observations must retain the unresolved incident")
 }
+
+func TestHealthDNSRecoveryTriesConfiguredCandidatesAfterPreferredFails(t *testing.T) {
+	one, h, e := healthTestEngine(t)
+	cfg := cloneConfig(one.policy.Load().cfg)
+	backup := cfg.Outbounds[0]
+	backup.ID, backup.Name = "backup-id", "backup"
+	cfg.Outbounds = append(cfg.Outbounds, backup)
+	cfg.Policy.Smart.Candidates = []string{backup.ID}
+	one.policy.Load().cfg = cfg
+	e.message = nil
+	h.resolveLocal = func(context.Context, string) (*dns.Msg, error) { return nil, errors.New("native DNS failed") }
+	var queried []string
+	h.resolveProxy = func(_ context.Context, _ *runtimeSnapshot, outbound, domain string) (*dns.Msg, error) {
+		queried = append(queried, outbound)
+		if outbound == "backup" {
+			return layeredAnswer(domain, "8.8.8.8"), nil
+		}
+		return nil, errors.New("preferred proxy unavailable")
+	}
+	h.probeDial = func(_ context.Context, outbound, _ string, _ bool, _ uint64, _ diagnosticProbePlan) (DiagnosticResult, error) {
+		status := "failed"
+		if outbound == "backup" {
+			status = "reachable"
+		}
+		return DiagnosticResult{Status: status, Stage: "connect"}, nil
+	}
+	h.check(e)
+	require.Equal(t, []string{"office", "backup"}, queried)
+	state, err := one.HealthData(HealthQuery{})
+	require.NoError(t, err)
+	require.Equal(t, "backup", state.Entries[0].Suggestions[80])
+	require.Empty(t, h.choices, "recovery evidence does not authorize automatic selection")
+}

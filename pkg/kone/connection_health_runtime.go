@@ -428,6 +428,23 @@ func (h *connectionHealth) proxyResolve(ctx context.Context, s *runtimeSnapshot,
 	}
 	return reply, nil
 }
+func healthCandidateOutbounds(cfg *KoneConfig) []string {
+	candidates := []string{}
+	if proxy, ok := preferredProxy(cfg); ok {
+		candidates = append(candidates, proxy.Name)
+	}
+	for _, id := range cfg.Policy.Smart.Candidates {
+		for _, out := range cfg.Outbounds {
+			if out.ID == id && out.IsEnabled() && !slices.Contains(candidates, out.Name) {
+				candidates = append(candidates, out.Name)
+			}
+		}
+	}
+	if cfg.Policy.Smart.AllowDirect {
+		candidates = append(candidates, BuiltinDirect)
+	}
+	return candidates
+}
 func healthSuccess(r HealthResult) bool { return r.Status == "reachable" }
 func (h *connectionHealth) check(e healthEvent) {
 	key := healthKey(e.domain, e.scope)
@@ -483,9 +500,17 @@ func (h *connectionHealth) check(e healthEvent) {
 		message, _ = h.resolveLocal(ctx, e.domain)
 	}
 	localDNSOK := message != nil && len(dnsAddresses(message)) > 0
-	proxy, hasProxy := preferredProxy(s.cfg)
-	if (message == nil || len(dnsAddresses(message)) == 0) && hasProxy && !privateScope {
-		message, _ = h.resolveProxy(ctx, s, proxy.Name, e.domain)
+	candidates := healthCandidateOutbounds(s.cfg)
+	if (message == nil || len(dnsAddresses(message)) == 0) && !privateScope {
+		for _, outbound := range candidates {
+			if outbound == BuiltinDirect {
+				continue
+			}
+			message, _ = h.resolveProxy(ctx, s, outbound, e.domain)
+			if message != nil && len(dnsAddresses(message)) > 0 {
+				break
+			}
+		}
 	}
 	if message == nil || len(dnsAddresses(message)) == 0 {
 		return
@@ -544,22 +569,6 @@ func (h *connectionHealth) check(e healthEvent) {
 		}
 		if healthSuccess(r) || decision.DecisionSource != "base-final" || privateScope {
 			continue
-		}
-		candidates := []string{}
-		if hasProxy {
-			candidates = append(candidates, proxy.Name)
-		}
-		for _, id := range s.cfg.Policy.Smart.Candidates {
-			for _, o := range s.cfg.Outbounds {
-				if o.ID == id && o.IsEnabled() {
-					if !slices.Contains(candidates, o.Name) {
-						candidates = append(candidates, o.Name)
-					}
-				}
-			}
-		}
-		if s.cfg.Policy.Smart.AllowDirect {
-			candidates = append(candidates, BuiltinDirect)
 		}
 		for _, outbound := range candidates {
 			if outbound == current {
