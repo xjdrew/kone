@@ -87,6 +87,11 @@ func TestHealthAutoRequiresRepeatAndFreshEvidenceAndCanPin(t *testing.T) {
 	h.evidence[healthKey(e.domain, "")] = healthEvidence{expires: time.Now().Add(-time.Minute)}
 	_, err = one.HealthAction(HealthAction{Action: "pin", Domain: e.domain, Generation: state.Entries[0].Generation, Version: 7})
 	require.Error(t, err)
+	h.choices = map[string]map[uint16]healthChoice{}
+	state, err = one.HealthData(HealthQuery{Status: "adjusted"})
+	require.NoError(t, err)
+	require.Equal(t, "adjusted", state.Entries[0].Status, "expired evidence must not remove the row from its filter")
+	require.True(t, state.Entries[0].Checking)
 }
 func TestHealthDNSFailureRetestAndPrivateScope(t *testing.T) {
 	one, h, e := healthTestEngine(t)

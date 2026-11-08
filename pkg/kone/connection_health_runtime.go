@@ -692,7 +692,7 @@ func (one *One) HealthData(q HealthQuery) (HealthState, error) {
 		key := healthKey(entries[i].Domain, entries[i].Scope)
 		entries[i].Checking = h.pending[key] || !h.due[key].IsZero() && !time.Now().Before(h.due[key])
 		if entries[i].Status == "adjusted" && len(h.choices[key]) == 0 {
-			entries[i].Status = "checking"
+			entries[i].Checking = true
 		}
 		if evidence, ok := h.evidence[key]; ok {
 			entries[i].Results = append(entries[i].Results, evidence.results...)

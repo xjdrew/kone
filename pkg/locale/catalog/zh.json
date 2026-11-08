@@ -781,6 +781,7 @@
     "health.reason.web_unreachable": "Web 双端口不可达",
     "health.reason.business_failed": "实际业务连接失败",
     "health.reason.retest": "重测已恢复",
+    "health.selectionExpired": "临时选择已失效，等待复核",
     "health.reason.automatic": "已自动调整",
     "health.reason.manual": "已应用出口",
     "health.reason.user": "已标记处理",

@@ -781,6 +781,7 @@
     "health.reason.web_unreachable": "Both Web ports failed",
     "health.reason.business_failed": "Observed service failed",
     "health.reason.retest": "Recovered after retest",
+    "health.selectionExpired": "Temporary selection inactive; awaiting verification",
     "health.reason.automatic": "Automatically adjusted",
     "health.reason.manual": "Outbound applied",
     "health.reason.user": "Marked handled",

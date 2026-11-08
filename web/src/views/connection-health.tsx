@@ -316,7 +316,11 @@ export function ConnectionHealth() {
                         : "—"}
                     </td>
                     <td>
-                      {t(`health.reason.${e.resolution || e.reason}`, { defaultValue: e.reason })}
+                      {e.status === "adjusted" && !Object.keys(e.temporary ?? {}).length
+                        ? t("health.selectionExpired")
+                        : t(`health.reason.${e.resolution || e.reason}`, {
+                            defaultValue: e.reason,
+                          })}
                       {suggestions.map(([port, outbound]) => (
                         <div className="mono" key={port}>
                           TCP/{port} → {outbound}
