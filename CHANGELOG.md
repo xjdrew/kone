@@ -12,6 +12,10 @@
 - Accept domain/IP connection targets and proxy addresses without a port, defaulting to 80 while DNS retains port 53.
 - Preserve domain identity for direct exceptions under global capture and stop stale or unrelated DNS evidence from choosing another target.
 
+## Changes
+
+- Clarify connection-health status, issue resolution and inline rule actions in the product and UI specifications.
+
 # 2026/11/07
 
 ## Features
