@@ -30,11 +30,11 @@ function fields(raw: string) {
     return {
       scheme: url.protocol.slice(0, -1),
       host: url.hostname.replace(/^\[|\]$/g, ""),
-      port: raw.match(/:(\d+)(?:[/?#]|$)/)?.[1] || (url.protocol === "https:" ? "443" : "80"),
+      port: raw.match(/:(\d+)(?:[/?#]|$)/)?.[1] || "80",
       suffix: raw.match(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*(.*)$/i)?.[1] || "",
     };
   } catch {
-    return { scheme: "http", host: "", port: "8080", suffix: "" };
+    return { scheme: "http", host: "", port: "80", suffix: "" };
   }
 }
 export function OutboundsView() {
@@ -297,7 +297,7 @@ function OutboundEditor({ initial, onClose }: { initial: Outbound; onClose: () =
   function build() {
     const host = endpoint.host.trim().replace(/^\[|\]$/g, "");
     if (!host || /[\s/@?#\\]/.test(host)) throw new Error(t("common.fieldError"));
-    const port = Number(endpoint.port);
+    const port = Number(endpoint.port.trim() || "80");
     if (!Number.isInteger(port) || port < 1 || port > 65535)
       throw new Error(t("common.fieldError"));
     const url = `${endpoint.scheme}://${host.includes(":") ? `[${host}]` : host}:${port}${endpoint.suffix}`;
@@ -384,9 +384,9 @@ function OutboundEditor({ initial, onClose }: { initial: Outbound; onClose: () =
               onChange={(event) => setEndpoint({ ...endpoint, host: event.target.value })}
             />
           </Field>
-          <Field label={t("common.port")}>
+          <Field label={t("common.port")} help={t("common.defaultPort")}>
             <input
-              required
+              placeholder="80"
               inputMode="numeric"
               type="number"
               min="1"
@@ -499,7 +499,7 @@ function OutboundEditor({ initial, onClose }: { initial: Outbound; onClose: () =
               onChange={(value) => setDraft({ ...draft, "check-enabled": value })}
               label={t("outbounds.autoEnabled")}
             />
-            <Field label={t("outbounds.target")}>
+            <Field label={t("outbounds.target")} help={t("diagnostics.defaultPort")}>
               <input
                 className="mono"
                 placeholder="example.com:443"

@@ -13,7 +13,7 @@ func TestRejectedDiagnosticNeverClaimsMeasuredConnectivity(t *testing.T) {
 	for _, scenario := range []struct {
 		name, outbound, target, stage, status string
 	}{
-		{"invalid-target", BuiltinDirect, "missing-port", "configuration", "failed"},
+		{"invalid-target", BuiltinDirect, "invalid target", "configuration", "failed"},
 		{"rejected-policy", BuiltinReject, "192.0.2.1:443", "policy", "failed"},
 		{"missing-outbound", "missing", "192.0.2.1:443", "configuration", "failed"},
 		{"virtual-destination", BuiltinDirect, "10.192.0.8:443", "virtual_destination", "unsupported"},

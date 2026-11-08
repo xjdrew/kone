@@ -13,7 +13,7 @@ import (
 )
 
 func TestProxyURLValidation(t *testing.T) {
-	for _, raw := range []string{"http://localhost", "http://:8080", "http://localhost:0", "socks5://localhost:65536", "ftp://localhost:21", "http://localhost:80/path", "http://localhost:80?secret=password"} {
+	for _, raw := range []string{"http://localhost:", "http://localhost:bad", "http://:8080", "http://localhost:0", "socks5://localhost:65536", "ftp://localhost:21", "http://localhost:80/path", "http://localhost:80?secret=password"} {
 		if _, err := FromUrl(raw); err == nil {
 			t.Errorf("accepted %q", raw)
 		}
@@ -21,6 +21,24 @@ func TestProxyURLValidation(t *testing.T) {
 	for _, raw := range []string{"http://localhost:80", "https://user:password@example.com:443", "socks5://[::1]:1080"} {
 		if _, err := FromUrl(raw); err != nil {
 			t.Errorf("%q: %v", raw, err)
+		}
+	}
+}
+
+func TestProxyURLsDefaultMissingPortWithoutChangingCredentials(t *testing.T) {
+	for _, raw := range []string{"http://proxy.example", "https://user:password@proxy.example", "socks5://[::1]", "ss://aes-128-gcm:password@proxy.example"} {
+		p, err := FromUrl(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p.Url.Port() != "80" {
+			t.Fatalf("default port = %s", p.Url.Port())
+		}
+		if p.Url.User != nil {
+			password, _ := p.Url.User.Password()
+			if password != "password" {
+				t.Fatal("credentials changed")
+			}
 		}
 	}
 }

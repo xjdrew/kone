@@ -51,7 +51,7 @@ func TestDiagnosticSeparatesDNSConnectAuthenticationAndPolicy(t *testing.T) {
 	_, err = one.DialDiagnostic(context.Background(), "A", "example.com:443")
 	require.ErrorIs(t, err, want)
 	require.Equal(t, proxy.StageConnect, DiagnosticStage(err))
-	for _, target := range []string{"missing-port", "example.com:0"} {
+	for _, target := range []string{"invalid target", "example.com:0"} {
 		_, err = one.DialDiagnostic(context.Background(), BuiltinDirect, target)
 		require.Equal(t, "configuration", DiagnosticStage(err))
 	}

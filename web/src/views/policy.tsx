@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 import { useConsole, useWorkspaceState } from "../context";
 import { api } from "../api/endpoints";
 import { request } from "../api/client";
-import { addPreciseRule, targetHost, saveRequest } from "../domain";
+import { addPreciseRule, saveRequest } from "../domain";
 import {
   Button,
   Field,
@@ -817,12 +817,11 @@ function Simulation({ onClose }: { onClose: () => void }) {
         onSubmit={async (event) => {
           event.preventDefault();
           setError(null);
-          const parsed = targetHost(target);
           try {
             setResult(
               await request("/rules/simulate", {
                 method: "POST",
-                body: { target: parsed.host, port: parsed.port || 0, protocol },
+                body: { target: target.trim(), protocol },
               }),
             );
           } catch (caught) {
@@ -830,7 +829,7 @@ function Simulation({ onClose }: { onClose: () => void }) {
           }
         }}
       >
-        <Field label={t("common.target")}>
+        <Field label={t("common.target")} help={t("common.defaultPort")}>
           <input required value={target} onChange={(event) => setTarget(event.target.value)} />
         </Field>
         <Field label={t("common.protocol")}>

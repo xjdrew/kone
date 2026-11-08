@@ -11,15 +11,25 @@ import (
 )
 
 func TestDiagnosticConnectionDefaultPortAndValidation(t *testing.T) {
-	for input, expected := range map[string]string{"example.com": "example.com:80", "192.0.2.1": "192.0.2.1:80", "::1": "[::1]:80", "[::1]": "[::1]:80", "[::1]:443": "[::1]:443", "example.com:8443": "example.com:8443"} {
+	for input, expected := range map[string]string{"example.com": "example.com:80", "192.0.2.1": "192.0.2.1:80", "::1": "[::1]:80", "[::1]": "[::1]:80", "2001:db8:0:1:2:3:4:5": "[2001:db8:0:1:2:3:4:5]:80", "[::1]:443": "[::1]:443", "example.com:8443": "example.com:8443"} {
 		actual, err := NormalizeConnectionTarget(input)
 		require.NoError(t, err)
 		require.Equal(t, expected, actual)
 	}
-	for _, input := range []string{"", "example.com:0", "example.com:", "example.com:bad", "https://example.com", "a:b:c", "0.0.0.0", "x:65536"} {
+	for _, input := range []string{"", "example.com:0", "example.com:", "example.com:bad", "https://example.com", "a:b:c", "[::1", "::1]", "[::1]:bad", "0.0.0.0", "x:65536"} {
 		_, err := NormalizeConnectionTarget(input)
 		require.Error(t, err, input)
 	}
+}
+
+func TestDNSProbeTargetRetainsPort53Default(t *testing.T) {
+	for input, want := range map[string]string{"dns.example": "dns.example:53", "8.8.8.8": "8.8.8.8:53", "[::1]": "[::1]:53", "dns.example:5353": "dns.example:5353"} {
+		actual, err := NormalizeDNSTarget(input)
+		require.NoError(t, err)
+		require.Equal(t, want, actual)
+	}
+	_, err := NormalizeDNSTarget("dns.example:")
+	require.Error(t, err)
 }
 
 func TestDNSComparisonUsesOSLookupAndDoesNotInventWireEvidence(t *testing.T) {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net"
 	"net/netip"
-	"strconv"
 )
 
 // DialDiagnostic uses exactly the engine's outbound binding and DNS policy.
@@ -15,14 +14,11 @@ func (one *One) DialDiagnostic(ctx context.Context, outbound, target string) (ne
 }
 
 func (one *One) dialDiagnosticSnapshot(ctx context.Context, s *runtimeSnapshot, outbound, target string) (net.Conn, error) {
-	host, port, err := net.SplitHostPort(target)
+	target, err := NormalizeConnectionTarget(target)
 	if err != nil {
-		return nil, diagnosticError("configuration", errors.New("target must be host:port"))
+		return nil, diagnosticError("configuration", err)
 	}
-	p, err := strconv.Atoi(port)
-	if err != nil || p < 1 || p > 65535 {
-		return nil, diagnosticError("configuration", errors.New("invalid target port"))
-	}
+	host, port, _ := net.SplitHostPort(target)
 	if s == nil {
 		return nil, diagnosticError("configuration", errors.New("engine policy is not initialized"))
 	}

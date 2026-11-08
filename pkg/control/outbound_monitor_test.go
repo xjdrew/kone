@@ -68,7 +68,7 @@ func TestOutboundMonitorCancelsChangedConfigurationAndUsesCustomTarget(t *testin
 	}
 	r := currentRequest(c)
 	outbound := r.Config["outbounds"].([]any)[0].(map[string]any)
-	outbound["check-target"], outbound["check-tls"] = "149.154.167.50:443", false
+	outbound["check-target"], outbound["check-tls"] = "example.net", false
 	_, err := c.Save(r)
 	require.NoError(t, err)
 	select {
@@ -78,7 +78,7 @@ func TestOutboundMonitorCancelsChangedConfigurationAndUsesCustomTarget(t *testin
 	}
 	select {
 	case target := <-started:
-		require.Equal(t, "149.154.167.50:443", target)
+		require.Equal(t, "example.net:80", target)
 	case <-time.After(time.Second):
 		t.Fatal("new target not tested")
 	}

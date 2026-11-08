@@ -177,10 +177,12 @@ func (one *One) probeUDPDiagnostic(parent context.Context, outbound, target stri
 		result.Progress.Stage = "complete"
 		reportDiagnosticProgress(parent, result)
 	}()
-	if err := ValidateDiagnosticTarget(target); err != nil {
+	target, err = NormalizeDNSTarget(target)
+	if err != nil {
 		result.Message = err.Error()
 		return result, nil
 	}
+	result.Target = target
 	result.Host.Address = target
 	snapshot := one.policy.Load()
 	if snapshot == nil {

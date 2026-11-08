@@ -21,7 +21,7 @@ type configuredOutbound struct {
 }
 
 var ErrUDPUnsupported = errors.New("outbound does not support UDP")
-var ErrRejected = errors.New("connection rejected by routing policy")
+var ErrRejected = errors.New("connection rejected by proxy rules")
 var ErrOutboundDisabled = fmt.Errorf("outbound is disabled: %w", ErrRejected)
 
 func (cfg OutboundConfig) IsEnabled() bool { return cfg.Enabled == nil || *cfg.Enabled }

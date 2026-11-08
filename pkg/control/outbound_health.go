@@ -286,7 +286,8 @@ func (c *Controller) testOutbound(request OutboundTestRequest, key string, autom
 	if request.Target != nil {
 		target = *request.Target
 	}
-	if err := validTarget(target); err != nil {
+	target, err = kone.NormalizeConnectionTarget(target)
+	if err != nil {
 		return Operation{}, err
 	}
 	withTLS := outbound.CheckTLS == nil || *outbound.CheckTLS

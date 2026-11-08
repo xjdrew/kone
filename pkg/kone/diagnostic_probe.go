@@ -44,11 +44,26 @@ type DiagnosticResult struct {
 // NormalizeConnectionTarget accepts a bare host with the TCP default port 80.
 // Explicit ports are never replaced, and malformed ports remain errors.
 func NormalizeConnectionTarget(target string) (string, error) {
+	return normalizeTargetPort(target, "80")
+}
+
+// NormalizeDNSTarget preserves DNS protocol defaults for explicit DNS probes.
+func NormalizeDNSTarget(target string) (string, error) {
+	return normalizeTargetPort(target, "53")
+}
+
+func normalizeTargetPort(target, port string) (string, error) {
 	target = strings.TrimSpace(target)
 	if !strings.Contains(target, ":") {
-		target = net.JoinHostPort(target, "80")
-	} else if ip, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(target, "["), "]")); err == nil {
-		target = net.JoinHostPort(ip.String(), "80")
+		target = net.JoinHostPort(target, port)
+	} else {
+		host := target
+		if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+			host = host[1 : len(host)-1]
+		}
+		if ip, err := netip.ParseAddr(host); err == nil {
+			target = net.JoinHostPort(ip.String(), port)
+		}
 	}
 	return target, ValidateDiagnosticTarget(target)
 }
@@ -144,10 +159,12 @@ func (one *One) probeDiagnosticPlan(parent context.Context, outbound, target str
 		result.Progress.Stage = "complete"
 		reportDiagnosticProgress(parent, result)
 	}()
-	if err := ValidateDiagnosticTarget(target); err != nil {
+	target, err = NormalizeConnectionTarget(target)
+	if err != nil {
 		result.Message = err.Error()
 		return result, nil
 	}
+	result.Target = target
 	snapshot := one.policy.Load()
 	if snapshot == nil {
 		return result, errors.New("engine policy is unavailable")

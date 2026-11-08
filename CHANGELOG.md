@@ -2,12 +2,14 @@
 
 ## Features
 
+- Rename the routing workspace to Proxy rules across navigation, messages and documentation.
 - Add explicit layered routing upgrades, with domain rules before IP rules and decisions bound to the actual dialed address.
 - Keep Fake-IP domain ownership across restarts and profiles, with capacity visibility and an explicit fresh-pool migration for legacy configurations.
 - Add optional DNS-driven Smart suggestions with bounded TCP/TLS probes, repeat verification and inline rule previews; suggestions never change routing automatically.
 
 ## Bugfixes
 
+- Accept domain/IP connection targets and proxy addresses without a port, defaulting to 80 while DNS retains port 53.
 - Preserve domain identity for direct exceptions under global capture and stop stale or unrelated DNS evidence from choosing another target.
 
 # 2026/11/07
@@ -20,7 +22,7 @@
 - Recall up to 20 recent diagnostic targets, separate DNS queries from connection tests, and show total test time in result summaries.
 
 - Choose a local private address or all IPv4 interfaces for remote management, use HTTP or HTTPS, and set a password as part of first-time enablement; HTTPS includes CA trust guidance.
-- Rebuild the Web console around Traffic, Routing policy and Outbounds workspaces, with contextual rule editing, keyboard commands and persistent diagnostics/log tools.
+- Rebuild the Web console around Traffic, Proxy rules and Outbounds workspaces, with contextual rule editing, keyboard commands and persistent diagnostics/log tools.
 - Add editable direct-first and global-proxy policies with loop prevention and editable LAN direct defaults, country exceptions, IPv6 scope and explicit UDP fallback consent; existing profiles retain their intent.
 - Check configured outbounds periodically in turn using their actual proxy protocol, with per-outbound targets and an off switch.
 - Diagnose any domain or IP with optional presets, live per-outbound summaries and expandable details.
@@ -50,7 +52,7 @@
 - Document proposals for fixed rule layers, consistent dial targets, durable Fake-IP ownership, and optional Smart suggestions for both proxy and direct routing.
 - Replace pairing codes with management-password sign-in and revocable remote sessions.
 - Reduce contributor wait time for automated checks across supported platforms.
-- Define Web console design rules around traffic, routing policy and outbounds workspaces, contextual tools, dense layouts and efficient keyboard workflows.
+- Define Web console design rules around traffic, proxy rules and outbounds workspaces, contextual tools, dense layouts and efficient keyboard workflows.
 - Use clearer proxy terminology throughout the console, tray and guides.
 - Consolidate user and developer guides, replace historical notes with current instructions, and define product and Web requirements for future redesigns, including transparent routing, performance and payload privacy goals.
 
@@ -102,7 +104,7 @@
 - Keep Settings menu links responsive while live status updates refresh their summaries.
 - Preserve log filters, expanded fields and reading position during automatic updates.
 - Show real outbound connection failures in runtime logs at the default log level.
-- Prevent intercepted domains from bypassing their routing policy through real IPv6 DNS answers when IPv6 capture is disabled.
+- Prevent intercepted domains from bypassing their proxy rules through real IPv6 DNS answers when IPv6 capture is disabled.
 - Reject invalid diagnostic addresses and consistently enforce probe limits.
 - Keep unsaved proxy edits when enabling direct-only capture.
 - Preserve editor drafts and return navigation during browser history changes and configuration refreshes.

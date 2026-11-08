@@ -29,15 +29,16 @@ test("@real management credentials, policy edits and process restart remain capt
     await page.goto(manager.url.origin + "/");
     await expect(page.getByRole("heading", { name: "Traffic paths" })).toBeVisible();
     await expect(page.getByRole("switch", { name: "Enable proxy" })).toBeEnabled();
-    await page.getByRole("link", { name: "Routing policy", exact: true }).click();
+    await page.getByRole("link", { name: "Proxy rules", exact: true }).click();
     await page.getByRole("link", { name: "Outbounds", exact: true }).click();
     await page.getByRole("button", { name: "Add outbound", exact: true }).first().click();
     let dialog = page.getByRole("dialog");
     await dialog.getByLabel("Name", { exact: true }).fill("Fixture proxy");
     await dialog.getByLabel("Address", { exact: true }).fill("127.0.0.1");
-    await dialog.getByLabel("Port", { exact: true }).fill("9");
+    await dialog.getByLabel("Port", { exact: true }).fill("");
     await dialog.getByText("Automatic connectivity checks", { exact: true }).click();
     await dialog.getByLabel("Check automatically", { exact: true }).uncheck();
+    await dialog.getByLabel("Test target", { exact: true }).fill("example.com");
     await dialog.getByLabel("Requires authentication", { exact: true }).check();
     await dialog.getByLabel("Username", { exact: true }).fill("fixture-user");
     await dialog.getByLabel("Password / key", { exact: true }).fill("fixture-proxy-password");
@@ -50,7 +51,18 @@ test("@real management credentials, policy edits and process restart remain capt
     await dialog.getByLabel("Name", { exact: true }).fill("Office");
     await dialog.getByRole("button", { name: "Save", exact: true }).click();
     await expect(dialog).not.toBeVisible();
-    await page.getByRole("link", { name: "Routing policy", exact: true }).click();
+    await page.getByRole("link", { name: "Proxy rules", exact: true }).click();
+    await page.getByRole("button", { name: "Simulate routing", exact: true }).click();
+    dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Target", { exact: true }).fill("example.com");
+    const simulated = page.waitForResponse((response) =>
+      response.url().endsWith("/rules/simulate"),
+    );
+    await dialog.getByRole("button", { name: "Simulate routing", exact: true }).click();
+    const simulation = await simulated;
+    expect(simulation.status()).toBe(200);
+    expect(await simulation.json()).toMatchObject({ port: 80, evidence: "dns_required" });
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Add rule", exact: true }).first().click();
     dialog = page.getByRole("dialog");
     await dialog.getByLabel("Match type").selectOption("IP-CIDR");
@@ -87,11 +99,20 @@ test("@real management credentials, policy edits and process restart remain capt
         paused: state.data_state === "paused",
         version: doc.version,
         name: doc.config.outbounds[0].name,
+        url: doc.config.outbounds[0].url,
+        checkTarget: doc.config.outbounds[0]["check-target"],
         credential: doc.credential_state.Office.configured,
         redacted: !JSON.stringify(doc).includes("fixture-proxy-password"),
       };
     });
-    expect(saved).toMatchObject({ paused: true, name: "Office", credential: true, redacted: true });
+    expect(saved).toMatchObject({
+      paused: true,
+      name: "Office",
+      credential: true,
+      redacted: true,
+      checkTarget: "example.com:80",
+    });
+    expect(saved.url).toContain("127.0.0.1:80");
     await assertNoCaptureJournal(directory);
     await manager.stop();
     manager = await startManager(binary, directory);

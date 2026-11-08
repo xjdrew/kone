@@ -2,7 +2,7 @@
 
 日期：2026-11-07。KONE 代码基线：[8d018cd](https://github.com/xjdrew/kone/tree/8d018cd729f7417b7202a652c65a486ae0e2f33f)。本文补充[产品方向研究](product-direction-2026-11-07.md)，仅研究方案，未实现新的应用规则、驱动或系统扩展。
 
-按用户最新澄清，基础模式为 Standalone（默认直连）与 Global（默认代理），两者始终支持自定义规则，Smart 为独立开关。应用与域名、IP 一样属于规则条件。本文讨论这些规则如何取得可信应用身份、如何执行，以及两个系统允许产品承诺到什么程度；新模型见[Smart proposal](../proposals/dns-driven-smart-suggestions.md#2-路由策略模型与配置优化)。
+按用户最新澄清，基础模式为 Standalone（默认直连）与 Global（默认代理），两者始终支持自定义规则，Smart 为独立开关。应用与域名、IP 一样属于规则条件。本文讨论这些规则如何取得可信应用身份、如何执行，以及两个系统允许产品承诺到什么程度；新模型见[Smart proposal](../proposals/dns-driven-smart-suggestions.md#2-代理规则模型与配置优化)。
 
 **结论：两个平台都能实现实用的应用分流，但不能用同一种进程查询方案承诺相同的覆盖范围。Windows 可以先补强现有 TUN + 系统 owner table；macOS 应同时验证原生查询与 Network Extension 透明代理两条路径。若要保证指定应用不能绕过代理，需要另设系统级执行与故障验收，不能沿用“尽力识别”模式的承诺。**
 

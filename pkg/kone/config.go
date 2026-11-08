@@ -222,6 +222,23 @@ func parseConfig(source any, environment bool) (*KoneConfig, error) {
 			}
 		}
 	}
+	for i := range cfg.Outbounds {
+		outbound := &cfg.Outbounds[i]
+		if outbound.CheckTarget != "" {
+			target, err := NormalizeConnectionTarget(outbound.CheckTarget)
+			if err != nil {
+				return nil, fmt.Errorf("outbounds[%d].check-target: %w", i+1, err)
+			}
+			outbound.CheckTarget = target
+		}
+		if parsed, err := proxy.FromUrl(outbound.URL); err == nil {
+			original, err := url.Parse(outbound.URL)
+			if err == nil && original.Port() == "" {
+				original.Host = parsed.Url.Host
+				outbound.URL = original.String()
+			}
+		}
+	}
 	for i, addr := range cfg.DNS.Servers {
 		normalized, err := normalizeDNSServer(addr)
 		if err != nil {
@@ -277,7 +294,7 @@ func validateOutbounds(config []OutboundConfig) (map[string]OutboundType, error)
 			return nil, fail("duplicate outbound name " + o.Name)
 		}
 		if _, err := proxy.FromUrl(o.URL); err != nil {
-			return nil, fail("invalid proxy URL (expected http, https, socks5 or ss with host and port)")
+			return nil, fail("invalid proxy URL (expected http, https, socks5 or ss with a host and optional port)")
 		}
 		// Keep fallback targets terminal: never recurse through another
 		// unsupported proxy or a cycle.
@@ -285,8 +302,8 @@ func validateOutbounds(config []OutboundConfig) (map[string]OutboundType, error)
 			return nil, fail("udp-fallback must be direct or reject")
 		}
 		if o.CheckTarget != "" {
-			if err := ValidateDiagnosticTarget(o.CheckTarget); err != nil {
-				return nil, fail("check-target requires a valid domain/IP and port")
+			if _, err := NormalizeConnectionTarget(o.CheckTarget); err != nil {
+				return nil, fail("check-target requires a valid domain/IP and an optional port (default 80)")
 			}
 		}
 		types[o.Name] = OutboundProxy

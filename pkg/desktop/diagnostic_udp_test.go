@@ -28,7 +28,7 @@ func (e *udpDiagnosticNetworkEngine) ProbeDiagnosticRequestVersion(ctx context.C
 func TestDiagnosticOptionsAndCancellationCrossHelperIPCWithoutStoppingCapture(t *testing.T) {
 	for _, protocol := range []string{"udp", "dns"} {
 		t.Run(protocol, func(t *testing.T) {
-			target, source := "[::1]:53", "direct"
+			target, source := "::1", "direct"
 			if protocol == "dns" {
 				target, source = "example.com", "kone"
 			}
@@ -36,7 +36,11 @@ func TestDiagnosticOptionsAndCancellationCrossHelperIPCWithoutStoppingCapture(t 
 			cfg.DNS.Servers = []string{"127.0.0.1:5353"}
 			engine := &udpDiagnosticNetworkEngine{fakeNetworkEngine: newFakeNetworkEngine(t, cfg), udpProbe: func(_ context.Context, outbound, gotTarget string, o kone.DiagnosticOptions, v uint64) (kone.DiagnosticResult, error) {
 				require.Equal(t, source, outbound)
-				require.Equal(t, target, gotTarget)
+				if protocol == "udp" {
+					require.Equal(t, "[::1]:53", gotTarget)
+				} else {
+					require.Equal(t, target, gotTarget)
+				}
 				require.Equal(t, "AAAA", o.DNSType)
 				if protocol == "udp" {
 					require.Equal(t, "ipv6", o.AddressFamily)

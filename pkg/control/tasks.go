@@ -41,15 +41,12 @@ func probeUDPTarget(ctx context.Context, cfg *kone.KoneConfig, outbound, target 
 	return result
 }
 
-func validTarget(target string) error {
-	return kone.ValidateDiagnosticTarget(target)
-}
-
 func probeTarget(ctx context.Context, cfg *kone.KoneConfig, outbound, target string, withTLS bool) (r ProbeResult) {
 	start := time.Now()
 	r = ProbeResult{Target: target, Outbound: outbound, Protocol: "tcp", Stage: "connect", Status: "failed", Time: start, Expires: start.Add(5 * time.Minute), Scope: "diagnostic; not application traffic"}
 	defer func() { r.DurationMS = time.Since(start).Milliseconds() }()
-	if err := validTarget(target); err != nil {
+	target, err := kone.NormalizeConnectionTarget(target)
+	if err != nil {
 		r.Message = err.Error()
 		return r
 	}
@@ -200,7 +197,7 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 		target = options.DNSName
 		outbounds = []string{"system", "kone"}
 	} else {
-		err = validTarget(target)
+		target, err = kone.NormalizeDNSTarget(target)
 	}
 	if err != nil {
 		return Operation{}, err

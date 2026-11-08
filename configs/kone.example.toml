@@ -135,6 +135,7 @@ url = "http://127.0.0.1:8080"
 
 # 管理模式每 60 秒通过真实代理协议检查目标；暂停接管后仍检查，文件/CLI 模式不执行。
 # check-enabled = true
+# 连接目标可只填域名/IP，省略端口默认使用 80；DNS 上游仍默认使用 53。
 # check-target = "example.com:443"
 # check-tls = true
 

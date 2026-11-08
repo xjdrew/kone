@@ -445,7 +445,12 @@ func (s *helperService) Probe(request ProbeRequest, reply *kone.DiagnosticResult
 		return err
 	}
 	if options.Protocol != "dns" {
-		if err := kone.ValidateDiagnosticTarget(request.Target); err != nil {
+		if options.Protocol == "udp" {
+			request.Target, err = kone.NormalizeDNSTarget(request.Target)
+		} else {
+			request.Target, err = kone.NormalizeConnectionTarget(request.Target)
+		}
+		if err != nil {
 			return err
 		}
 	} else if request.Target != options.DNSName || request.Outbound != "system" && request.Outbound != "kone" {

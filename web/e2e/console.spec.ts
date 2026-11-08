@@ -117,7 +117,7 @@ test("policy conversion is previewed and preserves exceptions; conflicts retain 
   await page.goto("/#/policy");
   await page.getByRole("button", { name: "Change base policy", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Routing policy").selectOption("proxy-first");
+  await dialog.getByLabel("Proxy rules").selectOption("proxy-first");
   await dialog.getByLabel("Outbound", { exact: true }).selectOption("Local HTTP");
   await dialog.getByLabel("Allow the existing UDP direct exception").check();
   await dialog.getByRole("button", { name: "Preview changes" }).click();
@@ -395,8 +395,12 @@ test("@compat generic diagnostics keep per-outbound progress and expand one resu
   await expect(
     page.getByRole("heading", { name: "Network diagnostics", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("combobox", { name: "Target · domain or IP:port" })).toBeVisible();
-  await expect(page.getByLabel("Target · domain or IP:port", { exact: true })).toHaveValue("");
+  await expect(
+    page.getByRole("combobox", { name: "Target · domain or IP, optional port" }),
+  ).toBeVisible();
+  await expect(
+    page.getByLabel("Target · domain or IP, optional port", { exact: true }),
+  ).toHaveValue("");
   const summaries = page.locator("summary").filter({ hasText: target });
   await expect(summaries).toHaveCount(3);
   await expect(summaries.nth(2)).toContainText("Pending");
@@ -406,7 +410,7 @@ test("@compat generic diagnostics keep per-outbound progress and expand one resu
   await expect(summaries.nth(0).locator("..")).toHaveAttribute("open", "");
   await expect(summaries.nth(1).locator("..")).not.toHaveAttribute("open");
   await page
-    .getByLabel("Target · domain or IP:port", { exact: true })
+    .getByLabel("Target · domain or IP, optional port", { exact: true })
     .fill("internal.example:9443");
   await expect(summaries).toHaveCount(3);
   rows[1] = {
@@ -429,7 +433,9 @@ test("@compat diagnostic history survives reload and DNS compares system and KON
   const data = await fixture(page);
   await page.goto("/#/outbounds");
   await page.getByRole("button", { name: "Diagnostics", exact: true }).click();
-  await page.getByRole("combobox", { name: "Target · domain or IP:port" }).fill("internal.example");
+  await page
+    .getByRole("combobox", { name: "Target · domain or IP, optional port" })
+    .fill("internal.example");
   await page.getByRole("button", { name: "Start comparison", exact: true }).click();
   await expect.poll(() => data.operations.length).toBe(1);
   expect(
@@ -447,9 +453,9 @@ test("@compat diagnostic history survives reload and DNS compares system and KON
   await expect(trigger.locator("svg")).toBeVisible();
   expect(await trigger.evaluate((el) => getComputedStyle(el).appearance)).toBe("none");
   await page.getByRole("option", { name: /internal.example:80/ }).click();
-  await expect(page.getByRole("combobox", { name: "Target · domain or IP:port" })).toHaveValue(
-    "internal.example:80",
-  );
+  await expect(
+    page.getByRole("combobox", { name: "Target · domain or IP, optional port" }),
+  ).toHaveValue("internal.example:80");
   await page.getByRole("button", { name: "DNS query", exact: true }).click();
   await expect(page.getByLabel("Verify target TLS")).not.toBeVisible();
   const name = page.getByRole("combobox", { name: "Query name" });
@@ -475,9 +481,9 @@ test("@compat diagnostic history survives reload and DNS compares system and KON
   await expect(page.getByRole("option", { name: /service.internal/ })).toBeVisible();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Connection", exact: true }).click();
-  await expect(page.getByRole("combobox", { name: "Target · domain or IP:port" })).toHaveValue(
-    "internal.example:80",
-  );
+  await expect(
+    page.getByRole("combobox", { name: "Target · domain or IP, optional port" }),
+  ).toHaveValue("internal.example:80");
   await page.getByRole("button", { name: "Recent targets", exact: true }).click();
   await expect(
     page.getByRole("listbox", { name: "Recent targets" }).getByRole("option"),
@@ -613,6 +619,6 @@ test("@compat Smart stays in policy context and previews a narrow rule before ac
   await expect.poll(() => actions).toEqual(["preview", "accept"]);
   await expect(page).toHaveURL(/#\/policy/);
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole("heading", { name: "Routing policy", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Proxy rules", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

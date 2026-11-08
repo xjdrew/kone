@@ -46,6 +46,7 @@
 }
 .field {
   display: grid;
+  align-content: start;
   gap: 5px;
   min-width: 0;
 }

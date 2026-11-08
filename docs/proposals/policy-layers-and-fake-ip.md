@@ -162,7 +162,7 @@ DNS、路由模拟、诊断和实际流处理应共享求值语义。模拟没�
 | `pkg/control` / `pkg/desktop` | 存储位置、授权与单写者、助手重建、迁移预览和生命周期恢复 |
 | 模拟/观察 API 与后续界面 | 展示池、证据、候选与实际目标；未知不伪装成 FINAL；沿用版本检查 |
 
-按用户最新澄清，基础模式为 **Standalone（FINAL direct）和 Global（FINAL 指定代理）**，两者始终执行用户规则；Smart 是独立开关，Custom 不再是模式。四池共用同一语义。Smart 第一期只提供代理/直连建议，用户接受后才形成相应规则；后续自动偏好只作为 FINAL 的决策输入，不以学习域名规则越过用户 IP 规则。详细配置、模式切换及旧条件 FINAL 的兼容状态见[Smart proposal](dns-driven-smart-suggestions.md#2-路由策略模型与配置优化)。
+按用户最新澄清，基础模式为 **Standalone（FINAL direct）和 Global（FINAL 指定代理）**，两者始终执行用户规则；Smart 是独立开关，Custom 不再是模式。四池共用同一语义。Smart 第一期只提供代理/直连建议，用户接受后才形成相应规则；后续自动偏好只作为 FINAL 的决策输入，不以学习域名规则越过用户 IP 规则。详细配置、模式切换及旧条件 FINAL 的兼容状态见[Smart proposal](dns-driven-smart-suggestions.md#2-代理规则模型与配置优化)。
 
 Global 的域名直连例外仍需可靠身份：不能因 DNS 动作是 direct 就一律返回真实 IP，导致后续全局捕获的流丢失域名并再次命中代理 FINAL。需要保留身份时继续使用 Fake-IP，出口可以是 direct；这与按真实地址猜域名、或为共享 IP 移除捕获路由不同。
 

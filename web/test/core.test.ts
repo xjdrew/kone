@@ -284,6 +284,10 @@ test("diagnostic history keeps 20 recent unique targets and round-trips test par
     ["192.0.2.1", "192.0.2.1:80"],
     ["::1", "[::1]:80"],
     ["[::1]:8443", "[::1]:8443"],
+    ["2001:db8:0:1:2:3:4:5", "[2001:db8:0:1:2:3:4:5]:80"],
+    ["example.com:", "example.com:"],
+    ["example.com:bad", "example.com:bad"],
+    ["[::1", "[::1"],
     ["example.com:0", "example.com:0"],
     ["[::1]:0", "[::1]:0"],
   ])

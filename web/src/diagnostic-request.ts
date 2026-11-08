@@ -2,13 +2,16 @@ import { targetHost } from "./domain";
 
 export function connectionTarget(value: string): string {
   const { host, port } = targetHost(value.trim());
-  // Keep malformed explicit ports for API validation instead of replacing them.
-  if (
-    port !== undefined ||
-    /^\[[^\]]+\]:/.test(value.trim()) ||
-    (value.includes(":") && !value.includes("::"))
-  )
-    return value.trim();
+  // Keep explicit ports, including malformed ones, for API validation.
+  if (port !== undefined) return value.trim();
+  if (value.includes(":")) {
+    if (value.trim().startsWith("[") && !/^\[[^\]]+\]$/.test(value.trim())) return value.trim();
+    try {
+      new URL(`http://[${host}]/`);
+    } catch {
+      return value.trim();
+    }
+  }
   return `${host.includes(":") ? `[${host}]` : host}:80`;
 }
 

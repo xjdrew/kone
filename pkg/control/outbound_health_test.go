@@ -51,7 +51,7 @@ func healthStatuses(t *testing.T, c *Controller) []OutboundHealth {
 }
 
 func TestOutboundTestDefaultsToSavedCheckTargetAndAllowsOverride(t *testing.T) {
-	observed := make(chan string, 2)
+	observed := make(chan string, 3)
 	c := testController(t, Options{Probe: func(_ context.Context, _ *kone.KoneConfig, _, target string, tls bool) ProbeResult {
 		observed <- fmt.Sprintf("%s:%t", target, tls)
 		return ProbeResult{Status: "reachable", Stage: "connect"}
@@ -73,6 +73,14 @@ func TestOutboundTestDefaultsToSavedCheckTargetAndAllowsOverride(t *testing.T) {
 	require.NoError(t, err)
 	healthResult(t, c, op)
 	require.Equal(t, "example.com:443:true", <-observed)
+	target = "example.net"
+	op, err = c.TestOutbound(request, "")
+	require.NoError(t, err)
+	healthResult(t, c, op)
+	require.Equal(t, "example.net:80:true", <-observed)
+	target = "example.net:"
+	_, err = c.TestOutbound(request, "")
+	require.Error(t, err)
 }
 
 func TestOutboundHealthExpiresAndChangesInvalidateWithoutCredentialHashes(t *testing.T) {

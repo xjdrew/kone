@@ -80,7 +80,7 @@ func TestRuleIDsStableAndRoutingSimulationHasNoNetworkSideEffects(t *testing.T) 
 	for _, input := range []struct {
 		target, protocol string
 		port             uint16
-	}{{"example.com", "sctp", 80}, {"example.com", "tcp", 0}, {"[2001:db8::1]:443", "tcp", 0}, {"https://example.com", "tcp", 443}, {"example.com:80", "tcp", 443}} {
+	}{{"example.com", "sctp", 80}, {"example.com:", "tcp", 0}, {"[2001:db8::1]:443", "tcp", 0}, {"https://example.com", "tcp", 443}, {"example.com:80", "tcp", 443}} {
 		_, err = one.ExplainDecision(input.target, input.protocol, input.port)
 		require.Error(t, err)
 	}
@@ -88,4 +88,22 @@ func TestRuleIDsStableAndRoutingSimulationHasNoNetworkSideEffects(t *testing.T) 
 	require.Error(t, err)
 	first.DirectDomain("192.0.2.1")
 	require.True(t, first.Decide(netip.MustParseAddr("192.0.2.1"), "udp", 80).Protected)
+}
+
+func TestSimulationDefaultsPortAndRejectsMalformedExplicitPorts(t *testing.T) {
+	for _, target := range []string{"example.com", "192.0.2.1", "::1", "[::1]", "2001:db8:0:1:2:3:4:5"} {
+		_, _, port, err := explainTarget(target, "tcp", 0)
+		require.NoError(t, err)
+		require.Equal(t, uint16(80), port)
+	}
+	for _, target := range []string{"example.com:", "example.com:bad", "example.com:0", "[::1]:", "bad domain"} {
+		_, _, _, err := explainTarget(target, "tcp", 0)
+		require.Error(t, err)
+	}
+	_, _, port, err := explainTarget("example.com", "udp", 53)
+	require.NoError(t, err)
+	require.Equal(t, uint16(53), port)
+	_, _, port, err = explainTarget("example.com:8443", "tcp", 0)
+	require.NoError(t, err)
+	require.Equal(t, uint16(8443), port)
 }

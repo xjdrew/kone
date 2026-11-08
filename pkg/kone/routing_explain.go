@@ -20,24 +20,23 @@ func explainTarget(target, protocol string, port uint16) (any, string, uint16, e
 	if protocol != "tcp" && protocol != "udp" {
 		return nil, "", 0, errors.New("protocol must be tcp or udp")
 	}
-	if target == "" || len(target) > 300 || strings.ContainsAny(target, "\x00\r\n\t /?#@") {
-		return nil, "", 0, errors.New("target must be a domain or IP, optionally with a port")
+	// A separate port field overrides only an omitted port, never an explicit one.
+	defaultPort := "80"
+	if port != 0 {
+		defaultPort = strconv.Itoa(int(port))
 	}
-	if host, raw, err := net.SplitHostPort(target); err == nil {
-		parsed, err := strconv.ParseUint(raw, 10, 16)
-		if err != nil || parsed == 0 || port != 0 && uint16(parsed) != port {
-			return nil, "", 0, errors.New("invalid or conflicting target port")
-		}
-		target, port = host, uint16(parsed)
+	normalized, err := normalizeTargetPort(target, defaultPort)
+	if err != nil {
+		return nil, "", 0, err
 	}
-	if port == 0 {
-		return nil, "", 0, errors.New("a destination port is required for flow simulation")
+	host, raw, _ := net.SplitHostPort(normalized)
+	parsed, _ := strconv.ParseUint(raw, 10, 16)
+	if port != 0 && port != uint16(parsed) {
+		return nil, "", 0, errors.New("invalid or conflicting target port")
 	}
+	target, port = host, uint16(parsed)
 	if address, err := netip.ParseAddr(target); err == nil {
 		return address.Unmap(), protocol, port, nil
-	}
-	if strings.Contains(target, ":") || len(target) > 253 {
-		return nil, "", 0, errors.New("invalid target domain")
 	}
 	return normalizeDomain(target), protocol, port, nil
 }
