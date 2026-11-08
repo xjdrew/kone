@@ -14,8 +14,12 @@
   --warning: #edc279;
   --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --row: 37px;
+  --font-body: 13px;
+  --font-small: 12px;
+  --control: 30px;
+  --form-gap: 14px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Arial, sans-serif;
-  font-size: 13px;
+  font-size: var(--font-body);
   line-height: 1.45;
   color: var(--text);
   background: var(--bg);
@@ -38,6 +42,10 @@
 }
 :root[data-density="comfortable"] {
   --row: 46px;
+  --font-body: 15px;
+  --font-small: 14px;
+  --control: 38px;
+  --form-gap: 20px;
 }
 * {
   box-sizing: border-box;
@@ -113,7 +121,7 @@ h2 {
   margin: 0;
 }
 h3 {
-  font-size: 13px;
+  font-size: var(--font-body);
   font-weight: 600;
 }
 p {
@@ -392,7 +400,7 @@ kbd {
 .viewHeader p {
   margin: 3px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .viewHeader .actions {
   margin-inline-start: auto;
@@ -487,7 +495,7 @@ kbd {
   width: 100%;
   border-collapse: collapse;
   text-align: start;
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .dataTable th {
   height: 34px;
@@ -567,7 +575,7 @@ kbd {
   padding-top: 18px;
 }
 .inlineNote {
-  font-size: 12px;
+  font-size: var(--font-small);
   color: var(--muted);
   padding: 8px 0;
   line-height: 1.5;
@@ -732,4 +740,71 @@ kbd {
     animation: none !important;
     transition: none !important;
   }
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+select {
+  min-height: var(--control);
+}
+.formGrid,
+.formStack {
+  gap: var(--form-gap);
+}
+.errorCount,
+.errorCount span {
+  color: var(--danger) !important;
+}
+.errorToast {
+  position: fixed;
+  z-index: 120;
+  right: 16px;
+  bottom: 40px;
+  width: min(440px, calc(100vw - 32px));
+  max-height: 45dvh;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--danger);
+  background: var(--surface);
+  box-shadow: 0 8px 24px #0005;
+}
+.errorToast .actions {
+  margin-top: 10px;
+}
+.errorHistory {
+  position: fixed;
+  z-index: 110;
+  bottom: 28px;
+  left: 0;
+  right: 0;
+  height: min(42dvh, 420px);
+  background: var(--surface);
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+}
+.errorEntries {
+  overflow: auto;
+  padding: 0 16px;
+}
+.errorEntries article {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+.errorEntries details,
+.errorEntries p {
+  flex-basis: 100%;
+}
+.errorEntries pre,
+.errorToast pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.errorToast,
+.errorHistory {
+  font-size: var(--font-body);
 }

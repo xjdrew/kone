@@ -746,6 +746,10 @@
     "traffic.ruleEvidence": "Routing evidence",
     "traffic.authorizedTargets": "Authorized target addresses",
     "smart.preferredInUse": "Choose another preferred proxy in Proxy rules before disabling or deleting this outbound.",
-    "smart.proxyNotCompared": "The proxy was not compared. Direct TLS success does not establish a speed advantage or the correct exit location for your application."
+    "smart.proxyNotCompared": "The proxy was not compared. Direct TLS success does not establish a speed advantage or the correct exit location for your application.",
+    "nav.errors": "Errors",
+    "errors.history": "Error history",
+    "errors.clear": "Clear history",
+    "errors.empty": "No errors in this browser session."
   }
 }

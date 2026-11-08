@@ -1,3 +1,4 @@
+import { clearErrors, recordError } from "../error-history";
 import { newID } from "../browser";
 import type { Notice } from "../model";
 
@@ -21,6 +22,7 @@ export function onSessionExpired(handler: () => void) {
   };
 }
 export function clearSession() {
+  clearErrors();
   csrf = "";
   epoch++;
 }
@@ -107,10 +109,14 @@ export async function request<T>(
     return data as T;
   } catch (error) {
     if (started !== epoch) throw new ApiError("session_changed");
-    if (error instanceof ApiError) throw error;
-    if (controller.signal.aborted)
-      throw new ApiError("timeout", 0, { code: "timeout" }, method !== "GET");
-    throw new ApiError("offline", 0, { code: "offline" }, method !== "GET");
+    const failure =
+      error instanceof ApiError
+        ? error
+        : controller.signal.aborted
+          ? new ApiError("timeout", 0, { code: "timeout" }, method !== "GET")
+          : new ApiError("offline", 0, { code: "offline" }, method !== "GET");
+    if (!options.signal?.aborted) recordError(failure);
+    throw failure;
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", abort);

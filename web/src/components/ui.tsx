@@ -1,4 +1,7 @@
 import {
+  createContext,
+  useContext,
+  useEffect,
   cloneElement,
   isValidElement,
   useId,
@@ -10,6 +13,7 @@ import { useTranslation } from "react-i18next";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Dropdown from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
+import { globalError, recordError } from "../error-history";
 import { ApiError } from "../api/client";
 import styles from "./ui.module.css";
 
@@ -82,9 +86,14 @@ export function Status({ value, children }: { value: string; children?: ReactNod
     </span>
   );
 }
+export const GlobalErrorScope = createContext(false);
 export function ErrorNotice({ error, retry }: { error: unknown; retry?: () => void }) {
   const { t, i18n } = useTranslation();
-  if (!error) return null;
+  const centralized = useContext(GlobalErrorScope);
+  useEffect(() => {
+    if (error instanceof ApiError) recordError(error);
+  }, [error]);
+  if (!error || (centralized && error instanceof ApiError && globalError(error))) return null;
   const key = error instanceof ApiError ? `api.${error.code}` : "api.request";
   const detail =
     error instanceof ApiError

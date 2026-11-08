@@ -1,3 +1,4 @@
+import { GlobalErrorScope } from "./components/ui";
 import "./startup";
 import React from "react";
 import { createRoot } from "react-dom/client";
@@ -22,7 +23,9 @@ import { SettingsView } from "./views/settings";
 const rootRoute = createRootRoute({
   component: () => (
     <Providers>
-      <Shell />
+      <GlobalErrorScope.Provider value={true}>
+        <Shell />
+      </GlobalErrorScope.Provider>
     </Providers>
   ),
 });

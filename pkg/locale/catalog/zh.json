@@ -746,6 +746,10 @@
     "traffic.ruleEvidence": "路由证据",
     "traffic.authorizedTargets": "获准目标地址",
     "smart.preferredInUse": "请先在代理规则中更换首选代理，再停用或删除此出口。",
-    "smart.proxyNotCompared": "未比较代理路径。直连 TLS 成功不代表速度更快，也不证明出口位置符合应用要求。"
+    "smart.proxyNotCompared": "未比较代理路径。直连 TLS 成功不代表速度更快，也不证明出口位置符合应用要求。",
+    "nav.errors": "错误",
+    "errors.history": "错误历史",
+    "errors.clear": "清空历史",
+    "errors.empty": "本次浏览器会话没有错误。"
   }
 }

@@ -9,6 +9,9 @@
 
 ## Bugfixes
 
+- Collect repeated connection errors in timed notifications and a status-bar error history without disrupting page layout.
+- Apply Comfortable density to typography, form spacing, controls and table rows.
+
 - Accept domain/IP connection targets and proxy addresses without a port, defaulting to 80 while DNS retains port 53.
 - Preserve domain identity for direct exceptions under global capture and stop stale or unrelated DNS evidence from choosing another target.
 

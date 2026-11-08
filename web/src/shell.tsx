@@ -1,3 +1,4 @@
+import { ErrorHistory } from "./components/error-history";
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
@@ -349,6 +350,7 @@ export function Shell() {
       )}
       <footer className="statusbar">
         <div className="toolTabs">
+          <ErrorHistory />
           <button
             onClick={() => setTool(tool === "diagnostics" ? null : "diagnostics")}
             aria-pressed={tool === "diagnostics"}

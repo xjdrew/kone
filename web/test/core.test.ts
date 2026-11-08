@@ -296,3 +296,19 @@ test("diagnostic history keeps 20 recent unique targets and round-trips test par
   expect(diagnosticElapsed(125)).toBe("125 ms");
   expect(diagnosticElapsed(undefined)).toBe("—");
 });
+
+test("global errors coalesce polling failures and retain history after toast dismissal", async () => {
+  const { clearErrors, recordError, dismissError, errorSnapshot } =
+    await import("../src/error-history");
+  clearErrors();
+  for (let i = 0; i < 5; i++) recordError(new ApiError("offline"));
+  expect(errorSnapshot().entries.length).toBe(1);
+  expect(errorSnapshot().entries[0]!.count).toBe(5);
+  dismissError();
+  recordError(new ApiError("offline"));
+  expect(errorSnapshot().active).toBeNull();
+  expect(errorSnapshot().entries[0]!.count).toBe(6);
+  recordError(new ApiError("version_conflict", 409));
+  expect(errorSnapshot().entries.length).toBe(1);
+  clearErrors();
+});

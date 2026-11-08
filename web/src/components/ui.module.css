@@ -3,7 +3,7 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 30px;
+  min-height: var(--control);
   padding: 4px 10px;
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -55,13 +55,13 @@
   gap: 6px;
 }
 .label {
-  font-size: 12px;
+  font-size: var(--font-small);
   color: var(--muted);
   font-weight: 500;
 }
 .field small {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
   line-height: 1.5;
 }
 .field .error {
@@ -71,7 +71,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--font-small);
   white-space: nowrap;
 }
 .dot {
@@ -106,7 +106,7 @@
 }
 .notice pre,
 .technical pre {
-  font-size: 12px;
+  font-size: var(--font-small);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   max-height: 320px;
@@ -223,7 +223,7 @@
 }
 .keyValues dt {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-small);
 }
 .keyValues dd {
   margin: 0;

@@ -72,9 +72,9 @@ test("@compat default direct routing starts immediately; only real blockers requ
     }),
   );
   await dialog.getByRole("button", { name: "Check again" }).click();
-  await expect(dialog.getByRole("alert")).toBeVisible();
-  await dialog.getByRole("alert").getByText("Technical details").click();
-  await expect(dialog.getByText("Host check failed")).toBeVisible();
+  await expect(page.locator(".errorToast")).toBeVisible();
+  await page.locator(".errorToast").getByText("Technical details").click();
+  await expect(page.locator(".errorToast")).toContainText("Host check failed");
   await page.unroute("**/api/v1/readiness");
 
   // Rechecking cannot start; enabling must revalidate a changed environment.
@@ -621,4 +621,29 @@ test("@compat Smart stays in policy context and previews a narrow rule before ac
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByRole("heading", { name: "Proxy rules", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test("@compat comfortable changes typography and offline errors stay out of page flow", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  await page.goto("/#/settings?section=interface");
+  const bodySize = () => page.evaluate(() => getComputedStyle(document.documentElement).fontSize);
+  const before = await bodySize();
+  await page.getByLabel("Density", { exact: true }).selectOption("comfortable");
+  await expect.poll(bodySize).not.toBe(before);
+  await page.reload();
+  await expect.poll(bodySize).toBe("15px");
+  const main = page.locator("main");
+  const top = (await main.boundingBox())!.y;
+  data.offline = true;
+  await expect(page.locator(".errorToast")).toBeVisible({ timeout: 15000 });
+  await expect(page.locator('main [role="alert"]')).toHaveCount(0);
+  expect((await main.boundingBox())!.y).toBe(top);
+  await expect(page.locator(".errorToast")).toHaveCount(0, { timeout: 12000 });
+  await page.getByRole("button", { name: "Errors 1", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Error history" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Error history" })).toContainText(
+    "Cannot reach this KONE host",
+  );
 });
