@@ -1,4 +1,3 @@
-import { SmartPolicy } from "./smart";
 import { Link } from "@tanstack/react-router";
 import { newID } from "../browser";
 import { useState } from "react";
@@ -150,7 +149,6 @@ export function PolicyView() {
           })}
         </div>
       </details>
-      <SmartPolicy global={policy.data?.mode === "proxy-first"} />
       <RulesView onPolicy={() => setChangePolicy(true)} />
       {changePolicy && policy.data && (
         <PolicyEditor

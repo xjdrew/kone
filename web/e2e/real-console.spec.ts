@@ -27,7 +27,7 @@ test("@real management credentials, policy edits and process restart remain capt
   });
   try {
     await page.goto(manager.url.origin + "/");
-    await expect(page.getByRole("heading", { name: "Traffic paths" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Network overview" })).toBeVisible();
     await expect(page.getByRole("switch", { name: "Enable proxy" })).toBeEnabled();
     await page.getByRole("link", { name: "Proxy rules", exact: true }).click();
     await page.getByRole("link", { name: "Outbounds", exact: true }).click();

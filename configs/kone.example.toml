@@ -20,7 +20,10 @@
 # lan-defaults-initialized = false
 
 # [policy.smart]
-# enabled = false # opt-in public TCP/443 + TLS suggestions; never auto-applies rules
+# enabled = false # 兼容一期建议设置；不授予自动选择权限
+# auto-enabled = false # 新的临时出口选择授权；默认关闭，监控仍运行
+# candidates = ["office-proxy"] # 可选，稳定出站 ID；最多 16 个
+# allow-direct = false # 全局代理回退直连须显式允许
 
 [core]
 # 新建的 TUN 名称；空字符串自动分配。macOS 指定时必须使用 utunN。

@@ -136,6 +136,8 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
       data.state.saved_version = data.document.version;
       return respond(data.document);
     }
+    if (path === "/connection-health")
+      return respond({ status: "running", auto_enabled: false, entries: [], total: 0, dropped: 0 });
     if (path === "/smart")
       return respond({
         enabled: false,

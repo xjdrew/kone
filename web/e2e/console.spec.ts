@@ -208,11 +208,11 @@ test("remote session loss removes protected data and read-only actions are disab
   await expect(page.getByRole("navigation", { name: "KONE" })).toHaveCount(0);
   await page.getByLabel("Management password").fill("fixture-password");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Traffic paths" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Network overview" })).toBeVisible();
   await expect(page.getByRole("switch", { name: "Enable proxy" })).toBeDisabled();
   data.authenticated = false;
   await expect(page.getByRole("heading", { name: "Open your network workspace" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Traffic paths" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Network overview" })).toHaveCount(0);
   expect(
     data.requests.filter((request) => request.path === "/config" && request.method === "PUT"),
   ).toHaveLength(0);
@@ -536,90 +536,84 @@ test("@compat Resolvers separates Host and Gate from automatic upstream selectio
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test("@compat Smart stays in policy context and previews a narrow rule before accepting", async ({
+test("@compat health combines ports in Overview and pins a verified selection with one click", async ({
   page,
 }) => {
   const data = await fixture(page);
-  data.document.config.policy = {
-    mode: "direct-first",
-    "rule-version": 2,
-    smart: { enabled: true },
-  };
-  const evidence = {
-    id: "suggestion-one",
+  data.state.data_state = "running";
+  data.state.state = "running";
+  const actions: string[] = [];
+  const entry = {
+    id: 1,
+    generation: 2,
     domain: "service.example",
-    status: "ready",
-    suggested_action: "proxy",
-    outbound: "office",
-    config_version: data.document.version,
-    network_generation: "current-network",
-    interface: "eth0",
-    expires_at: new Date(Date.now() + 240000).toISOString(),
-    candidates: ["8.8.8.8"],
-    samples: [
+    scope: "",
+    status: "attention",
+    reason: "web_unreachable",
+    expires: new Date(Date.now() + 240000).toISOString(),
+    first: new Date().toISOString(),
+    last: new Date().toISOString(),
+    count: 2,
+    suggestions: { "443": "Local HTTP" },
+    results: [
       {
-        ip: "8.8.8.8",
+        protocol: "tcp",
+        port: 80,
+        source: "probe",
         outbound: "direct",
         status: "failed",
         stage: "connect",
         duration_ms: 3000,
         time: new Date().toISOString(),
-        verified_tls: false,
       },
       {
-        ip: "8.8.8.8",
-        outbound: "office",
-        status: "reachable",
-        stage: "target_tls",
-        duration_ms: 124,
+        protocol: "tcp",
+        port: 443,
+        source: "probe",
+        outbound: "direct",
+        status: "failed",
+        stage: "connect",
+        duration_ms: 3000,
         time: new Date().toISOString(),
-        verified_tls: true,
       },
     ],
   };
-  const actions: string[] = [];
-  await page.route("**/api/v1/smart", async (route) => {
+  await page.route("**/api/v1/connection-health*", async (route) => {
     const body = route.request().postDataJSON();
-    if (body) actions.push(body.action);
-    await route.fulfill({
+    if (body) {
+      actions.push(body.action);
+      if (body.action === "pin") {
+        entry.status = "history";
+        return route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify({ ...data.document, applied: true }),
+        });
+      }
+      if (body.action === "handled") entry.status = "history";
+    }
+    return route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify(
-        body?.action === "preview"
-          ? {
-              suggestion: evidence,
-              rule: {
-                type: "DOMAIN",
-                pattern: evidence.domain,
-                outbound: "office",
-                protocol: "tcp",
-                ports: [443],
-              },
-            }
-          : body?.action === "accept"
-            ? { ...data.document, applied: true }
-            : {
-                enabled: true,
-                status: "observing",
-                attempts: 4,
-                dropped: 0,
-                suggestions: [evidence],
-              },
-      ),
+      body: JSON.stringify({
+        status: "running",
+        auto_enabled: false,
+        entries: [entry],
+        total: 1,
+        dropped: 0,
+      }),
     });
   });
-  await page.goto("/#/policy");
-  await page.getByRole("button", { name: /service.example/ }).click();
-  await expect(page.getByText("Target TLS verified", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Port 443 is a Web default/)).toBeVisible();
-  await page.getByRole("button", { name: "Preview rule", exact: true }).click();
-  await expect(page.getByText(/DOMAIN service.example/)).toBeVisible();
-  await expect(page.getByText(/cached real IPs may need/)).toBeVisible();
-  expect(actions).toEqual(["preview"]);
-  await page.getByRole("button", { name: "Accept and save rule" }).click();
-  await expect.poll(() => actions).toEqual(["preview", "accept"]);
-  await expect(page).toHaveURL(/#\/policy/);
+  await page.goto("/#/traffic?view=overview");
+  const health = page.getByRole("region", { name: "Connection health" });
+  await expect(health.getByRole("button", { name: "service.example", exact: true })).toBeVisible();
+  await expect(health.getByRole("columnheader", { name: "Port status", exact: true })).toHaveCount(
+    1,
+  );
+  await health.getByRole("button", { name: "Pin as manual rule", exact: true }).click();
+  await expect.poll(() => actions).toEqual(["pin"]);
+  await expect(health.getByRole("button", { name: "service.example", exact: true })).toHaveCount(0);
+  await health.getByRole("button", { name: "History", exact: true }).click();
+  await expect(health.getByRole("button", { name: "service.example", exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole("heading", { name: "Proxy rules", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 

@@ -65,6 +65,7 @@ func (h *flowHandler) resolveLayeredDestination(ctx context.Context, s *runtimeS
 		}
 		target.decision = s.rule.DecideDNS(host, message, protocol, destination.Port)
 	}
+	target.decision = h.one.health.route(host, destination.Port, protocol, target.decision, s)
 	target.decision.ConfigVersion = s.configurationVersion()
 	if target.decision.Evidence == "dns_failed" || target.decision.CaptureOnly {
 		return target, errors.New("required routing evidence is unavailable")

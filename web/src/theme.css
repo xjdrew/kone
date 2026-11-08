@@ -808,3 +808,8 @@ select {
 .errorHistory {
   font-size: var(--font-body);
 }
+.pathFilters > summary {
+  padding: 6px 22px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+}

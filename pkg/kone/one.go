@@ -38,6 +38,8 @@ type ConfigSnapshot struct {
 }
 
 type One struct {
+	health *connectionHealth
+
 	smart                *smartCoordinator
 	ip                   net.IP
 	subnet               *net.IPNet
@@ -240,6 +242,7 @@ func FromConfig(cfg *KoneConfig, options ...Option) (*One, error) {
 		p.directDial = one.endpointDialer(direct)
 	}
 	one.smart = newSmartCoordinator(one)
+	one.health = newConnectionHealth(one)
 	return one, nil
 }
 
@@ -282,6 +285,7 @@ func (one *One) ReloadVersion(cfg *KoneConfig, revision uint64) error {
 	}
 	one.policy.Store(&runtimeSnapshot{version: old.version + 1, configVersion: revision, cfg: cfg, rule: rule, outbounds: p, geoIP: old.geoIP, previousGeoIP: old.previousGeoIP})
 	one.smart.invalidate()
+	one.health.invalidate()
 	one.clearDirectDNSCaches()
 	return nil
 }
@@ -546,7 +550,7 @@ func (one *One) Run(parent context.Context) (result error) {
 	}
 	start("DNS cache", func() error { return one.dns.Maintain(ctx) })
 	close(one.ready)
-	start("Smart observations", func() error { return one.smart.run(ctx, device.Name()) })
+	start("Connection health", func() error { return one.health.run(ctx) })
 	select {
 	case err := <-errorsCh:
 		if ctx.Err() == nil {

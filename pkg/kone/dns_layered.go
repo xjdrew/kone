@@ -49,7 +49,7 @@ func (d *Dns) queryLayered(ctx context.Context, s *runtimeSnapshot, request *dns
 	}
 	// Keep explicit domain/IP decisions attached to an identity. In Global this
 	// is essential even for direct exceptions: the real IP is captured again.
-	capture := !decision.Protected && (decision.CaptureOnly || s.rule.OutboundType(decision.Outbound) != OutboundDirect || decision.Pool == "domain" || decision.Pool == "ip" || s.cfg.Core.AutoRoute || s.cfg.Core.AutoRoute6)
+	capture := !decision.Protected && (d.one.health.dnsEvidence(domain, s) != nil || decision.CaptureOnly || s.rule.OutboundType(decision.Outbound) != OutboundDirect || decision.Pool == "domain" || decision.Pool == "ip" || s.cfg.Core.AutoRoute || s.cfg.Core.AutoRoute6)
 	if meta, _ := ctx.Value(dnsMetaKey{}).(*dnsQueryMeta); meta != nil {
 		meta.Routing = decision
 		meta.Resolved = message

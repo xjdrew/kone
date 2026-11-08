@@ -376,6 +376,8 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 			return
 		}
 		apiError(w, 410, "expired", "This flow detail has expired; it was not replaced with a newer sample")
+	case path == "connection-health" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		c.connectionHealthRoute(w, r)
 	case path == "smart" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
 		c.smartRoute(w, r)
 	case path == "dns" && r.Method == http.MethodGet:
@@ -601,6 +603,7 @@ func (c *Controller) Serve(ctx context.Context, address string, ready func(strin
 	monitorCtx, stopMonitor := context.WithCancel(c.ctx)
 	defer stopMonitor()
 	go c.monitorOutbounds(monitorCtx, outboundHealthTTL)
+	go c.mirrorConnectionHealth(monitorCtx)
 	err = server.Serve(listener)
 	closeErr := c.Close()
 	if errors.Is(err, http.ErrServerClosed) {

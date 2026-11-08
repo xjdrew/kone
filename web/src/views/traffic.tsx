@@ -1,3 +1,4 @@
+import { ConnectionHealth } from "./connection-health";
 import { copyText } from "../browser";
 import { Fragment, useDeferredValue, useEffect, useState } from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
@@ -184,13 +185,21 @@ export function TrafficView() {
           <h1>
             {t(
               search.view === "overview"
-                ? "traffic.title"
+                ? "health.overviewTitle"
                 : search.view === "dns"
                   ? "dns.title"
                   : "nav.connections",
             )}
           </h1>
-          <p>{t(search.view === "dns" ? "dns.subtitle" : "traffic.subtitle")}</p>
+          <p>
+            {t(
+              search.view === "dns"
+                ? "dns.subtitle"
+                : search.view === "overview"
+                  ? "health.overviewSubtitle"
+                  : "traffic.subtitle",
+            )}
+          </p>
         </div>
         <div className="actions">
           {search.view !== "dns" && (
@@ -240,158 +249,168 @@ export function TrafficView() {
           </Link>
         ))}
       </nav>
-      <div className="toolbar">
-        <input
-          type="search"
-          data-search
-          aria-label={t("common.target")}
-          placeholder={t("common.target")}
-          value={target}
-          onChange={(event) => {
-            setTarget(event.target.value);
-            void navigate({
-              to: "/traffic",
-              search: { ...search, target: event.target.value },
-              replace: true,
-            });
-            changeFilter();
-          }}
-        />
-        {search.view !== "dns" && (
-          <>
-            <select
-              aria-label={t("common.protocol")}
-              value={protocol}
-              onChange={(event) => {
-                setProtocol(event.target.value);
-                changeFilter();
-              }}
-            >
-              <option value="">
-                {t("common.protocol")}: {t("common.all")}
-              </option>
-              <option value="tcp">TCP</option>
-              <option value="udp">UDP</option>
-            </select>
-            <select
-              aria-label={t("common.status")}
-              value={status}
-              onChange={(event) => {
-                setStatus(event.target.value);
-                changeFilter();
-              }}
-            >
-              <option value="">
-                {t("common.status")}: {t("common.all")}
-              </option>
-              {["active", "closed", "failed", "rejected", "canceled"].map((value) => (
-                <option key={value} value={value}>
-                  {t(`traffic.${value}`)}
-                </option>
-              ))}
-            </select>
-            <select
-              aria-label={t("common.outbound")}
-              value={outbound}
-              onChange={(event) => {
-                setOutbound(event.target.value);
-                changeFilter();
-              }}
-            >
-              <option value="">
-                {t("common.outbound")}: {t("common.all")}
-              </option>
-              {[
-                "direct",
-                "reject",
-                ...(context.document?.config.outbounds.map((item) => item.name) ?? []),
-              ].map((value) => (
-                <option key={value} value={value}>
-                  {["direct", "reject"].includes(value) ? t(`outbounds.${value}`) : value}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
-        {search.view === "overview" && (
-          <select
-            aria-label={t("traffic.metric")}
-            value={metric}
+      <details className="pathFilters" open={search.view !== "overview"}>
+        <summary hidden={search.view !== "overview"}>{t("health.pathFilters")}</summary>
+        <div className="toolbar">
+          <input
+            type="search"
+            data-search
+            aria-label={t("common.target")}
+            placeholder={t("common.target")}
+            value={target}
             onChange={(event) => {
-              setMetric(event.target.value);
+              setTarget(event.target.value);
+              void navigate({
+                to: "/traffic",
+                search: { ...search, target: event.target.value },
+                replace: true,
+              });
               changeFilter();
             }}
-          >
-            <option value="total">{t("common.total")}</option>
-            <option value="upload">{t("common.upload")}</option>
-            <option value="download">{t("common.download")}</option>
-            <option value="cumulative">{t("traffic.bytes")}</option>
-          </select>
-        )}
-        {search.view !== "dns" && (
-          <details className="filterDetails">
-            <summary>{t("common.filters")}</summary>
-            <div className="toolbar">
+          />
+          {search.view !== "dns" && (
+            <>
               <select
-                aria-label={t("traffic.rule")}
-                value={rule}
+                aria-label={t("common.protocol")}
+                value={protocol}
                 onChange={(event) => {
-                  setRule(event.target.value);
+                  setProtocol(event.target.value);
                   changeFilter();
                 }}
               >
                 <option value="">
-                  {t("traffic.rule")}: {t("common.all")}
+                  {t("common.protocol")}: {t("common.all")}
                 </option>
-                {context.document?.config.rules.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.type} {item.pattern} → {item.outbound}
+                <option value="tcp">TCP</option>
+                <option value="udp">UDP</option>
+              </select>
+              <select
+                aria-label={t("common.status")}
+                value={status}
+                onChange={(event) => {
+                  setStatus(event.target.value);
+                  changeFilter();
+                }}
+              >
+                <option value="">
+                  {t("common.status")}: {t("common.all")}
+                </option>
+                {["active", "closed", "failed", "rejected", "canceled"].map((value) => (
+                  <option key={value} value={value}>
+                    {t(`traffic.${value}`)}
                   </option>
                 ))}
               </select>
-              <label>
-                {t("logs.from")}
-                <input
-                  type="datetime-local"
-                  value={since}
+              <select
+                aria-label={t("common.outbound")}
+                value={outbound}
+                onChange={(event) => {
+                  setOutbound(event.target.value);
+                  changeFilter();
+                }}
+              >
+                <option value="">
+                  {t("common.outbound")}: {t("common.all")}
+                </option>
+                {[
+                  "direct",
+                  "reject",
+                  ...(context.document?.config.outbounds.map((item) => item.name) ?? []),
+                ].map((value) => (
+                  <option key={value} value={value}>
+                    {["direct", "reject"].includes(value) ? t(`outbounds.${value}`) : value}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+          {search.view === "overview" && (
+            <select
+              aria-label={t("traffic.metric")}
+              value={metric}
+              onChange={(event) => {
+                setMetric(event.target.value);
+                changeFilter();
+              }}
+            >
+              <option value="total">{t("common.total")}</option>
+              <option value="upload">{t("common.upload")}</option>
+              <option value="download">{t("common.download")}</option>
+              <option value="cumulative">{t("traffic.bytes")}</option>
+            </select>
+          )}
+          {search.view !== "dns" && (
+            <details className="filterDetails">
+              <summary>{t("common.filters")}</summary>
+              <div className="toolbar">
+                <select
+                  aria-label={t("traffic.rule")}
+                  value={rule}
                   onChange={(event) => {
-                    setSince(event.target.value);
+                    setRule(event.target.value);
                     changeFilter();
                   }}
-                />
-              </label>
-              <label>
-                {t("logs.to")}
-                <input
-                  type="datetime-local"
-                  value={until}
-                  onChange={(event) => {
-                    setUntil(event.target.value);
-                    changeFilter();
-                  }}
-                />
-              </label>
-            </div>
-          </details>
-        )}
-        {(target || protocol || status || outbound || rule || since || until || search.anchor) && (
-          <Button
-            tone="quiet"
-            onClick={() => {
-              setTarget("");
-              setProtocol("");
-              setStatus("");
-              setOutbound("");
-              setRule("");
-              setSince("");
-              setUntil("");
-              live();
-            }}
-          >
-            {t("common.resetFilters")}
-          </Button>
-        )}
-      </div>
+                >
+                  <option value="">
+                    {t("traffic.rule")}: {t("common.all")}
+                  </option>
+                  {context.document?.config.rules.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.type} {item.pattern} → {item.outbound}
+                    </option>
+                  ))}
+                </select>
+                <label>
+                  {t("logs.from")}
+                  <input
+                    type="datetime-local"
+                    value={since}
+                    onChange={(event) => {
+                      setSince(event.target.value);
+                      changeFilter();
+                    }}
+                  />
+                </label>
+                <label>
+                  {t("logs.to")}
+                  <input
+                    type="datetime-local"
+                    value={until}
+                    onChange={(event) => {
+                      setUntil(event.target.value);
+                      changeFilter();
+                    }}
+                  />
+                </label>
+              </div>
+            </details>
+          )}
+          {(target ||
+            protocol ||
+            status ||
+            outbound ||
+            rule ||
+            since ||
+            until ||
+            search.anchor) && (
+            <Button
+              tone="quiet"
+              onClick={() => {
+                setTarget("");
+                setProtocol("");
+                setStatus("");
+                setOutbound("");
+                setRule("");
+                setSince("");
+                setUntil("");
+                live();
+              }}
+            >
+              {t("common.resetFilters")}
+            </Button>
+          )}
+        </div>
+      </details>
       {search.view === "dns" ? (
         <DNSView target={filterTarget} />
       ) : (
@@ -474,6 +493,7 @@ function Overview({
           <strong>{formatBytes(totals.bytes)}</strong>
         </div>
       </div>
+      <ConnectionHealth />
       {data.sankey.paths.length ? (
         <FlowGraph
           graph={data.sankey}
@@ -493,30 +513,33 @@ function Overview({
         </span>
         {data.traffic.truncated && <span>{t("common.truncated")}</span>}
       </div>
-      <section className={styles.attention}>
-        <h2>
-          {t("traffic.attention")} <span className="pill">{attention.length}</span>
-        </h2>
-        {attention.length ? (
-          attention.slice(0, 8).map((group) => (
-            <div key={group.key}>
-              <button className="textButton mono" onClick={() => onGroup(group.flows)}>
-                {group.target}
-              </button>
-              <span className="dangerText mono">{group.failed}</span>
-              <span className="muted">
-                {t(`stage.${group.flows[0].stage}`, { defaultValue: t("common.unknown") })} ·{" "}
-                {timestamp(group.flows[0].updated_at)}
-              </span>
-              <Button tone="quiet" onClick={() => onFlow(group.flows[0])}>
-                {t("common.openDetails")}
-              </Button>
-            </div>
-          ))
-        ) : (
-          <p className="muted">{t("traffic.noAttention")}</p>
-        )}
-      </section>
+      <details>
+        <summary>{t("health.recentFlows")}</summary>
+        <section className={styles.attention}>
+          <h2>
+            {t("traffic.attention")} <span className="pill">{attention.length}</span>
+          </h2>
+          {attention.length ? (
+            attention.slice(0, 8).map((group) => (
+              <div key={group.key}>
+                <button className="textButton mono" onClick={() => onGroup(group.flows)}>
+                  {group.target}
+                </button>
+                <span className="dangerText mono">{group.failed}</span>
+                <span className="muted">
+                  {t(`stage.${group.flows[0].stage}`, { defaultValue: t("common.unknown") })} ·{" "}
+                  {timestamp(group.flows[0].updated_at)}
+                </span>
+                <Button tone="quiet" onClick={() => onFlow(group.flows[0])}>
+                  {t("common.openDetails")}
+                </Button>
+              </div>
+            ))
+          ) : (
+            <p className="muted">{t("traffic.noAttention")}</p>
+          )}
+        </section>
+      </details>
       <details className={styles.paths}>
         <summary>{t("common.path")}</summary>
         <table className="dataTable">

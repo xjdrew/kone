@@ -58,10 +58,29 @@ func (cfg *KoneConfig) ValidatePolicy() error {
 	if cfg.Policy.RuleVersion > 2 {
 		return errors.New("policy.rule-version must be 1 (legacy) or 2 (layered)")
 	}
-	if cfg.Policy.Smart.Enabled {
+	if cfg.Policy.Smart.Enabled || cfg.Policy.Smart.AutoEnabled {
 		mode, _ := PolicyMode(cfg)
 		if cfg.Policy.RuleVersion != 2 || mode == "custom" {
 			return errors.New("Smart requires layered rules and a standard base mode")
+		}
+	}
+	seenCandidates := map[string]bool{}
+	if len(cfg.Policy.Smart.Candidates) > 16 {
+		return errors.New("Smart supports at most 16 candidate outbounds")
+	}
+	for _, id := range cfg.Policy.Smart.Candidates {
+		if id == "" || seenCandidates[id] {
+			return errors.New("Smart candidate IDs must be unique and nonempty")
+		}
+		seenCandidates[id] = true
+		found := false
+		for _, o := range cfg.Outbounds {
+			if o.ID == id && o.IsEnabled() {
+				found = true
+			}
+		}
+		if !found {
+			return errors.New("Smart candidate must reference an enabled outbound ID")
 		}
 	}
 	if cfg.Policy.PreferredProxyID != "" {

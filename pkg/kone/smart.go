@@ -18,7 +18,10 @@ import (
 
 // Smart is opt-in, bounded background evidence. It never changes routing.
 type SmartConfig struct {
-	Enabled bool `toml:"enabled,omitempty" json:"enabled"`
+	AutoEnabled bool     `toml:"auto-enabled,omitempty" json:"auto-enabled"`
+	Candidates  []string `toml:"candidates,omitempty" json:"candidates,omitempty"`
+	AllowDirect bool     `toml:"allow-direct,omitempty" json:"allow-direct"`
+	Enabled     bool     `toml:"enabled,omitempty" json:"enabled"`
 }
 type SmartSample struct {
 	IP          string    `json:"ip"`

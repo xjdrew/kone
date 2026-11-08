@@ -106,6 +106,15 @@ func (one *One) ExplainDecision(target, protocol string, port uint16) (RoutingDe
 		return RoutingDecision{}, fmt.Errorf("engine policy is not initialized")
 	}
 	decision, err := explainWithRule(snapshot.rule, snapshot.outbounds, target, protocol, port, snapshot.cfg.Core.IPv6Network != "")
+	if value, proto, p, parseErr := explainTarget(target, protocol, port); parseErr == nil {
+		if domain, ok := value.(string); ok && proto == "tcp" {
+			if message := one.health.dnsEvidence(domain, snapshot); message != nil {
+				decision = snapshot.rule.DecideDNS(domain, message, proto, p)
+				decision = one.health.route(domain, p, proto, decision, snapshot)
+				decision.EffectiveOutbound = decision.Outbound
+			}
+		}
+	}
 	decision.ConfigVersion = snapshot.configurationVersion()
 	return decision, err
 }

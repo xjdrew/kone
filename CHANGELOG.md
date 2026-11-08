@@ -5,7 +5,8 @@
 - Rename the routing workspace to Proxy rules across navigation, messages and documentation.
 - Add explicit layered routing upgrades, with domain rules before IP rules and decisions bound to the actual dialed address.
 - Keep Fake-IP domain ownership across restarts and profiles, with capacity visibility and an explicit fresh-pool migration for legacy configurations.
-- Add optional DNS-driven Smart suggestions with bounded TCP/TLS probes, repeat verification and inline rule previews; suggestions never change routing automatically.
+- Unify DNS and connection health in Overview with persistent attention records, retesting, combined port results and handling history.
+- Add opt-in temporary outbound selection that respects manual rules, with proxy DNS recovery and one-click pinning as a permanent rule.
 
 ## Bugfixes
 

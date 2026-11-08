@@ -98,14 +98,18 @@ rule-version = 2
 preferred-proxy-id = "office-id" # 对应 [[outbounds]].id，不是显示名
 
 [policy.smart]
-enabled = false
+auto-enabled = false
+candidates = ["office-id"]
+allow-direct = false
 
 [dns]
 persistent-fake-ip = true
 # retired-fake-ip-pools = ["10.192.0.0/16"]
 ```
 
-以上是配置片段，应合并到现有同名段落。Smart 仅提供建议；没有首选代理时仍可观察直连，但不会声称代理可修复。默认代理模式的首选代理必须与 FINAL 出口一致。
+以上是配置片段，应合并到现有同名段落。连接健康随代理引擎监控，Smart 的 `auto-enabled` 仅授权临时选择；旧 `enabled=true` 不会自动获得此授权。`candidates` 使用已启用出站的稳定 ID，省略时可使用首选代理；默认代理模式的首选代理须与 FINAL 一致，其他候选可另行添加。全局代理只有显式 `allow-direct=true` 才可回退直连。
+
+公网域名缺少地址证据时，可通过候选代理访问 Cloudflare HTTPS DNS，取得地址后仍执行保护和用户 IP 规则；私有解析范围不使用此公共回退。临时选择最长有效 5 分钟且不超过 DNS 证据 TTL，规则、地址或网络变化后复核；固定为手工规则后独立有效。
 
 新管理配置默认使用分层规则和持久地址归属。旧配置通过“代理规则 → 升级分层规则”预览迁移，先暂停接管：规则 ID 和池内顺序保留，域名规则会先于原本更靠前的 IP 规则；旧内存池换成不重叠的新池，并列入退役池。退役地址仍捕获并拒绝，应用应重新解析。不要手动关闭持久化并复用同一池，也不要仅还原旧归属备份；需要保留完整最新状态或显式使用新池。
 

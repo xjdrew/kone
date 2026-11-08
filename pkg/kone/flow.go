@@ -251,6 +251,7 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 	observation := h.startObservation(s, "tcp", source, destination)
 	defer func() {
 		h.logFlowFailure(ctx, s, "tcp", outbound, destinationText, stage, result)
+		h.one.observeHealthFlow(s, "tcp", destination, outbound, stage, result)
 		if onClose != nil {
 			onClose(result)
 		}
@@ -318,6 +319,7 @@ func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 	observation := h.startObservation(s, "udp", source, destination)
 	defer func() {
 		h.logFlowFailure(ctx, s, "udp", outbound, destinationText, stage, result)
+		h.one.observeHealthFlow(s, "udp", destination, outbound, stage, result)
 		if onClose != nil {
 			onClose(result)
 		}

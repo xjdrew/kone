@@ -134,6 +134,13 @@ func (d *Dns) resolve(parent context.Context, r *dns.Msg) (*dns.Msg, error) {
 		return nil, err
 	}
 	meta, _ := parent.Value(dnsMetaKey{}).(*dnsQueryMeta)
+	if d.one != nil && d.one.health != nil && parent.Value(healthNativeDNSKey{}) != true && (r.Question[0].Qtype == dns.TypeA || r.Question[0].Qtype == dns.TypeAAAA) {
+		if evidence := d.one.health.dnsEvidence(normalizeDomain(r.Question[0].Name), d.one.policy.Load()); evidence != nil && healthDNSFamily(evidence, r.Question[0].Qtype) {
+			evidence.Id = r.Id
+			evidence.Question = append([]dns.Question(nil), r.Question...)
+			return evidence, nil
+		}
+	}
 	servers, route, routeKey, routeErr := d.selectResolverRoute(r.Question[0].Name)
 	if meta != nil {
 		meta.Route = route
@@ -334,6 +341,33 @@ func (d *Dns) HandleQuery(ctx context.Context, r *dns.Msg, transport, source str
 		}
 	}
 	d.recordQuery(r, msg, err, transport, source, s.configurationVersion(), start, meta)
+	if meta.Origin == DNSOriginBusiness && (r.Question[0].Qtype == dns.TypeA || r.Question[0].Qtype == dns.TypeAAAA) {
+		evidence := msg
+		if meta.Resolved != nil {
+			evidence = meta.Resolved
+		} else if len(meta.Virtual) > 0 {
+			evidence = nil
+		}
+		reason := ""
+		dnsCode, messageText := "", ""
+		if msg != nil {
+			dnsCode = dns.RcodeToString[msg.Rcode]
+		}
+		if err != nil {
+			messageText = diagnosticMessage(err, s.cfg)
+			dnsCode = "ERROR"
+			if errors.Is(err, context.DeadlineExceeded) {
+				dnsCode = "TIMEOUT"
+			}
+		}
+		status := "answered"
+		if err != nil || msg != nil && msg.Rcode != dns.RcodeSuccess && msg.Rcode != dns.RcodeRefused {
+			reason = "dns_failed"
+			status = "failed"
+		}
+		d.one.health.offer(healthEvent{domain: normalizeDomain(r.Question[0].Name), scope: meta.Route, reason: reason, version: s.version, message: evidence, result: HealthResult{Protocol: "dns", DNSCode: dnsCode, Message: messageText, Source: "business", Status: status, Stage: "dns", Time: start, DurationMS: time.Since(start).Milliseconds()}})
+	}
+
 	if err == nil && meta.Origin == DNSOriginBusiness {
 		d.one.smart.observe(s, normalizeDomain(r.Question[0].Name), meta)
 	}

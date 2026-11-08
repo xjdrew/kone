@@ -50,6 +50,9 @@ type Options struct {
 	LogStore                 *logstore.Store
 }
 type Controller struct {
+	healthArchiveMu    sync.Mutex
+	healthArchiveError string
+
 	mu                            sync.Mutex
 	actions                       sync.Mutex
 	directory, version            string
@@ -553,6 +556,7 @@ func (c *Controller) Start(ctx context.Context) error {
 		} else {
 			c.logEvent(slog.LevelInfo, "Capture engine stopped", slog.String("stage", "engine"))
 		}
+		c.snapshotConnectionHealth(engine)
 		cleanupErr := engine.Close()
 		if cleanupErr == nil {
 			cleanupErr = c.removeRecoveryJournal(runID)
@@ -671,6 +675,7 @@ func (c *Controller) pauseLocked(ctx context.Context) error {
 		}
 		return nil
 	}
+	c.snapshotConnectionHealth(engine)
 	c.logEvent(slog.LevelInfo, "Pausing capture and restoring network state", slog.String("stage", "pause"))
 	cancel()
 	err := engine.Close()

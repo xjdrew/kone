@@ -1,0 +1,80 @@
+.health {
+  border-block: 1px solid var(--line);
+  background: var(--surface);
+}
+.health h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.hint {
+  margin: 8px 22px;
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.table {
+  overflow: auto;
+}
+.ports {
+  min-width: 130px;
+}
+.ports span {
+  display: inline-block;
+  white-space: nowrap;
+  margin-inline-end: 10px;
+  font-family: var(--mono);
+}
+.candidates {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+}
+.health td {
+  vertical-align: top;
+}
+@media (max-width: 767px) {
+  .hint {
+    margin-inline: 12px;
+  }
+  .health .table {
+    max-width: 100%;
+  }
+}
+.running {
+  display: inline-block;
+  animation: health-spin 1s linear infinite;
+}
+@keyframes health-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .running {
+    animation: none;
+  }
+}
+@media (max-width: 767px) {
+  .table > table > thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .table > table > tbody > tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--line);
+  }
+  .table > table > tbody > tr > td {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    height: auto;
+  }
+  .table > table > tbody > tr > td:first-child,
+  .table > table > tbody > tr > td:last-child,
+  .table > table > tbody > tr > td[colspan] {
+    grid-column: 1 / -1;
+  }
+}

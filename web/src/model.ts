@@ -106,7 +106,12 @@ export interface Config {
   policy?: {
     "rule-version"?: number;
     "preferred-proxy-id"?: string;
-    smart?: { enabled: boolean };
+    smart?: {
+      enabled: boolean;
+      "auto-enabled"?: boolean;
+      candidates?: string[];
+      "allow-direct"?: boolean;
+    };
     mode: string;
     "ipv4-only"?: boolean;
     "udp-exception"?: boolean;
