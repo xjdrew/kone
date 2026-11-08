@@ -429,3 +429,47 @@ func TestHealthSchedulerRunsWithAutoOffAndInvalidatesChangedNetwork(t *testing.T
 	secondCancel()
 	require.NoError(t, <-secondDone)
 }
+
+func TestHealthHotSetRotatesAndPrivateRetestConsentIsOneShot(t *testing.T) {
+	one, h, _ := healthTestEngine(t)
+	one.fakeIPDirectory = filepath.Join(t.TempDir(), "store")
+	h.networkSample = func(string) (string, error) { return "test-network", nil }
+	for i := range 512 {
+		e := healthEvent{domain: fmt.Sprintf("old-%d.corp", i), scope: "corp", version: one.policy.Load().version}
+		key := healthKey(e.domain, e.scope)
+		h.latest[key], h.due[key] = e, time.Now().Add(time.Hour)
+	}
+	var localCalls atomic.Int32
+	h.resolveLocal = func(context.Context, string) (*dns.Msg, error) {
+		localCalls.Add(1)
+		return nil, errors.New("private resolver unavailable")
+	}
+	h.resolveProxy = func(context.Context, *runtimeSnapshot, string, string) (*dns.Msg, error) {
+		t.Error("private retest must not use a public resolver")
+		return nil, errors.New("unexpected public lookup")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- h.run(ctx) }()
+	t.Cleanup(func() { cancel(); require.NoError(t, <-done) })
+	h.offer(healthEvent{domain: "new.corp", scope: "corp", reason: "dns_failed", version: one.policy.Load().version, result: HealthResult{Protocol: "dns", Status: "failed", Time: time.Now()}})
+	var entry HealthIncident
+	require.Eventually(t, func() bool {
+		state, _ := one.HealthData(HealthQuery{Search: "new.corp"})
+		if len(state.Entries) == 0 {
+			return false
+		}
+		entry = state.Entries[0]
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.latest) == 512 && h.latest[healthKey("new.corp", "corp")].domain == "new.corp"
+	}, time.Second, 5*time.Millisecond)
+	_, err := one.HealthAction(HealthAction{Action: "recheck", Domain: entry.Domain, Scope: entry.Scope, Generation: entry.Generation})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return localCalls.Load() == 1 }, 2*time.Second, 5*time.Millisecond)
+	h.mu.Lock()
+	require.False(t, h.latest[healthKey(entry.Domain, entry.Scope)].manual)
+	h.mu.Unlock()
+	state, _ := one.HealthData(HealthQuery{Status: "attention"})
+	require.Equal(t, 1, state.Total, "rotating observations must retain the unresolved incident")
+}
