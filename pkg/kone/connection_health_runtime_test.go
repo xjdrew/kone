@@ -537,8 +537,11 @@ func TestHealthIgnoresNativeDNSFailureWhenCurrentDomainProxyWorks(t *testing.T) 
 	require.NoError(t, err)
 	require.Equal(t, "retest", history.Entries[0].Resolution)
 	require.Empty(t, h.choices, "a working manual route does not need a temporary override")
+	// Model a new event strictly after the recovered generation. Windows can
+	// return the same clock tick for adjacent calls to time.Now.
+	failureAt := history.Entries[0].ClosedAt.Add(time.Nanosecond)
 	// A successful default web port does not hide a separate business failure.
-	_, err = h.ledger.Observe(e.domain, "", "business_failed", HealthResult{Protocol: "tcp", Port: 8443, Source: "business", Status: "failed", Time: time.Now()})
+	_, err = h.ledger.Observe(e.domain, "", "business_failed", HealthResult{Protocol: "tcp", Port: 8443, Source: "business", Status: "failed", Time: failureAt})
 	require.NoError(t, err)
 	h.tokens = 6
 	h.probeDial = func(_ context.Context, _ string, target string, _ bool, _ uint64, _ diagnosticProbePlan) (DiagnosticResult, error) {
