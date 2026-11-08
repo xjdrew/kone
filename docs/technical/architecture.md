@@ -210,7 +210,7 @@ TCP 成功不等于应用成功。Shadowsocks AEAD 本身没有目标连接确�
 
 固定真实 IP 与 TLS 服务名分别传入诊断执行器，直连和代理共用目标。每批最多两个候选、2 个工作者；每个连接尝试消耗令牌。样本按 IP、出口、版本与有效期绑定，至少间隔 30 秒。明确业务规则/私有解析范围不入队，网络/配置变化取消旧任务；没有自动应用路径。
 
-建议经管理事务转换成精确 DOMAIN TCP/443 规则。它是普通域名规则，不是第五池。API 使用 `/smart` 获取观察或执行 preview/accept/ignore/recheck/clear；预览与接受均复核当前证据，保存仍使用配置版本检查。更多范围见 [PRD](../requirements/prd.md#57-smart基于-dns-的主动建议)。
+建议经管理事务转换成精确 DOMAIN TCP/443 规则。它是普通域名规则，不是第五池。API 使用 `/smart` 获取观察或执行 preview/accept/ignore/recheck/clear；预览与接受均复核当前证据，保存仍使用配置版本检查。上述为一期实现；已确认的后续连接健康与临时出口设计见 [PRD](../requirements/prd.md#57-连接健康与-smart-智能分流)。
 
 ## 7. 名词定义
 
