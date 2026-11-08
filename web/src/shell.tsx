@@ -1,5 +1,6 @@
-import { ErrorHistory } from "./components/error-history";
-import { useEffect, useState } from "react";
+import { toolTabs } from "./tool-panel";
+import { ErrorToasts, NotificationCount } from "./components/error-history";
+import { useEffect, useState, useRef } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { useConsole } from "./context";
@@ -18,6 +19,22 @@ import type { Readiness } from "./model";
 export function Shell() {
   const { t } = useTranslation();
   const context = useConsole();
+  const statusbar = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!statusbar.current) return;
+    const update = () =>
+      document.documentElement.style.setProperty(
+        "--statusbar-height",
+        `${statusbar.current?.getBoundingClientRect().height ?? 36}px`,
+      );
+    const observer = new ResizeObserver(update);
+    observer.observe(statusbar.current);
+    update();
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty("--statusbar-height");
+    };
+  }, []);
   const navigate = useNavigate();
   const location = useLocation();
   const { state, admin, connectionError, tool, setTool, toast, notify, operation, ruleDraft } =
@@ -323,6 +340,7 @@ export function Shell() {
         <Outlet />
       </main>
       {tool && <Tools />}
+      <ErrorToasts />
       {toast && (
         <output className="toast">
           <div>
@@ -348,21 +366,20 @@ export function Shell() {
           </Button>
         </output>
       )}
-      <footer className="statusbar">
+      <footer ref={statusbar} className="statusbar">
         <div className="toolTabs">
-          <ErrorHistory />
-          <button
-            onClick={() => setTool(tool === "diagnostics" ? null : "diagnostics")}
-            aria-pressed={tool === "diagnostics"}
-          >
-            {t("nav.diagnostics")}
-          </button>
-          <button
-            onClick={() => setTool(tool === "logs" ? null : "logs")}
-            aria-pressed={tool === "logs"}
-          >
-            {t("nav.logs")}
-          </button>
+          {toolTabs.map((tab) => (
+            <button
+              key={tab}
+              data-tool={tab}
+              aria-controls="tool-panel"
+              aria-expanded={tool === tab}
+              aria-pressed={tool === tab}
+              onClick={() => setTool(tool === tab ? null : tab)}
+            >
+              {t(`nav.${tab}`)} {tab === "notifications" && <NotificationCount />}
+            </button>
+          ))}
         </div>
         {operation && (
           <span className="operation">

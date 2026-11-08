@@ -1,13 +1,19 @@
 .tools {
-  height: 42dvh;
-  min-height: 260px;
-  max-height: 70dvh;
-  border-top: 1px solid var(--line);
+  position: fixed;
+  z-index: 40;
+  inset-inline: 12px;
+  bottom: calc(var(--statusbar-height, 36px) + 10px);
+  height: min(460px, 55dvh);
+  min-height: min(260px, calc(100dvh - 100px));
+  max-height: calc(100dvh - var(--statusbar-height, 36px) - 70px);
+  border: 1px solid var(--muted);
+  border-radius: 8px;
   background: var(--surface);
+  box-shadow:
+    0 16px 48px #0008,
+    0 0 0 1px #0003;
   display: flex;
   flex-direction: column;
-  flex: none;
-  resize: vertical;
   overflow: hidden;
 }
 .tools > header {
@@ -19,7 +25,7 @@
 }
 .tools > header > div {
   display: flex;
-  gap: 18px;
+  gap: 16px;
 }
 .tools > header button[role="tab"] {
   background: transparent;
@@ -312,8 +318,9 @@
 }
 @media (max-width: 760px) {
   .tools {
-    height: 60dvh;
-    max-height: 80dvh;
+    inset-inline: 6px;
+    height: 64dvh;
+    bottom: calc(var(--statusbar-height, 40px) + 6px);
   }
   .diagnostics {
     flex-direction: column;
@@ -345,5 +352,17 @@
   }
   .resultsHeading {
     display: none;
+  }
+}
+
+@media (max-width: 380px) {
+  .tools > header {
+    padding-inline: 8px;
+  }
+  .tools > header > div {
+    gap: 12px;
+  }
+  .tools > header button[role="tab"] {
+    font-size: var(--font-small);
   }
 }

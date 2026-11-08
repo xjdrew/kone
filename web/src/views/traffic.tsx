@@ -1,6 +1,6 @@
 import { ConnectionHealth } from "./connection-health";
 import { copyText } from "../browser";
-import { Fragment, useDeferredValue, useEffect, useState } from "react";
+import { Fragment, useDeferredValue, useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -141,24 +141,6 @@ export function TrafficView() {
     setTarget("");
     setFrozen(null);
   }
-  function drillGroup(flows: Flow[]) {
-    if (!data) return;
-    context.workspace.set("traffic.overviewSnapshot", data);
-    context.workspace.set("traffic.overviewSearch", search);
-    void navigate({
-      to: "/traffic",
-      search: {
-        ...search,
-        view: "connections",
-        anchor: data.traffic.anchor,
-        path_ids: "",
-        flow_ids: flows.map((flow) => flow.id).join(","),
-        target: "",
-      },
-    });
-    setTarget("");
-    setFrozen(null);
-  }
   function changeFilter() {
     context.workspace.delete("traffic.overviewSnapshot");
     context.workspace.delete("traffic.overviewSearch");
@@ -178,6 +160,163 @@ export function TrafficView() {
       },
     });
   }
+  const filters = (
+    <details className="pathFilters" open={search.view !== "overview"}>
+      <summary hidden={search.view !== "overview"}>{t("health.pathFilters")}</summary>
+      <div className="toolbar">
+        <input
+          type="search"
+          data-search
+          aria-label={t("common.target")}
+          placeholder={t("common.target")}
+          value={target}
+          onChange={(event) => {
+            setTarget(event.target.value);
+            void navigate({
+              to: "/traffic",
+              search: { ...search, target: event.target.value },
+              replace: true,
+            });
+            changeFilter();
+          }}
+        />
+        {search.view !== "dns" && (
+          <>
+            <select
+              aria-label={t("common.protocol")}
+              value={protocol}
+              onChange={(event) => {
+                setProtocol(event.target.value);
+                changeFilter();
+              }}
+            >
+              <option value="">
+                {t("common.protocol")}: {t("common.all")}
+              </option>
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+            </select>
+            <select
+              aria-label={t("common.status")}
+              value={status}
+              onChange={(event) => {
+                setStatus(event.target.value);
+                changeFilter();
+              }}
+            >
+              <option value="">
+                {t("common.status")}: {t("common.all")}
+              </option>
+              {["active", "closed", "failed", "rejected", "canceled"].map((value) => (
+                <option key={value} value={value}>
+                  {t(`traffic.${value}`)}
+                </option>
+              ))}
+            </select>
+            <select
+              aria-label={t("common.outbound")}
+              value={outbound}
+              onChange={(event) => {
+                setOutbound(event.target.value);
+                changeFilter();
+              }}
+            >
+              <option value="">
+                {t("common.outbound")}: {t("common.all")}
+              </option>
+              {[
+                "direct",
+                "reject",
+                ...(context.document?.config.outbounds.map((item) => item.name) ?? []),
+              ].map((value) => (
+                <option key={value} value={value}>
+                  {["direct", "reject"].includes(value) ? t(`outbounds.${value}`) : value}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
+        {search.view === "overview" && (
+          <select
+            aria-label={t("traffic.metric")}
+            value={metric}
+            onChange={(event) => {
+              setMetric(event.target.value);
+              changeFilter();
+            }}
+          >
+            <option value="total">{t("common.total")}</option>
+            <option value="upload">{t("common.upload")}</option>
+            <option value="download">{t("common.download")}</option>
+            <option value="cumulative">{t("traffic.bytes")}</option>
+          </select>
+        )}
+        {search.view !== "dns" && (
+          <details className="filterDetails">
+            <summary>{t("common.filters")}</summary>
+            <div className="toolbar">
+              <select
+                aria-label={t("traffic.rule")}
+                value={rule}
+                onChange={(event) => {
+                  setRule(event.target.value);
+                  changeFilter();
+                }}
+              >
+                <option value="">
+                  {t("traffic.rule")}: {t("common.all")}
+                </option>
+                {context.document?.config.rules.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.type} {item.pattern} → {item.outbound}
+                  </option>
+                ))}
+              </select>
+              <label>
+                {t("logs.from")}
+                <input
+                  type="datetime-local"
+                  value={since}
+                  onChange={(event) => {
+                    setSince(event.target.value);
+                    changeFilter();
+                  }}
+                />
+              </label>
+              <label>
+                {t("logs.to")}
+                <input
+                  type="datetime-local"
+                  value={until}
+                  onChange={(event) => {
+                    setUntil(event.target.value);
+                    changeFilter();
+                  }}
+                />
+              </label>
+            </div>
+          </details>
+        )}
+        {(target || protocol || status || outbound || rule || since || until || search.anchor) && (
+          <Button
+            tone="quiet"
+            onClick={() => {
+              setTarget("");
+              setProtocol("");
+              setStatus("");
+              setOutbound("");
+              setRule("");
+              setSince("");
+              setUntil("");
+              live();
+            }}
+          >
+            {t("common.resetFilters")}
+          </Button>
+        )}
+      </div>
+    </details>
+  );
   return (
     <section className="view">
       <header className="viewHeader">
@@ -191,15 +330,17 @@ export function TrafficView() {
                   : "nav.connections",
             )}
           </h1>
-          <p>
-            {t(
-              search.view === "dns"
-                ? "dns.subtitle"
-                : search.view === "overview"
-                  ? "health.overviewSubtitle"
-                  : "traffic.subtitle",
-            )}
-          </p>
+          {search.view !== "overview" && (
+            <p>
+              {t(
+                search.view === "dns"
+                  ? "dns.subtitle"
+                  : search.view === "overview"
+                    ? "health.overviewSubtitle"
+                    : "traffic.subtitle",
+              )}
+            </p>
+          )}
         </div>
         <div className="actions">
           {search.view !== "dns" && (
@@ -249,168 +390,7 @@ export function TrafficView() {
           </Link>
         ))}
       </nav>
-      <details className="pathFilters" open={search.view !== "overview"}>
-        <summary hidden={search.view !== "overview"}>{t("health.pathFilters")}</summary>
-        <div className="toolbar">
-          <input
-            type="search"
-            data-search
-            aria-label={t("common.target")}
-            placeholder={t("common.target")}
-            value={target}
-            onChange={(event) => {
-              setTarget(event.target.value);
-              void navigate({
-                to: "/traffic",
-                search: { ...search, target: event.target.value },
-                replace: true,
-              });
-              changeFilter();
-            }}
-          />
-          {search.view !== "dns" && (
-            <>
-              <select
-                aria-label={t("common.protocol")}
-                value={protocol}
-                onChange={(event) => {
-                  setProtocol(event.target.value);
-                  changeFilter();
-                }}
-              >
-                <option value="">
-                  {t("common.protocol")}: {t("common.all")}
-                </option>
-                <option value="tcp">TCP</option>
-                <option value="udp">UDP</option>
-              </select>
-              <select
-                aria-label={t("common.status")}
-                value={status}
-                onChange={(event) => {
-                  setStatus(event.target.value);
-                  changeFilter();
-                }}
-              >
-                <option value="">
-                  {t("common.status")}: {t("common.all")}
-                </option>
-                {["active", "closed", "failed", "rejected", "canceled"].map((value) => (
-                  <option key={value} value={value}>
-                    {t(`traffic.${value}`)}
-                  </option>
-                ))}
-              </select>
-              <select
-                aria-label={t("common.outbound")}
-                value={outbound}
-                onChange={(event) => {
-                  setOutbound(event.target.value);
-                  changeFilter();
-                }}
-              >
-                <option value="">
-                  {t("common.outbound")}: {t("common.all")}
-                </option>
-                {[
-                  "direct",
-                  "reject",
-                  ...(context.document?.config.outbounds.map((item) => item.name) ?? []),
-                ].map((value) => (
-                  <option key={value} value={value}>
-                    {["direct", "reject"].includes(value) ? t(`outbounds.${value}`) : value}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-          {search.view === "overview" && (
-            <select
-              aria-label={t("traffic.metric")}
-              value={metric}
-              onChange={(event) => {
-                setMetric(event.target.value);
-                changeFilter();
-              }}
-            >
-              <option value="total">{t("common.total")}</option>
-              <option value="upload">{t("common.upload")}</option>
-              <option value="download">{t("common.download")}</option>
-              <option value="cumulative">{t("traffic.bytes")}</option>
-            </select>
-          )}
-          {search.view !== "dns" && (
-            <details className="filterDetails">
-              <summary>{t("common.filters")}</summary>
-              <div className="toolbar">
-                <select
-                  aria-label={t("traffic.rule")}
-                  value={rule}
-                  onChange={(event) => {
-                    setRule(event.target.value);
-                    changeFilter();
-                  }}
-                >
-                  <option value="">
-                    {t("traffic.rule")}: {t("common.all")}
-                  </option>
-                  {context.document?.config.rules.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.type} {item.pattern} → {item.outbound}
-                    </option>
-                  ))}
-                </select>
-                <label>
-                  {t("logs.from")}
-                  <input
-                    type="datetime-local"
-                    value={since}
-                    onChange={(event) => {
-                      setSince(event.target.value);
-                      changeFilter();
-                    }}
-                  />
-                </label>
-                <label>
-                  {t("logs.to")}
-                  <input
-                    type="datetime-local"
-                    value={until}
-                    onChange={(event) => {
-                      setUntil(event.target.value);
-                      changeFilter();
-                    }}
-                  />
-                </label>
-              </div>
-            </details>
-          )}
-          {(target ||
-            protocol ||
-            status ||
-            outbound ||
-            rule ||
-            since ||
-            until ||
-            search.anchor) && (
-            <Button
-              tone="quiet"
-              onClick={() => {
-                setTarget("");
-                setProtocol("");
-                setStatus("");
-                setOutbound("");
-                setRule("");
-                setSince("");
-                setUntil("");
-                live();
-              }}
-            >
-              {t("common.resetFilters")}
-            </Button>
-          )}
-        </div>
-      </details>
+      {search.view !== "overview" && filters}
       {search.view === "dns" ? (
         <DNSView target={filterTarget} />
       ) : (
@@ -432,7 +412,7 @@ export function TrafficView() {
               {!data ? (
                 <div className="loading">{t("common.loading")}</div>
               ) : search.view === "overview" ? (
-                <Overview data={data} onPath={drill} onFlow={setSelected} onGroup={drillGroup} />
+                <Overview data={data} onPath={drill} filters={filters} />
               ) : (
                 <Connections
                   key={JSON.stringify(filter)}
@@ -454,19 +434,14 @@ export function TrafficView() {
 function Overview({
   data,
   onPath,
-  onFlow,
-  onGroup,
+  filters,
 }: {
   data: TrafficResponse;
   onPath: (paths: SankeyPath[]) => void;
-  onFlow: (flow: Flow) => void;
-  onGroup: (flows: Flow[]) => void;
+  filters: ReactNode;
 }) {
   const { t } = useTranslation();
   const totals = data.traffic.totals;
-  const attention = groupFlows(
-    data.traffic.records.filter((flow) => ["failed", "rejected"].includes(flow.status)),
-  );
   return (
     <>
       <div className={styles.telemetry}>
@@ -482,18 +457,12 @@ function Overview({
           <span>{t("traffic.active")}</span>
           <strong>{formatNumber(totals.active)}</strong>
         </div>
-        <div>
-          <span>{t("traffic.failed")}</span>
-          <strong className={totals.failed + totals.rejected > 0 ? "dangerText" : undefined}>
-            {formatNumber(totals.failed + totals.rejected)}
-          </strong>
-        </div>
-        <div>
-          <span>{t("traffic.bytes")}</span>
-          <strong>{formatBytes(totals.bytes)}</strong>
-        </div>
       </div>
       <ConnectionHealth />
+      <div className={styles.graphHeading}>
+        <h2>{t("health.paths")}</h2>
+      </div>
+      {filters}
       {data.sankey.paths.length ? (
         <FlowGraph
           graph={data.sankey}
@@ -502,44 +471,8 @@ function Overview({
           }}
         />
       ) : (
-        <Empty title={t("common.noData")} description={t("traffic.pathEmpty")} />
+        <p className={styles.graphEmpty}>{t("traffic.pathEmpty")}</p>
       )}
-      <div className="tableFoot">
-        <span>
-          {t("traffic.window")}: {timestamp(data.sankey.timestamp)}
-        </span>
-        <span>
-          {t("traffic.session")}: <code>{data.traffic.session_id || "—"}</code>
-        </span>
-        {data.traffic.truncated && <span>{t("common.truncated")}</span>}
-      </div>
-      <details>
-        <summary>{t("health.recentFlows")}</summary>
-        <section className={styles.attention}>
-          <h2>
-            {t("traffic.attention")} <span className="pill">{attention.length}</span>
-          </h2>
-          {attention.length ? (
-            attention.slice(0, 8).map((group) => (
-              <div key={group.key}>
-                <button className="textButton mono" onClick={() => onGroup(group.flows)}>
-                  {group.target}
-                </button>
-                <span className="dangerText mono">{group.failed}</span>
-                <span className="muted">
-                  {t(`stage.${group.flows[0].stage}`, { defaultValue: t("common.unknown") })} ·{" "}
-                  {timestamp(group.flows[0].updated_at)}
-                </span>
-                <Button tone="quiet" onClick={() => onFlow(group.flows[0])}>
-                  {t("common.openDetails")}
-                </Button>
-              </div>
-            ))
-          ) : (
-            <p className="muted">{t("traffic.noAttention")}</p>
-          )}
-        </section>
-      </details>
       <details className={styles.paths}>
         <summary>{t("common.path")}</summary>
         <table className="dataTable">

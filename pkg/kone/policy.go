@@ -58,7 +58,7 @@ func (cfg *KoneConfig) ValidatePolicy() error {
 	if cfg.Policy.RuleVersion > 2 {
 		return errors.New("policy.rule-version must be 1 (legacy) or 2 (layered)")
 	}
-	if cfg.Policy.Smart.Enabled || cfg.Policy.Smart.AutoEnabled {
+	if cfg.Policy.Smart.Enabled {
 		mode, _ := PolicyMode(cfg)
 		if cfg.Policy.RuleVersion != 2 || mode == "custom" {
 			return errors.New("Smart requires layered rules and a standard base mode")

@@ -56,6 +56,23 @@ export function exactRule(target: string, protocol?: string): Rule {
     ...(port && port <= 65535 ? { ports: [port] } : {}),
   };
 }
+// A health-row outbound choice is an explicit persistent target rule.
+export function selectTargetOutbound(config: Config, target: string, outbound: string): Config {
+  const next = structuredClone(config);
+  const draft = { ...exactRule(target), outbound, source: "user" };
+  const matches = next.rules.filter(
+    (r) =>
+      r.type === draft.type &&
+      (r.type === "DOMAIN" ? targetHost(r.pattern ?? "").host : r.pattern) === draft.pattern,
+  );
+  if (matches.length) {
+    for (const rule of matches) rule.outbound = outbound;
+    next.rules = [...matches, ...next.rules.filter((r) => !matches.includes(r))];
+  } else {
+    next.rules.unshift(draft);
+  }
+  return next;
+}
 export function flowTarget(flow: Flow): string {
   const address = flow.domain
     ? flow.target || flow.destination

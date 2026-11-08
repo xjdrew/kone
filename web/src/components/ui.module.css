@@ -262,3 +262,10 @@
     grid-template-columns: 1fr 1.3fr;
   }
 }
+.menuDescription {
+  max-width: 300px;
+  padding: 8px 10px;
+  font-size: var(--font-small);
+  color: var(--muted);
+  line-height: 1.5;
+}

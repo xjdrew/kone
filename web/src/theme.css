@@ -750,8 +750,7 @@ select {
 .formStack {
   gap: var(--form-gap);
 }
-.errorCount,
-.errorCount span {
+.errorCount {
   color: var(--danger) !important;
 }
 .errorToast {
@@ -769,18 +768,6 @@ select {
 }
 .errorToast .actions {
   margin-top: 10px;
-}
-.errorHistory {
-  position: fixed;
-  z-index: 110;
-  bottom: 28px;
-  left: 0;
-  right: 0;
-  height: min(42dvh, 420px);
-  background: var(--surface);
-  border-top: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
 }
 .errorEntries {
   overflow: auto;
@@ -805,7 +792,7 @@ select {
 }
 
 .errorToast,
-.errorHistory {
+.notifications {
   font-size: var(--font-body);
 }
 .pathFilters > summary {

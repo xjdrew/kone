@@ -1,3 +1,5 @@
+import { toolTabs, type ToolTab } from "../tool-panel";
+import { Notifications, NotificationCount } from "../components/error-history";
 import { DiagnosticTarget } from "../components/diagnostic-target";
 import {
   diagnosticElapsed,
@@ -7,7 +9,7 @@ import {
   type DiagnosticHistoryEntry,
 } from "../diagnostic-history";
 import { diagnosticRequest } from "../diagnostic-request";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useConsole, useWorkspaceState } from "../context";
@@ -32,29 +34,76 @@ import styles from "./tools.module.css";
 export function Tools() {
   const { t } = useTranslation();
   const { tool, setTool } = useConsole();
+  const panel = useRef<HTMLElement>(null);
+  const origin = useRef<HTMLElement | null>(null);
+  const initialTab = useRef(tool);
+  useEffect(() => {
+    origin.current =
+      document.activeElement !== document.body
+        ? (document.activeElement as HTMLElement)
+        : document.querySelector<HTMLElement>(`[data-tool="${initialTab.current}"]`);
+    return () => {
+      if (origin.current?.isConnected) origin.current.focus();
+    };
+  }, []);
+  useEffect(() => {
+    panel.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus();
+  }, [tool]);
+  const content = {
+    notifications: <Notifications />,
+    diagnostics: <Diagnostics />,
+    logs: <Logs />,
+  } satisfies Record<ToolTab, ReactNode>;
   return (
-    <section className={styles.tools} aria-label={t(`nav.${tool}`)}>
+    <section ref={panel} id="tool-panel" className={styles.tools} aria-label={t("tools.title")}>
       <header>
-        <div role="tablist">
-          <button
-            role="tab"
-            aria-selected={tool === "diagnostics"}
-            onClick={() => setTool("diagnostics")}
-          >
-            {t("nav.diagnostics")}
-          </button>
-          <button role="tab" aria-selected={tool === "logs"} onClick={() => setTool("logs")}>
-            {t("nav.logs")}
-          </button>
+        <div role="tablist" aria-label={t("tools.title")}>
+          {toolTabs.map((tab, index) => (
+            <button
+              key={tab}
+              id={`tool-tab-${tab}`}
+              role="tab"
+              aria-controls={`tool-content-${tab}`}
+              aria-selected={tool === tab}
+              tabIndex={tool === tab ? 0 : -1}
+              onClick={() => setTool(tab)}
+              onKeyDown={(event) => {
+                const next =
+                  event.key === "ArrowRight"
+                    ? (index + 1) % toolTabs.length
+                    : event.key === "ArrowLeft"
+                      ? (index + toolTabs.length - 1) % toolTabs.length
+                      : event.key === "Home"
+                        ? 0
+                        : event.key === "End"
+                          ? toolTabs.length - 1
+                          : -1;
+                if (next >= 0) {
+                  event.preventDefault();
+                  setTool(toolTabs[next]!);
+                }
+              }}
+            >
+              {t(`nav.${tab}`)} {tab === "notifications" && <NotificationCount />}
+            </button>
+          ))}
         </div>
         <Button tone="quiet" onClick={() => setTool(null)} aria-label={t("common.close")}>
           ×
         </Button>
       </header>
-      <div className={styles.body}>{tool === "diagnostics" ? <Diagnostics /> : <Logs />}</div>
+      <div
+        className={styles.body}
+        role="tabpanel"
+        id={`tool-content-${tool}`}
+        aria-labelledby={`tool-tab-${tool}`}
+      >
+        {tool && content[tool]}
+      </div>
     </section>
   );
 }
+
 function Diagnostics() {
   const { t } = useTranslation();
   const context = useConsole();

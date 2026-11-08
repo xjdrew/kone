@@ -4,7 +4,7 @@
 }
 .health h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--font-body);
 }
 .hint {
   margin: 8px 22px;
@@ -76,5 +76,60 @@
   .table > table > tbody > tr > td:last-child,
   .table > table > tbody > tr > td[colspan] {
     grid-column: 1 / -1;
+  }
+}
+.heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 12px 22px;
+}
+.heading h2 {
+  margin-inline-end: auto;
+}
+.runtime {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+.heading > details {
+  position: relative;
+}
+.heading > details > summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.candidates {
+  position: absolute;
+  inset-inline-end: 0;
+  width: min(360px, calc(100vw - 32px));
+  background: var(--surface);
+  z-index: 5;
+}
+.candidates p {
+  margin: 0;
+  font-size: var(--font-small);
+  color: var(--muted);
+}
+.evidenceHeading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dns {
+  font-family: var(--mono);
+}
+@media (max-width: 767px) {
+  .heading {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+  .heading h2 {
+    width: 100%;
+  }
+  .heading > details {
+    margin-inline-start: auto;
   }
 }

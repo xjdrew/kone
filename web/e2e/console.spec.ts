@@ -536,7 +536,7 @@ test("@compat Resolvers separates Host and Gate from automatic upstream selectio
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
-test("@compat health combines ports in Overview and pins a verified selection with one click", async ({
+test("@compat health combines ports and saves an outbound choice without a probe suggestion", async ({
   page,
 }) => {
   const data = await fixture(page);
@@ -554,7 +554,7 @@ test("@compat health combines ports in Overview and pins a verified selection wi
     first: new Date().toISOString(),
     last: new Date().toISOString(),
     count: 2,
-    suggestions: { "443": "Local HTTP" },
+    suggestions: {},
     results: [
       {
         protocol: "tcp",
@@ -608,11 +608,34 @@ test("@compat health combines ports in Overview and pins a verified selection wi
   await expect(health.getByRole("columnheader", { name: "Port status", exact: true })).toHaveCount(
     1,
   );
-  await health.getByRole("button", { name: "Pin as manual rule", exact: true }).click();
-  await expect.poll(() => actions).toEqual(["pin"]);
+  await expect(page.getByText("Recent failed connection evidence", { exact: true })).toHaveCount(0);
+  await health.getByRole("button", { name: "Choose outbound", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Local HTTP", exact: true }).click();
+  await expect.poll(() => actions).toEqual(["handled"]);
+  expect(data.document.config.rules[0]).toMatchObject({
+    type: "DOMAIN",
+    pattern: "service.example",
+    outbound: "Local HTTP",
+  });
   await expect(health.getByRole("button", { name: "service.example", exact: true })).toHaveCount(0);
   await health.getByRole("button", { name: "History", exact: true }).click();
   await expect(health.getByRole("button", { name: "service.example", exact: true })).toBeVisible();
+  data.document.config.policy = {
+    mode: "direct-first",
+    ...data.document.config.policy,
+    "rule-version": 1,
+  };
+  data.state.data_state = "paused";
+  data.state.state = "paused";
+  await page.reload();
+  const auto = health.getByRole("checkbox", {
+    name: "Automatically select outbounds",
+    exact: true,
+  });
+  await expect(auto).toBeEnabled();
+  await auto.check();
+  await expect.poll(() => data.document.config.policy?.smart?.["auto-enabled"]).toBe(true);
+
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
@@ -635,9 +658,20 @@ test("@compat comfortable changes typography and offline errors stay out of page
   await expect(page.locator('main [role="alert"]')).toHaveCount(0);
   expect((await main.boundingBox())!.y).toBe(top);
   await expect(page.locator(".errorToast")).toHaveCount(0, { timeout: 12000 });
-  await page.getByRole("button", { name: "Errors 1", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Error history" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Error history" })).toContainText(
+  const bounds = await main.boundingBox();
+  await page.getByRole("button", { name: "Notifications 1", exact: true }).click();
+  const panel = page.getByRole("region", { name: "Tools", exact: true });
+  await expect(panel.getByRole("tabpanel", { name: /Notifications/ })).toContainText(
     "Cannot reach this KONE host",
   );
+  expect(await main.boundingBox()).toEqual(bounds);
+  await panel.getByRole("tab", { name: "Diagnostics", exact: true }).click();
+  await expect(panel.getByRole("tabpanel", { name: "Diagnostics", exact: true })).toBeVisible();
+  await panel.getByRole("tab", { name: "Diagnostics", exact: true }).press("ArrowRight");
+  await expect(panel.getByRole("tab", { name: "Logs", exact: true })).toBeFocused();
+  await expect(page.locator("#tool-panel")).toHaveCount(1);
+  expect(await main.boundingBox()).toEqual(bounds);
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Notifications 1", exact: true })).toBeFocused();
 });

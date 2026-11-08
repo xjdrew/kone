@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -510,4 +511,144 @@ func TestHealthDNSRecoveryTriesConfiguredCandidatesAfterPreferredFails(t *testin
 	require.NoError(t, err)
 	require.Equal(t, "backup", state.Entries[0].Suggestions[80])
 	require.Empty(t, h.choices, "recovery evidence does not authorize automatic selection")
+}
+
+func TestHealthIgnoresNativeDNSFailureWhenCurrentDomainProxyWorks(t *testing.T) {
+	one, h, e := healthTestEngine(t)
+	cfg := cloneConfig(one.policy.Load().cfg)
+	cfg.Policy.PreferredProxyID = ""
+	cfg.Rule = append([]RuleConfig{{Schema: "DOMAIN", Pattern: e.domain, Outbound: "office"}}, cfg.Rule...)
+	one.policy.Load().cfg = cfg
+	one.policy.Load().rule = NewRule(cfg.Rule, cfg.Outbounds)
+	one.policy.Load().rule.protectPolicy(cfg)
+	_, err := h.ledger.Observe(e.domain, "", "dns_failed", HealthResult{Protocol: "dns", Source: "business", Status: "failed", DNSCode: "SERVFAIL", Time: time.Now()})
+	require.NoError(t, err)
+	e.message = nil
+	h.resolveLocal = func(context.Context, string) (*dns.Msg, error) { return nil, errors.New("native DNS failed") }
+	h.resolveProxy = func(_ context.Context, _ *runtimeSnapshot, outbound, domain string) (*dns.Msg, error) {
+		require.Equal(t, "office", outbound, "use the domain rule even without a preferred Smart candidate")
+		return layeredAnswer(domain, "8.8.8.8"), nil
+	}
+	h.check(e)
+	state, err := one.HealthData(HealthQuery{Status: "attention"})
+	require.NoError(t, err)
+	require.Zero(t, state.Total)
+	history, err := one.HealthData(HealthQuery{Status: "history"})
+	require.NoError(t, err)
+	require.Equal(t, "retest", history.Entries[0].Resolution)
+	require.Empty(t, h.choices, "a working manual route does not need a temporary override")
+	// A successful default web port does not hide a separate business failure.
+	_, err = h.ledger.Observe(e.domain, "", "business_failed", HealthResult{Protocol: "tcp", Port: 8443, Source: "business", Status: "failed", Time: time.Now()})
+	require.NoError(t, err)
+	h.tokens = 6
+	h.probeDial = func(_ context.Context, _ string, target string, _ bool, _ uint64, _ diagnosticProbePlan) (DiagnosticResult, error) {
+		status := "reachable"
+		if strings.HasSuffix(target, ":8443") {
+			status = "failed"
+		}
+		return DiagnosticResult{Status: status, Stage: "connect"}, nil
+	}
+	h.check(e)
+	state, err = one.HealthData(HealthQuery{Status: "attention"})
+	require.NoError(t, err)
+	require.Equal(t, 1, state.Total)
+	require.Equal(t, "business_failed", state.Entries[0].Reason)
+	// Explicit whole-domain blocking resolves the fault as a policy choice.
+	cfg.Rule[0].Outbound = BuiltinReject
+	one.policy.Load().rule = NewRule(cfg.Rule, cfg.Outbounds)
+	one.policy.Load().rule.protectPolicy(cfg)
+	h.check(e)
+	state, err = one.HealthData(HealthQuery{Status: "attention"})
+	require.NoError(t, err)
+	require.Zero(t, state.Total)
+}
+
+func TestHealthAutoPreferenceCanBeSavedBeforeLayeredRules(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Policy.Smart.AutoEnabled = true
+	require.NoError(t, cfg.ValidatePolicy(), "preference must be configurable before the engine or layered rules are enabled")
+}
+
+func TestHealthRealProxyReplyClearsDNSFaultWithoutNativeResolution(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		fmt.Fprint(conn, "HTTP/1.1 200 Connection established\r\n\r\nreply")
+	}))
+	defer server.Close()
+	cfg := DefaultConfig()
+	cfg.DNS.Servers = []string{"127.0.0.1:9"}
+	cfg.Outbounds = []OutboundConfig{{ID: "office", Name: "office", URL: server.URL}}
+	cfg.Rule = []RuleConfig{{Schema: "DOMAIN", Pattern: "service.example", Outbound: "office"}, {Schema: "FINAL", Outbound: BuiltinDirect}}
+	one, err := FromConfig(cfg)
+	require.NoError(t, err)
+	defer one.Close()
+	_, err = one.health.ledger.Observe("service.example", "", "dns_failed", HealthResult{Protocol: "dns", Source: "business", Status: "failed", Time: time.Now()})
+	require.NoError(t, err)
+	record := one.dnsTable.Set("service.example", "office")
+	client, accepted := net.Pipe()
+	defer client.Close()
+	done := make(chan struct{})
+	go func() {
+		one.flows.NewConnectionEx(t.Context(), accepted, M.ParseSocksaddr("192.0.2.2:40000"), M.SocksaddrFromNet(&net.TCPAddr{IP: record.IP, Port: 443}), nil)
+		close(done)
+	}()
+	require.NoError(t, client.SetReadDeadline(time.Now().Add(2*time.Second)))
+	payload := make([]byte, 5)
+	_, err = io.ReadFull(client, payload)
+	require.NoError(t, err)
+	require.Equal(t, "reply", string(payload))
+	select {
+	case event := <-one.health.events:
+		require.Equal(t, "reachable", event.result.Status)
+		one.health.acceptBusinessSuccess(event)
+	case <-time.After(time.Second):
+		t.Fatal("missing target reply observation")
+	}
+	client.Close()
+	<-done
+	state, err := one.HealthData(HealthQuery{Status: "attention"})
+	require.NoError(t, err)
+	require.Zero(t, state.Total)
+}
+
+func TestHealthReplyCannotHideNewerOrUnrelatedFaults(t *testing.T) {
+	for _, scenario := range []string{"newer-dns-failure", "other-business-port", "changed-rule", "stale-configuration", "storage-failure"} {
+		t.Run(scenario, func(t *testing.T) {
+			one, h, e := healthTestEngine(t)
+			cfg := one.policy.Load().cfg
+			cfg.Rule = append([]RuleConfig{{Schema: "DOMAIN", Pattern: e.domain, Outbound: "office"}}, cfg.Rule...)
+			one.policy.Load().rule = NewRule(cfg.Rule, cfg.Outbounds)
+			one.policy.Load().rule.protectPolicy(cfg)
+			if scenario == "other-business-port" {
+				_, err := h.ledger.Observe(e.domain, "", "business_failed", HealthResult{Protocol: "tcp", Port: 8443, Source: "business", Status: "failed", Time: time.Now()})
+				require.NoError(t, err)
+			}
+			_, err := h.ledger.Observe(e.domain, "", "dns_failed", HealthResult{Protocol: "dns", Source: "business", Status: "failed", Time: time.Now()})
+			require.NoError(t, err)
+			e.result = HealthResult{Protocol: "tcp", Port: 443, Source: "business", Status: "reachable", Outbound: "office", Time: time.Now()}
+			switch scenario {
+			case "newer-dns-failure":
+				e.result.Time = time.Now().Add(-time.Minute)
+			case "changed-rule":
+				cfg.Rule[0].Outbound = BuiltinDirect
+				one.policy.Load().rule = NewRule(cfg.Rule, cfg.Outbounds)
+				one.policy.Load().rule.protectPolicy(cfg)
+			case "stale-configuration":
+				e.version--
+			case "storage-failure":
+				h.ledger.path = t.TempDir()
+			}
+			h.acceptBusinessSuccess(e)
+			state, err := one.HealthData(HealthQuery{Status: "attention"})
+			require.NoError(t, err)
+			require.Equal(t, 1, state.Total)
+			if scenario == "storage-failure" {
+				require.NotEmpty(t, state.Error)
+			}
+		})
+	}
 }

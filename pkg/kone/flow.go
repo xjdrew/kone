@@ -295,7 +295,11 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 	observation.Stage("transfer")
 	stage = "transfer"
 	remoteErrors := make(chan error, 1)
-	relayConnections(&observedConn{Conn: conn, flow: observation}, &observedConn{Conn: remote, flow: observation, upload: true, onError: func(err error) {
+	var onReply func()
+	if policy != BuiltinDirect {
+		onReply = sync.OnceFunc(func() { h.one.observeHealthSuccess(s, destination, policy) })
+	}
+	relayConnections(&observedConn{Conn: conn, flow: observation}, &observedConn{Conn: remote, flow: observation, upload: true, onRead: onReply, onError: func(err error) {
 		if reportableFlowError(err, "transfer") {
 			select {
 			case remoteErrors <- err:

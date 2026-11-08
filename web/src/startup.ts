@@ -1,3 +1,4 @@
+import { toolTabs } from "./tool-panel";
 // Remove one-use launch credentials before the router, analytics-free UI or any
 // asynchronous request can observe the URL. Never persist a launch token.
 const launch = new URLSearchParams(location.hash.slice(1));
@@ -11,9 +12,10 @@ const legacy: Record<string, string> = {
   settings: "/settings?section=capture",
   diagnostics: "/traffic?view=overview",
   logs: "/traffic?view=overview",
+  notifications: "/traffic?view=overview",
 };
 const initial = location.hash.slice(1);
-export const initialTool = initial === "diagnostics" || initial === "logs" ? initial : null;
+export const initialTool = toolTabs.find((tab) => tab === initial) ?? null;
 if (token || legacy[initial]) {
   history.replaceState(
     null,

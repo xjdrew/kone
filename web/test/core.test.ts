@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   addPreciseRule,
   exactRule,
+  selectTargetOutbound,
   groupFlows,
   renamedOutbound,
   saveRequest,
@@ -311,4 +312,31 @@ test("global errors coalesce polling failures and retain history after toast dis
   recordError(new ApiError("version_conflict", 409));
   expect(errorSnapshot().entries.length).toBe(1);
   clearErrors();
+});
+
+test("health outbound choice updates exact rules in place and takes precedence over suffix rules", () => {
+  const config = configuration();
+  const rule = { ...exactRule("Example.COM.:443", "tcp"), id: "existing", outbound: "direct" };
+  config.rules.unshift(
+    { ...exactRule("example.com"), type: "DOMAIN-SUFFIX", outbound: "direct" },
+    rule,
+  );
+  const next = selectTargetOutbound(config, "example.com", "Local HTTP");
+  expect(next.rules.filter((r) => r.id === "existing")).toHaveLength(1);
+  expect(next.rules[0]).toMatchObject({
+    id: "existing",
+    protocol: "tcp",
+    ports: [443],
+    outbound: "Local HTTP",
+  });
+  expect(next.rules[1]?.type).toBe("DOMAIN-SUFFIX");
+  expect(config.rules[1]?.outbound).toBe("direct");
+  const added = selectTargetOutbound(next, "new.example", "direct");
+  expect(added.rules[0]).toMatchObject({
+    type: "DOMAIN",
+    pattern: "new.example",
+    outbound: "direct",
+  });
+  expect(added.rules[0]?.ports).toBeUndefined();
+  expect(added.rules.at(-1)?.type).toBe("FINAL");
 });

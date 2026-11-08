@@ -4,8 +4,8 @@ import { useTranslation } from "react-i18next";
 import { useConsole } from "../context";
 import { request } from "../api/client";
 import { ActionMenu, Button, ErrorNotice, Toggle } from "../components/ui";
-import type { Document } from "../model";
-import { exactRule, timestamp } from "../domain";
+
+import { selectTargetOutbound, timestamp } from "../domain";
 import styles from "./connection-health.module.css";
 interface Result {
   dns_code?: string;
@@ -55,6 +55,7 @@ export function ConnectionHealth() {
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<number>();
   const [busy, setBusy] = useState(false);
+  const [autoDesired, setAutoDesired] = useState<boolean>();
   const [error, setError] = useState<unknown>();
   const query = useQuery({
     queryKey: ["connection-health", offset, doc?.version, view, search],
@@ -95,7 +96,7 @@ export function ConnectionHealth() {
     setBusy(true);
     setError(undefined);
     try {
-      const result = await request<Document>("/connection-health", {
+      await request("/connection-health", {
         method: "POST",
         body: {
           action: kind,
@@ -105,23 +106,36 @@ export function ConnectionHealth() {
           version: doc.version,
         },
       });
-      if (kind === "pin") {
-        await context.refresh();
-        context.notify({
-          key: result.apply_error ? "common.savedNotApplied" : "health.pinned",
-          details: result.apply_error,
-          undo: result.apply_error
-            ? undefined
-            : async () => {
-                await context.save({ ...doc, version: result.version }, doc.config);
-              },
-        });
-      }
       await query.refetch();
       if (kind !== "recheck") {
         region.current?.querySelector<HTMLButtonElement>('[role="toolbar"] button')?.focus();
       }
       if (kind === "handled") context.notify({ key: "health.handledDone" });
+    } catch (cause) {
+      setError(cause);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function chooseOutbound(e: Incident, outbound: string) {
+    if (!doc) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await context.save(doc, selectTargetOutbound(doc.config, e.domain, outbound));
+      if (!result.apply_error) {
+        await request("/connection-health", {
+          method: "POST",
+          body: {
+            action: "handled",
+            domain: e.domain,
+            scope: e.scope,
+            generation: e.generation,
+            version: result.version,
+          },
+        });
+      }
+      await query.refetch();
     } catch (cause) {
       setError(cause);
     } finally {
@@ -134,21 +148,28 @@ export function ConnectionHealth() {
     (doc.config.policy?.["preferred-proxy-id"] ? [doc.config.policy["preferred-proxy-id"]] : []);
   return (
     <section ref={region} className={styles.health} aria-label={t("health.title")}>
-      <div className="toolbar">
-        <h2>{t("health.title")}</h2>
+      <div className={styles.heading}>
+        <h2>
+          {t("health.title")} <span className="muted">{query.data?.total ?? 0}</span>
+        </h2>
         <Toggle
           label={t("health.auto")}
-          checked={smart?.["auto-enabled"] ?? false}
-          disabled={busy || !context.admin || doc.config.policy?.["rule-version"] !== 2}
-          onChange={(value) => configure({ "auto-enabled": value })}
+          checked={autoDesired ?? smart?.["auto-enabled"] ?? false}
+          disabled={!context.admin}
+          onChange={(value) => {
+            setAutoDesired(value);
+            void configure({ "auto-enabled": value }).finally(() => setAutoDesired(undefined));
+          }}
         />
-        <span className="muted">
-          {t(running ? "health.monitoring" : "health.paused")} ·{" "}
-          {t(query.data?.auto_enabled ? "health.autoActive" : "health.autoOff")}
+        <span className={styles.runtime}>
+          {t(running ? "health.monitoringShort" : "common.paused")}
         </span>
         <details>
-          <summary>{t("health.candidates")}</summary>
+          <summary>{t("health.options")}</summary>
           <div className={styles.candidates}>
+            <p>{t("health.scopeHint")}</p>
+            {doc.config.policy?.["rule-version"] !== 2 && <p>{t("health.legacyAuto")}</p>}
+            <strong>{t("health.candidates")}</strong>
             {doc.config.outbounds
               .filter((o) => o.enabled !== false)
               .map((o) => (
@@ -199,10 +220,6 @@ export function ConnectionHealth() {
           </div>
         </details>
       </div>
-      <p className={styles.hint}>{t("health.scopeHint")}</p>
-      {doc.config.policy?.["rule-version"] !== 2 && (
-        <p className={styles.hint}>{t("smart.upgrade")}</p>
-      )}
       <ErrorNotice error={error ?? query.error} />
       {query.data?.error && (
         <div role="alert" className="dangerText">
@@ -217,7 +234,7 @@ export function ConnectionHealth() {
         <p className="muted">{t("health.deferred", { count: query.data.dropped })}</p>
       )}
       <div className="toolbar" role="toolbar" aria-label={t("health.filter")}>
-        {["attention", "adjusted", "all", "history"].map((value) => (
+        {["attention", "adjusted", "history"].map((value) => (
           <Button
             key={value}
             aria-pressed={view === value}
@@ -244,7 +261,7 @@ export function ConnectionHealth() {
         <table className="dataTable">
           <thead>
             <tr>
-              {["target", "outbound", "dns", "ports", "reason", "last", "actions"].map((value) => (
+              {["target", "outbound", "ports", "reason", "actions"].map((value) => (
                 <th key={value}>{t(`health.column.${value}`)}</th>
               ))}
             </tr>
@@ -269,7 +286,7 @@ export function ConnectionHealth() {
                   ? "NOERROR"
                   : (dns?.dns_code ?? [...results].reverse().find((r) => r.dns_code)?.dns_code);
               const suggestions = Object.entries(e.suggestions ?? {});
-              const stale = !e.expires || new Date(e.expires).getTime() <= query.dataUpdatedAt;
+
               return (
                 <Fragment key={e.id}>
                   <tr>
@@ -295,11 +312,6 @@ export function ConnectionHealth() {
                           ? t("health.byPort")
                           : "—"}
                     </td>
-                    <td>
-                      {dns
-                        ? dnsCode || t(`health.result.${dns.status}`, { defaultValue: dns.status })
-                        : "—"}
-                    </td>
                     <td className={styles.ports}>
                       {ports.length
                         ? ports.map((r) => (
@@ -316,6 +328,14 @@ export function ConnectionHealth() {
                         : "—"}
                     </td>
                     <td>
+                      {dns && dns.status !== "answered" && (
+                        <span className={styles.dns}>
+                          DNS{" "}
+                          {dnsCode ||
+                            t(`health.result.${dns.status}`, { defaultValue: dns.status })}{" "}
+                          ·{" "}
+                        </span>
+                      )}
                       {e.status === "adjusted" && !Object.keys(e.temporary ?? {}).length
                         ? t("health.selectionExpired")
                         : t(`health.reason.${e.resolution || e.reason}`, {
@@ -327,8 +347,7 @@ export function ConnectionHealth() {
                         </div>
                       ))}
                     </td>
-                    <td className="mono">{timestamp(e.last)}</td>
-                    <td>
+                    <td aria-label={t("health.column.actions")}>
                       <div className="actions">
                         <Button
                           disabled={busy || !running || !context.admin}
@@ -336,74 +355,46 @@ export function ConnectionHealth() {
                         >
                           {t("health.recheck")}
                         </Button>
-                        {suggestions.length > 0 && (
-                          <>
-                            <Button
-                              disabled={busy || !running || !context.admin || stale}
-                              onClick={() => action("pin", e)}
-                            >
-                              {t("health.pin")}
-                            </Button>
-                            <ActionMenu
-                              actions={[
-                                {
-                                  id: "apply",
-                                  label: t("health.use"),
-                                  disabled: busy || !running || !context.admin || stale,
-                                  run: () => {
-                                    void action("apply", e);
-                                  },
-                                },
-                                {
-                                  id: "edit",
-                                  label: t("health.edit"),
-                                  disabled: busy || !context.admin,
-                                  run: () => {
-                                    const [port, outbound] = suggestions[0]!;
-                                    const target = e.domain.includes(":")
-                                      ? `[${e.domain}]:${port}`
-                                      : `${e.domain}:${port}`;
-                                    const draft = { ...exactRule(target, "tcp"), outbound };
-                                    const existing = doc.config.rules.find(
-                                      (r) =>
-                                        r.type === draft.type &&
-                                        r.pattern === draft.pattern &&
-                                        r.protocol === "tcp" &&
-                                        r.ports?.includes(Number(port)),
-                                    );
-                                    context.setRuleDraft(existing ?? draft);
-                                  },
-                                },
-                                ...(e.status === "attention"
-                                  ? [
-                                      {
-                                        id: "handled",
-                                        label: t("health.handled"),
-                                        disabled: busy || !context.admin,
-                                        run: () => {
-                                          void action("handled", e);
-                                        },
-                                      },
-                                    ]
-                                  : []),
-                              ]}
-                            />
-                          </>
-                        )}
-                        {e.status === "attention" && suggestions.length === 0 && (
-                          <Button
-                            disabled={busy || !context.admin}
-                            onClick={() => action("handled", e)}
-                          >
-                            {t("health.handled")}
-                          </Button>
-                        )}
+                        <ActionMenu
+                          label={t("health.chooseOutbound")}
+                          description={t("health.outboundScope", { target: e.domain })}
+                          actions={[{ name: "direct", enabled: true }, ...doc.config.outbounds]
+                            .filter((o) => o.enabled !== false)
+                            .map((o) => ({
+                              id: o.name,
+                              label: o.name,
+                              disabled: busy || !context.admin,
+                              run: () => {
+                                void chooseOutbound(e, o.name);
+                              },
+                            }))}
+                        >
+                          {t("health.chooseOutbound")} ▾
+                        </ActionMenu>
                       </div>
                     </td>
                   </tr>
                   {expanded === e.id && (
                     <tr>
-                      <td colSpan={7}>
+                      <td colSpan={5}>
+                        <div className={styles.evidenceHeading}>
+                          <Button tone="quiet" onClick={() => context.setTool("logs")}>
+                            {t("nav.logs")}
+                          </Button>
+                          <span>
+                            {t("health.column.last")}: {timestamp(e.last)} ·{" "}
+                            {t("health.ruleScope", { target: e.domain })}
+                          </span>
+                          {e.status === "attention" && (
+                            <Button
+                              tone="quiet"
+                              disabled={busy || !context.admin}
+                              onClick={() => action("handled", e)}
+                            >
+                              {t("health.handled")}
+                            </Button>
+                          )}
+                        </div>
                         {e.transitions?.map((event, index) => (
                           <p key={index}>
                             {timestamp(event.time)} · {t(`health.reason.${event.resolution}`)}
@@ -456,7 +447,7 @@ export function ConnectionHealth() {
             })}
             {!rows.length && (
               <tr>
-                <td colSpan={7} className="muted">
+                <td colSpan={5} className="muted">
                   {t("health.empty")}
                 </td>
               </tr>
@@ -464,18 +455,20 @@ export function ConnectionHealth() {
           </tbody>
         </table>
       </div>
-      <div className="tableFoot">
-        <span>{t("health.loaded", { count: query.data?.total ?? 0 })}</span>
-        <Button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 100))}>
-          {t("health.previous")}
-        </Button>
-        <Button
-          disabled={offset + 100 >= (query.data?.total ?? 0)}
-          onClick={() => setOffset(offset + 100)}
-        >
-          {t("health.next")}
-        </Button>
-      </div>
+      {(offset > 0 || (query.data?.total ?? 0) > 100) && (
+        <div className="tableFoot">
+          <span>{t("health.loaded", { count: query.data?.total ?? 0 })}</span>
+          <Button disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 100))}>
+            {t("health.previous")}
+          </Button>
+          <Button
+            disabled={offset + 100 >= (query.data?.total ?? 0)}
+            onClick={() => setOffset(offset + 100)}
+          >
+            {t("health.next")}
+          </Button>
+        </div>
+      )}
     </section>
   );
 }

@@ -10,6 +10,8 @@
 
 ## Bugfixes
 
+- Simplify Overview to one health table, ignore native DNS failures on working proxy routes, and choose rule outbounds inline while allowing paused/legacy Smart preferences.
+
 - Collect repeated connection errors in timed notifications and a status-bar error history without disrupting page layout.
 - Apply Comfortable density to typography, form spacing, controls and table rows.
 
@@ -17,6 +19,8 @@
 - Preserve domain identity for direct exceptions under global capture and stop stale or unrelated DNS evidence from choosing another target.
 
 ## Changes
+
+- Combine Notifications, Diagnostics and Logs in one floating tabbed tool panel without resizing the main page.
 
 - Clarify connection-health status, issue resolution and inline rule actions in the product and UI specifications.
 

@@ -199,17 +199,30 @@ export interface Action {
   danger?: boolean;
   shortcut?: string;
 }
-export function ActionMenu({ actions, children }: { actions: Action[]; children?: ReactNode }) {
+export function ActionMenu({
+  actions,
+  children,
+  label,
+  description,
+}: {
+  actions: Action[];
+  children?: ReactNode;
+  label?: string;
+  description?: ReactNode;
+}) {
   const { t } = useTranslation();
   return (
     <Dropdown.Root>
       <Dropdown.Trigger asChild>
-        <Button tone="quiet" aria-label={t("common.more")}>
+        <Button tone="quiet" aria-label={label ?? t("common.more")}>
           {children ?? "⋯"}
         </Button>
       </Dropdown.Trigger>
       <Dropdown.Portal>
         <Dropdown.Content className={styles.menu} align="end" sideOffset={4}>
+          {description && (
+            <Dropdown.Label className={styles.menuDescription}>{description}</Dropdown.Label>
+          )}
           {actions.map((action) => (
             <Dropdown.Item
               key={action.id}

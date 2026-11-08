@@ -210,11 +210,17 @@ func (h *connectionHealth) run(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case e := <-h.events:
+			if e.version != h.one.policy.Load().version {
+				continue
+			}
 			h.ledger.mu.Lock()
 			closedAt := h.ledger.entries[healthKey(e.domain, e.scope)].ClosedAt
 			h.ledger.mu.Unlock()
 			if !closedAt.IsZero() && !e.result.Time.After(closedAt) {
 				continue
+			}
+			if e.result.Source == "business" && e.result.Status == "reachable" {
+				h.acceptBusinessSuccess(e)
 			}
 			if e.reason != "" {
 				if _, err := h.ledger.Observe(e.domain, e.scope, e.reason, e.result); err != nil {
@@ -460,6 +466,17 @@ func (h *connectionHealth) check(e healthEvent) {
 		return
 	}
 	checkStarted := time.Now()
+	if decision := s.rule.DecideDNS(e.domain, nil, "", 0); decision.Outbound == BuiltinReject && !decision.CaptureOnly && decision.Evidence != "dns_failed" {
+		h.ledger.mu.Lock()
+		entry, exists := h.ledger.entries[key]
+		h.ledger.mu.Unlock()
+		if exists && entry.Status == "attention" && h.one.policy.Load() == s {
+			if err := h.ledger.Resolve(e.domain, e.scope, entry.Generation, "policy", time.Now()); err != nil {
+				h.storageError(err)
+			}
+		}
+		return
+	}
 	h.mu.Lock()
 	probeNetwork := h.network
 	h.mu.Unlock()
@@ -501,8 +518,18 @@ func (h *connectionHealth) check(e healthEvent) {
 	}
 	localDNSOK := message != nil && len(dnsAddresses(message)) > 0
 	candidates := healthCandidateOutbounds(s.cfg)
+	resolverCandidates := append([]string(nil), candidates...)
+	for _, port := range []uint16{80, 443} {
+		decision := s.rule.Decide(e.domain, "tcp", port)
+		if s.cfg.Policy.RuleVersion == 2 {
+			decision, _ = s.rule.layeredMatch("domain", []any{e.domain}, "tcp", port)
+		}
+		if decision.Outbound != CaptureOutbound && decision.Outbound != "" && decision.Outbound != BuiltinDirect && decision.Outbound != BuiltinReject && !slices.Contains(resolverCandidates, decision.Outbound) {
+			resolverCandidates = append([]string{decision.Outbound}, resolverCandidates...)
+		}
+	}
 	if (message == nil || len(dnsAddresses(message)) == 0) && !privateScope {
-		for _, outbound := range candidates {
+		for _, outbound := range resolverCandidates {
 			if outbound == BuiltinDirect {
 				continue
 			}
@@ -534,6 +561,7 @@ func (h *connectionHealth) check(e healthEvent) {
 	results := []HealthResult{{Protocol: "dns", Source: "probe", Status: dnsStatus, Stage: "dns", Time: time.Now()}}
 	proposed := map[uint16]healthChoice{}
 	anySuccess := false
+	effectiveDNSOK := localDNSOK
 	allFailed := true
 	businessOK := true
 	for _, r := range prior.Results {
@@ -557,6 +585,11 @@ func (h *connectionHealth) check(e healthEvent) {
 		r := h.probe(ctx, s, current, e.domain, port, message, e.manual)
 		results = append(results, r)
 		anySuccess = anySuccess || healthSuccess(r)
+		// Native DNS is diagnostic evidence. A verified effective proxy path
+		// can remain usable when that separate lookup fails.
+		if healthSuccess(r) && current != BuiltinDirect {
+			effectiveDNSOK = true
+		}
 		allFailed = allFailed && r.Status == "failed"
 		isBusiness := e.result.Source == "business" && e.result.Port == port
 		for _, old := range prior.Results {
@@ -603,7 +636,7 @@ func (h *connectionHealth) check(e healthEvent) {
 	}
 	now := time.Now()
 	reason := ""
-	if !localDNSOK {
+	if !effectiveDNSOK {
 		reason = "dns_failed"
 	}
 	if allFailed && len(results) >= 2 {
@@ -611,6 +644,9 @@ func (h *connectionHealth) check(e healthEvent) {
 	}
 	if !businessOK {
 		reason = "business_failed"
+	}
+	if effectiveDNSOK && !localDNSOK {
+		results = append(results, HealthResult{Protocol: "dns", Source: "effective", Status: "answered", Stage: "proxy_dns", Time: now})
 	}
 	if err := h.ledger.Refresh(e.domain, e.scope, results); err != nil {
 		h.storageError(err)
@@ -661,7 +697,8 @@ func (h *connectionHealth) check(e healthEvent) {
 			coversBusiness = coversBusiness && covered
 		}
 	}
-	auto := s.cfg.Policy.Smart.AutoEnabled && repeated && h.errorText == "" && h.network != "" && len(proposed) > 0 && coversBusiness
+	mode, _ := PolicyMode(s.cfg)
+	auto := s.cfg.Policy.RuleVersion == 2 && mode != "custom" && s.cfg.Policy.Smart.AutoEnabled && repeated && h.errorText == "" && h.network != "" && len(proposed) > 0 && coversBusiness
 	stillApplied := len(h.choices[key]) > 0
 	for port, choice := range h.choices[key] {
 		p, valid := proposed[port]
@@ -680,7 +717,7 @@ func (h *connectionHealth) check(e healthEvent) {
 		}(), now); err != nil {
 			h.storageError(err)
 		}
-	} else if exists && entry.Status == "attention" && (anySuccess || localDNSOK && entry.Reason == "dns_failed") && businessOK && reason == "" {
+	} else if exists && entry.Status == "attention" && (anySuccess || effectiveDNSOK && entry.Reason == "dns_failed") && businessOK && reason == "" {
 		if err := h.ledger.Resolve(e.domain, e.scope, generation, "retest", now); err != nil {
 			h.storageError(err)
 		}
@@ -833,6 +870,52 @@ func (h *connectionHealth) route(domain string, port uint16, protocol string, de
 		decision.Reason = "validated temporary health selection"
 	}
 	return decision
+}
+
+// A reply on a current, explicit domain-proxy rule is stronger evidence than
+// an auxiliary native DNS failure. Only count its presence, never its content.
+func (h *connectionHealth) acceptBusinessSuccess(e healthEvent) {
+	s := h.one.policy.Load()
+	if e.version != s.version || e.result.Outbound == BuiltinDirect {
+		return
+	}
+	decision := s.rule.Decide(e.domain, e.result.Protocol, e.result.Port)
+	if s.cfg.Policy.RuleVersion == 2 {
+		decision, _ = s.rule.layeredMatch("domain", []any{e.domain}, e.result.Protocol, e.result.Port)
+	}
+	if decision.Outbound != e.result.Outbound {
+		return
+	}
+	h.ledger.mu.Lock()
+	entry, exists := h.ledger.entries[healthKey(e.domain, e.scope)]
+	h.ledger.mu.Unlock()
+	if !exists || entry.Status != "attention" || entry.Reason != "dns_failed" || e.result.Time.Before(entry.Last) {
+		return
+	}
+	for _, result := range entry.Results {
+		if result.Source == "business" && result.Status == "failed" && result.Protocol != "dns" && (result.Protocol != e.result.Protocol || result.Port != e.result.Port) {
+			return
+		}
+	}
+	if err := h.ledger.Refresh(e.domain, e.scope, []HealthResult{e.result}); err != nil {
+		h.storageError(err)
+		return
+	}
+	if h.one.policy.Load() == s {
+		if err := h.ledger.Resolve(e.domain, e.scope, entry.Generation, "retest", time.Now()); err != nil {
+			h.storageError(err)
+		}
+	}
+}
+func (one *One) observeHealthSuccess(s *runtimeSnapshot, destination M.Socksaddr, outbound string) {
+	if outbound == BuiltinDirect {
+		return
+	}
+	if table := one.tableForAddress(destination.Addr); table != nil {
+		if record := table.GetByIP(net.IP(destination.Addr.AsSlice())); record != nil {
+			one.health.offer(healthEvent{domain: record.Hostname, version: s.version, result: HealthResult{Protocol: "tcp", Port: destination.Port, Source: "business", Outbound: outbound, Status: "reachable", Stage: "transfer", Time: time.Now()}})
+		}
+	}
 }
 
 func (one *One) observeHealthFlow(s *runtimeSnapshot, protocol string, destination M.Socksaddr, outbound, stage string, err error) {

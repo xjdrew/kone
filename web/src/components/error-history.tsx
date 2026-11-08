@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import {
   clearErrors,
@@ -9,6 +9,7 @@ import {
   type ErrorEntry,
 } from "../error-history";
 import { Button } from "./ui";
+import { useConsole } from "../context";
 function Message({ entry }: { entry: ErrorEntry }) {
   const { t, i18n } = useTranslation();
   const key = `api.${entry.error.code}`;
@@ -25,11 +26,16 @@ function Message({ entry }: { entry: ErrorEntry }) {
     </>
   );
 }
-export function ErrorHistory() {
-  const { t, i18n } = useTranslation();
+export function NotificationCount() {
   const state = useSyncExternalStore(subscribeErrors, errorSnapshot);
-  const [open, setOpen] = useState(false);
-
+  return (
+    <span className={state.entries.length ? "errorCount" : undefined}>{state.entries.length}</span>
+  );
+}
+export function ErrorToasts() {
+  const { t } = useTranslation();
+  const { setTool } = useConsole();
+  const state = useSyncExternalStore(subscribeErrors, errorSnapshot);
   const active = state.entries.find((e) => e.id === state.active);
   const activeId = active?.id;
   useEffect(() => {
@@ -37,67 +43,50 @@ export function ErrorHistory() {
     const timer = setTimeout(dismissError, 8000);
     return () => clearTimeout(timer);
   }, [activeId]);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [open]);
+  if (!active) return null;
+  return createPortal(
+    <aside className="errorToast" role="alert">
+      <Message entry={active} />
+      <div className="actions">
+        <Button
+          onClick={() => {
+            setTool("notifications");
+            dismissError();
+          }}
+        >
+          {t("nav.notifications")}
+        </Button>
+        <Button aria-label={t("common.close")} onClick={dismissError}>
+          ×
+        </Button>
+      </div>
+    </aside>,
+    document.querySelector('[role="dialog"]') ?? document.body,
+  );
+}
+export function Notifications() {
+  const { t, i18n } = useTranslation();
+  const state = useSyncExternalStore(subscribeErrors, errorSnapshot);
   return (
-    <>
-      <button
-        className={state.entries.length ? "errorCount" : ""}
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        {t("nav.errors")} <span>{state.entries.length}</span>
-      </button>
-      {active &&
-        createPortal(
-          <aside className="errorToast" role="alert">
-            <Message entry={active} />
-            <div className="actions">
-              <Button
-                onClick={() => {
-                  setOpen(true);
-                  dismissError();
-                }}
-              >
-                {t("errors.history")}
-              </Button>
-              <Button aria-label={t("common.close")} onClick={dismissError}>
-                ×
-              </Button>
-            </div>
-          </aside>,
-          document.querySelector('[role="dialog"]') ?? document.body,
+    <div className="notifications">
+      <div className="toolbar">
+        <Button tone="quiet" disabled={!state.entries.length} onClick={clearErrors}>
+          {t("errors.clear")}
+        </Button>
+      </div>
+      <div className="errorEntries">
+        {state.entries.length ? (
+          state.entries.map((entry) => (
+            <article key={entry.id}>
+              <time>{new Date(entry.last).toLocaleTimeString(i18n.language)}</time>
+              <span className="pill">×{entry.count}</span>
+              <Message entry={entry} />
+            </article>
+          ))
+        ) : (
+          <p>{t("errors.empty")}</p>
         )}
-      {open && (
-        <section className="errorHistory" aria-label={t("errors.history")}>
-          <header className="toolbar">
-            <strong>{t("errors.history")}</strong>
-            <Button onClick={clearErrors}>{t("errors.clear")}</Button>
-            <Button aria-label={t("common.close")} onClick={() => setOpen(false)}>
-              ×
-            </Button>
-          </header>
-          <div className="errorEntries">
-            {state.entries.length ? (
-              state.entries.map((entry) => (
-                <article key={entry.id}>
-                  <time>{new Date(entry.last).toLocaleTimeString(i18n.language)}</time>
-                  <span className="pill">×{entry.count}</span>
-                  <Message entry={entry} />
-                </article>
-              ))
-            ) : (
-              <p>{t("errors.empty")}</p>
-            )}
-          </div>
-        </section>
-      )}
-    </>
+      </div>
+    </div>
   );
 }

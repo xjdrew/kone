@@ -7,6 +7,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from "react";
+import type { ToolTab } from "./tool-panel";
 import { initialTool, takeLaunchToken } from "./startup";
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -29,7 +30,7 @@ interface ConsoleContext {
   connectionError: unknown;
   configError: unknown;
   workspace: Map<string, unknown>;
-  tool: "diagnostics" | "logs" | null;
+  tool: ToolTab | null;
   setTool: (tool: ConsoleContext["tool"]) => void;
   diagnosticTarget: string;
   diagnose: (target: string) => void;
