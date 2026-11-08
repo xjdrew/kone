@@ -18,7 +18,12 @@ func TestSystemDNSFinalProxyExpiresKnownDirectAddress(t *testing.T) {
 	cfg := systemConfig(t)
 	listener, err := net.Listen("tcp4", "127.0.0.2:0")
 	require.NoError(t, err)
-	oldServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "old direct connection") }), ReadHeaderTimeout: time.Second}
+	var oldConnections atomic.Int32
+	oldServer := &http.Server{ConnState: func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			oldConnections.Add(1)
+		}
+	}, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "old direct connection") }), ReadHeaderTimeout: time.Second}
 	serverDone := make(chan struct{})
 	go func() { defer close(serverDone); oldServer.Serve(listener) }()
 	t.Cleanup(func() { oldServer.Close(); listener.Close(); <-serverDone })
@@ -97,8 +102,7 @@ func TestSystemDNSFinalProxyExpiresKnownDirectAddress(t *testing.T) {
 	changed.Store(true)
 	time.Sleep(1100 * time.Millisecond)
 	get("old direct connection")
-	_, existing := one.DNSSnapshot()
-	require.Equal(t, before["rotating-default.example"].RealIP.String(), existing["rotating-default.example"].RealIP.String(), "background health DNS must not retarget existing business connections")
+	require.Equal(t, int32(1), oldConnections.Load(), "TTL expiry and health probes must preserve the existing TCP connection")
 	transport.CloseIdleConnections()
 	// Background health may refresh the resolver cache. A new business flow
 	// must still replace its expired address evidence and apply the proxy rule.
