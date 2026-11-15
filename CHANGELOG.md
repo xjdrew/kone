@@ -2,6 +2,8 @@
 
 ## Bugfixes
 
+- Keep DNS observations stable with one latest result per domain, inline query history, relative query ages, readable DNS answers and combined resolver/cache information.
+
 - Keep Traffic usable during capture startup and empty helper snapshots by returning empty arrays consistently and handling null collections in Web responses.
 - Report Web script errors with call stacks, page/build/runtime context and bounded response shapes while retaining workspace navigation.
 - Launch frontend tools through their official entrypoints across platforms, avoiding generated Windows executable shims; report task failures once without the duplicate colored wrapper message.

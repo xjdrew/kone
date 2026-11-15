@@ -846,3 +846,104 @@ test("@compat recovery explains eligibility and follows the task through reinspe
   await page.setViewportSize({ width: 320, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test("@compat DNS shows latest results by domain and expands retained history", async ({
+  page,
+}) => {
+  await fixture(page);
+  const now = Date.now();
+  const query = (id: string, name: string, seconds: number, changes = {}) => ({
+    id,
+    name,
+    type: "A",
+    time: new Date(now - seconds * 1000).toISOString(),
+    source: "application",
+    scope: "dns",
+    transport: "udp",
+    upstream: "192.168.1.1:53",
+    status: "NOERROR",
+    duration_ms: 2.3,
+    cache: "hit",
+    version: 7,
+    ...changes,
+  });
+  let queries = [
+    query("dns-1", "z.example", 3600, { status: "NXDOMAIN", cache: "miss" }),
+    query("dns-2", "a.example", 120, { type: "AAAA", real_addresses: ["2001:db8::1"] }),
+    query("dns-3", "a.example", 2, {
+      answers: ["a.example. 30 IN CNAME edge.example.", "edge.example. 30 IN A 10.192.0.4"],
+      virtual_addresses: ["10.192.0.4"],
+      real_addresses: ["192.0.2.10"],
+      cache: "fake-ip",
+    }),
+    query("dns-4", "empty.example", 90, { type: "AAAA", cache: "ipv6-policy" }),
+  ];
+  await page.route("**/api/v1/dns", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ status: { capacity: 512 }, queries }),
+    }),
+  );
+  await page.goto("/#/traffic?view=dns");
+  const table = page.getByRole("table").first();
+  const rows = table.locator(":scope > tbody > tr");
+  await expect(rows).toHaveCount(3);
+  await expect(table.locator(":scope > thead th")).toHaveText([
+    "Query",
+    "Last query",
+    "Type",
+    "Answers",
+    "Resolver / cache",
+    "Latency",
+    "Actions",
+  ]);
+  await expect(rows.nth(0)).toContainText("CNAME edge.example.");
+  await expect(rows.nth(0)).toContainText("Fake-IP 10.192.0.4");
+  await expect(rows.nth(0)).toContainText("192.0.2.10");
+  await expect(rows.nth(0)).toContainText("Fake-IP mapping");
+  await expect(rows.nth(0).getByRole("cell").nth(1)).toHaveText(/\d+s/);
+  await expect(rows.nth(1)).toContainText("No answers");
+  await expect(rows.nth(1).getByRole("cell").nth(1)).toHaveText("1m");
+  await expect(rows.nth(2)).toContainText("NXDOMAIN");
+  await expect(rows.nth(2).getByRole("cell").nth(1)).toHaveText("1h");
+  await expect(table).not.toContainText("Unknown");
+  const domain = page.getByRole("button", { name: "a.example 2", exact: true });
+  await domain.click();
+  await expect(domain).toHaveAttribute("aria-expanded", "true");
+  const history = page.getByRole("table", { name: "Query history for a.example", exact: true });
+  await expect(history.locator("tbody > tr")).toHaveCount(2);
+  await expect(history.locator("tbody > tr").nth(1)).toContainText("2001:db8::1");
+  await history.getByRole("button", { name: "Technical details", exact: true }).nth(0).click();
+  await expect(page.locator(".inspector")).toContainText("NOERROR");
+  await page.locator(".inspector").getByRole("button", { name: "Close", exact: true }).click();
+  queries = [
+    ...queries,
+    query("dns-5", "a.example", 0, { answers: ["a.example. 30 IN A 192.0.2.99"] }),
+  ].reverse();
+  await expect(rows.nth(0)).toContainText("192.0.2.99");
+  await expect(history.locator("tbody > tr")).toHaveCount(3);
+  await expect(page.getByRole("button", { name: "a.example 3", exact: true })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await page.getByRole("button", { name: "a.example 3", exact: true }).click();
+  await expect(rows).toHaveCount(3);
+  await page.getByRole("combobox", { name: "Type", exact: true }).selectOption("AAAA");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("2001:db8::1");
+  await expect(rows.nth(0).getByRole("cell").nth(2)).toHaveText("AAAA");
+  queries = Array.from({ length: 51 }, (_, index) =>
+    query(`dns-${10 + index}`, "a.example", 51 - index, { real_addresses: ["192.0.2.1"] }),
+  );
+  await page.getByRole("combobox", { name: "Type", exact: true }).selectOption("");
+  await page.getByRole("button", { name: "a.example 51", exact: true }).click();
+  await expect(history.locator("tbody > tr")).toHaveCount(50);
+  const expanded = table.locator(":scope > tbody > tr").nth(1);
+  await expanded.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(history.locator("tbody > tr")).toHaveCount(1);
+  await expanded.getByRole("button", { name: "Previous", exact: true }).click();
+  await expect(history.locator("tbody > tr")).toHaveCount(50);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+});

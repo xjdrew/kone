@@ -22,7 +22,8 @@ import { configuration, documentFixture, flowFixture, graphFixture } from "./fac
 import english from "../../pkg/locale/catalog/en.json";
 import chinese from "../../pkg/locale/catalog/zh.json";
 import { canEnable } from "../src/readiness";
-import type { Readiness, ReadinessCheck } from "../src/model";
+import { dnsAnswerLines, dnsQueryAge, groupDNSQueries } from "../src/dns-observations";
+import type { DNSQuery, Readiness, ReadinessCheck } from "../src/model";
 
 test("default direct routing needs no consent, but cannot bypass real blockers", () => {
   const permissions: ReadinessCheck = {
@@ -339,4 +340,63 @@ test("health outbound choice updates exact rules in place and takes precedence o
   });
   expect(added.rules[0]?.ports).toBeUndefined();
   expect(added.rules.at(-1)?.type).toBe("FINAL");
+});
+
+test("DNS domains keep the latest result, stable order, accurate ages and readable answers", () => {
+  const now = Date.parse("2026-11-15T12:00:00Z");
+  const query = (overrides: Partial<DNSQuery>): DNSQuery => ({
+    id: "dns-1",
+    time: new Date(now).toISOString(),
+    name: "z.example",
+    type: "A",
+    source: "application",
+    scope: "dns",
+    transport: "udp",
+    status: "NOERROR",
+    duration_ms: 1,
+    cache: "miss",
+    version: 7,
+    ...overrides,
+  });
+  const older = query({ name: "Example.COM.", time: new Date(now - 60000).toISOString() });
+  const latest = query({ id: "dns-10", name: "example.com", type: "AAAA" });
+  const sameTime = query({ id: "dns-2", name: "EXAMPLE.com", type: "HTTPS" });
+  const events = [query({}), older, sameTime, latest];
+  const original = [...events];
+  const groups = groupDNSQueries(events);
+  expect(groups.map(({ name }) => name)).toEqual(["example.com", "z.example"]);
+  expect(groups[0]!.history).toEqual([latest, sameTime, older]);
+  expect(events).toEqual(original);
+  for (const [seconds, expected] of [
+    [0, "0s"],
+    [59, "59s"],
+    [60, "1m"],
+    [3599, "59m"],
+    [3600, "1h"],
+    [86400, "1d"],
+    [-1, "0s"],
+  ] as const)
+    expect(dnsQueryAge(new Date(now - seconds * 1000).toISOString(), now)).toBe(expected);
+  expect(dnsQueryAge("bad timestamp", now)).toBe("—");
+  expect(
+    dnsAnswerLines(
+      query({
+        answers: [
+          "example.com.\t30\tIN\tCNAME\ttarget.example.",
+          "target.example.\t30\tIN\tA\t10.192.0.4",
+          'example.com. 30 IN TXT "two  spaces"',
+        ],
+        virtual_addresses: ["10.192.0.4"],
+      }),
+    ),
+  ).toEqual(["CNAME\ttarget.example.", "Fake-IP 10.192.0.4", 'TXT "two  spaces"']);
+  expect(dnsAnswerLines(query({ real_addresses: ["192.0.2.1"] }))).toEqual(["192.0.2.1"]);
+  expect(dnsAnswerLines(query({ answers: ["a. 30 IN AAAA 2001:db8::1"] }))).toEqual([
+    "2001:db8::1",
+  ]);
+  expect(
+    dnsAnswerLines(
+      query({ virtual_addresses: ["10.192.0.4"], real_addresses: ["10.192.0.4", "192.0.2.1"] }),
+    ),
+  ).toEqual(["Fake-IP 10.192.0.4", "192.0.2.1"]);
 });

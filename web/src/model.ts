@@ -385,6 +385,8 @@ export interface DNSQuery {
   version: number;
   virtual_addresses?: string[];
   real_addresses?: string[];
+  answers?: string[];
+  answers_truncated?: boolean;
 }
 export interface OutboundHealth {
   id: string;
