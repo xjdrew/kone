@@ -195,12 +195,7 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 	case path == "logs" && r.Method == http.MethodGet:
 		c.logsRoute(w, r)
 	case path == "recovery" && r.Method == http.MethodGet:
-		report, err := c.InspectRecovery(r.Context())
-		if err != nil {
-			respondError(err)
-			return
-		}
-		writeJSON(w, 200, report)
+		writeJSON(w, 200, c.RecoveryStatus(r.Context()))
 	case path == "geoip" && r.Method == http.MethodGet:
 		value, err := c.geoIPStatus()
 		if err != nil {
@@ -315,7 +310,13 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 			apiError(w, 404, "not_found", "Unknown lifecycle action")
 			return
 		}
-		writeOperation(w, c.beginOperation(action, key, 40*time.Second, func(ctx context.Context) (any, error) { return nil, actionFn(ctx) }))
+		writeOperation(w, c.beginOperation(action, key, 40*time.Second, func(ctx context.Context) (any, error) {
+			err := actionFn(ctx)
+			if action == "recover" {
+				return c.RecoveryStatus(ctx), err
+			}
+			return nil, err
+		}))
 	case path == "traffic" && r.Method == http.MethodGet:
 		query := trafficQuery(r)
 		window := time.Second

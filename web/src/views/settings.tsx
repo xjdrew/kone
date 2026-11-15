@@ -1,3 +1,4 @@
+import { Recovery } from "./recovery";
 import { ResolverFields } from "./resolvers";
 import { AccessSettings } from "./access";
 import { useEffect, useState } from "react";
@@ -633,58 +634,6 @@ function Logging() {
       </div>
       <ErrorNotice error={error} />
     </form>
-  );
-}
-function Recovery() {
-  const { t } = useTranslation();
-  const context = useConsole();
-  const [result, setResult] = useState<{
-    required: boolean;
-    ownership: string;
-    can_clear: boolean;
-    items: { kind: string; identity?: string; status: string; message: string }[];
-  }>();
-  const [error, setError] = useState<unknown>();
-  return (
-    <>
-      <h2>{t("settings.recovery")}</h2>
-      <p className="inlineNote">{t("settings.recoveryHint")}</p>
-      <div className="actions">
-        <Button
-          onClick={() => {
-            void request<NonNullable<typeof result>>("/recovery").then(setResult).catch(setError);
-          }}
-        >
-          {t("settings.inspect")}
-        </Button>
-        <Button
-          disabled={!context.admin || !context.state.local_access}
-          onClick={() => {
-            if (window.confirm(t("settings.recoveryHint")))
-              void api.lifecycle("recover", { confirm: true }).then(context.track).catch(setError);
-          }}
-        >
-          {t("settings.recover")}
-        </Button>
-      </div>
-      <ErrorNotice error={error} />
-      {result && (
-        <div className="subtlePanel">
-          <p>{t(result.required ? "recovery.required" : "recovery.clear")}</p>
-          <p className="inlineNote">
-            {t(`recovery.${result.ownership}`, { defaultValue: t("common.unknown") })}
-          </p>
-          {result.items.map((item, index) => (
-            <div key={index} className={styles.session}>
-              <strong>{t(`recovery.${item.kind}`, { defaultValue: t("common.details") })}</strong>
-              <code>{item.identity}</code>
-              <span>{t(`recovery.${item.status}`, { defaultValue: t("common.unknown") })}</span>
-              <Details value={item} />
-            </div>
-          ))}
-        </div>
-      )}
-    </>
   );
 }
 function InterfaceSettings() {

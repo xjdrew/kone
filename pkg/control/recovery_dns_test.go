@@ -127,7 +127,11 @@ func TestDNSRecoveryRouteRequiresLocalAdminConfirmationAndIsIdempotent(t *testin
 	require.Equal(t, 202, w.Code, w.Body.String())
 	var op Operation
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &op))
-	require.Equal(t, "succeeded", waitOperation(t, c, op.ID).Status)
+	completed := waitOperation(t, c, op.ID)
+	require.Equal(t, "succeeded", completed.Status)
+	view, ok := completed.Result.(RecoveryStatus)
+	require.True(t, ok, "recovery task returns its final inspection")
+	require.Equal(t, "clear", view.Blocker)
 	duplicate := call()
 	require.Equal(t, 202, duplicate.Code)
 	var repeated Operation

@@ -675,3 +675,90 @@ test("@compat comfortable changes typography and offline errors stay out of page
   await expect(panel).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Notifications 1", exact: true })).toBeFocused();
 });
+
+test("@compat recovery explains eligibility and follows the task through reinspection", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  let report = {
+    required: false,
+    can_clear: false,
+    can_recover: false,
+    capture_active: false,
+    blocker: "clear",
+    ownership: "none",
+    inspection_error: "",
+    items: [] as { kind: string; status: string; identity: string; message: string }[],
+  };
+  await page.route("**/api/v1/recovery", (route) =>
+    route.fulfill({ contentType: "application/json", body: JSON.stringify(report) }),
+  );
+  await page.goto("/#/settings?section=recovery");
+  const recovery = page.getByRole("region", { name: "Recovery", exact: true });
+  await expect(recovery.getByText("No recovery needed", { exact: true })).toBeVisible();
+  await expect(
+    recovery.getByRole("button", { name: "Recover owned resources", exact: true }),
+  ).toBeDisabled();
+  report = {
+    ...report,
+    required: true,
+    can_clear: true,
+    can_recover: true,
+    blocker: "ready",
+    ownership: "not_configured",
+    items: [
+      {
+        kind: "capture",
+        status: "not_configured",
+        identity: "interrupted-run",
+        message: "Startup did not apply network changes",
+      },
+    ],
+  };
+  await recovery.getByRole("button", { name: "Check again", exact: true }).click();
+  await expect(recovery.getByText("Owned resources can be recovered")).toBeVisible();
+  const operation = {
+    id: "recovery-task",
+    kind: "recover",
+    status: "running",
+    stage: "recover",
+    started_at: new Date().toISOString(),
+  };
+  await page.route("**/api/v1/lifecycle/recover", (route) => {
+    expect(route.request().postDataJSON()).toEqual({ confirm: true });
+    data.operations.push(operation);
+    return route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify(operation),
+    });
+  });
+  await recovery.getByRole("button", { name: "Recover owned resources", exact: true }).click();
+  const confirmation = page.getByRole("dialog");
+  await expect(confirmation.getByText("interrupted-run", { exact: true })).toBeVisible();
+  await confirmation.getByRole("button", { name: "Restore these resources", exact: true }).click();
+  await expect(recovery.getByRole("button", { name: "Recovering…", exact: true })).toBeDisabled();
+  report = { ...report, required: false, can_recover: false, blocker: "clear", items: [] };
+  operation.status = "succeeded";
+  await expect(recovery.getByText("Recovery finished.", { exact: false })).toBeVisible();
+  await expect(recovery.getByText("No recovery needed", { exact: true })).toBeVisible();
+  report = { ...report, required: true, blocker: "active", capture_active: true };
+  await recovery.getByRole("button", { name: "Check again", exact: true }).click();
+  await expect(recovery.getByText("Proxy is running", { exact: true })).toBeVisible();
+  await expect(
+    recovery.getByRole("button", { name: "Recover owned resources", exact: true }),
+  ).toBeDisabled();
+  report = {
+    ...report,
+    blocker: "inspection_failed",
+    capture_active: false,
+    inspection_error: "controlled unreadable ownership journal",
+  };
+  await recovery.getByRole("button", { name: "Check again", exact: true }).click();
+  await expect(recovery.getByText("Recovery inspection failed", { exact: true })).toBeVisible();
+  await expect(
+    recovery.getByRole("button", { name: "Recover owned resources", exact: true }),
+  ).toBeDisabled();
+  await page.setViewportSize({ width: 320, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

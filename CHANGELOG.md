@@ -1,3 +1,9 @@
+# 2026/11/15
+
+## Bugfixes
+
+- Make Recovery inspect automatically, explain blocked actions and resource ownership, and show recovery progress/results with automatic reinspection.
+
 # 2026/11/08
 
 ## Features
@@ -9,6 +15,7 @@
 - Add opt-in temporary outbound selection that respects manual rules, with proxy DNS recovery and one-click pinning as a permanent rule.
 
 ## Bugfixes
+
 
 - Simplify Overview to one health table, ignore native DNS failures on working proxy routes, and choose rule outbounds inline while allowing paused/legacy Smart preferences.
 
