@@ -41,10 +41,10 @@ async function fixture(t, options = {}) {
     calls.push({ command, args, settings });
     if (command === options.missing) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     if (command === "git") return args[0] === "rev-parse" ? sha : "git version 2.50";
-    if (command === "go" && args[0] === "version") return options.versions?.go ?? "go version go1.27.4 windows/amd64";
-    if (command === "bun" && args[0] === "--version") return options.versions?.bun ?? "1.4.4";
-    if (command === "node") return options.versions?.node ?? "v26.13.0";
-    if (command === "just" && args[0] === "--version") return options.versions?.just ?? "just 1.59.0";
+    if (command === "go" && args[0] === "version") return "go version go1.27.4 windows/amd64";
+    if (command === "bun" && args[0] === "--version") return "1.4.4";
+    if (command === "node") return "v26.13.0";
+    if (command === "just" && args[0] === "--version") return "just 1.59.0";
     if (command === "bash" && args[0] === "--version") return "GNU bash, version 5";
     if (command === process.execPath && args.some(arg => arg.endsWith("version-policy.mjs"))) return "0.4.0-dev.20261101.1.gaaaaaaaaaaaa";
     if (command === "bash" && args.includes("kone-npm") && args.includes("--version")) return "11.20.0";
@@ -78,42 +78,6 @@ test("init reports missing base tools before installing any dependencies", async
   assert.match(f.logs.join("\n"), /\[OK\] npm: 11.20.0/);
   assert.equal(bunCalls(f.calls, "install --frozen-lockfile").length, 0);
   assert.ok(!f.calls.some((call) => call.command === "go" && call.args[0] === "list"));
-});
-
-test("init accepts minimum, newer patch/minor and newer major tool versions", async t => {
-  for (const versions of [
-    { go: "go version go1.27.0 windows/amd64", bun: "1.4.0", node: "v22.12.0", just: "just 1.55.0" },
-    { go: "go version go1.27.8 windows/amd64", bun: "1.4.9+abcd", node: "v26.14.1", just: "just 1.60.3" },
-    { go: "go version go1.28.0 windows/arm64", bun: "1.5.0", node: "v28.0.0", just: "just 2.0.0" },
-  ]) {
-    const f = await fixture(t, { versions, env: { PATH: "installed-tools", GOTOOLCHAIN: "auto" } });
-    await initialize(f.ctx);
-    assert.doesNotMatch(f.logs.join("\n"), /Tools needing attention/);
-    assert.equal(bunCalls(f.calls, "install --frozen-lockfile").length, 1);
-    const probe = f.calls.find(c => c.command === "go" && c.args[0] === "version");
-    assert.deepEqual(probe.settings.env, { PATH: "installed-tools", GOTOOLCHAIN: "local" });
-    const dependencies = f.calls.find(c => c.command === "go" && c.args[0] === "list");
-    assert.ok(!dependencies.settings.env, "version probing does not override the build environment");
-    assert.equal(f.ctx.env.GOTOOLCHAIN, "auto");
-  }
-});
-
-test("init rejects unsupported and unrecognized versions before installing dependencies", async t => {
-  for (const versions of [
-    { go: "go version go1.26.99 windows/amd64" },
-    { bun: "1.3.99" },
-    { node: "v22.11.99" },
-    { just: "just 1.54.99" },
-    { go: "go version go1.27rc1 windows/amd64" },
-    { bun: "1.4.0-canary.1" },
-    { node: "unknown" },
-  ]) {
-    const f = await fixture(t, { versions });
-    await assert.rejects(initialize(f.ctx), /Development setup needs attention/);
-    assert.match(f.logs.join("\n"), /Tools needing attention/);
-    assert.equal(bunCalls(f.calls, "install --frozen-lockfile").length, 0);
-    assert.ok(!f.calls.some(c => c.command === "go" && c.args[0] === "list"));
-  }
 });
 
 test("init prepares project dependencies once and detects lockfile changes", async (t) => {

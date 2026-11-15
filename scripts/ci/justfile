@@ -108,7 +108,7 @@ test-tasks *args:
     task_arguments test-tasks "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    node --test "$KONE_TASK_ROOT"/test/tasks/*.test.mjs "$KONE_TASK_ROOT/scripts/tasks/init.test.mjs" "$KONE_TASK_ROOT/test/integration/init.test.mjs" "$KONE_TASK_ROOT/test/integration/windows-bun.test.mjs"
+    node --test "$KONE_TASK_ROOT"/test/tasks/*.test.mjs "$KONE_TASK_ROOT/scripts/tasks/init.test.mjs" "$KONE_TASK_ROOT/test/integration/init.test.mjs"
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
@@ -158,7 +158,8 @@ web-browsers *args:
     task_arguments web-browsers "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    if [[ -f web/bun.lock ]]; then cd web && bunx playwright install --with-deps chromium webkit firefox; else cd web && npx playwright install --with-deps chromium webkit firefox; fi
+    cd web
+    node node_modules/@playwright/test/cli.js install --with-deps chromium webkit firefox
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
@@ -179,7 +180,7 @@ test-web-e2e-mock *args:
     task_arguments test-web-e2e-mock "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     cd web
-    bunx playwright test console.spec.ts --project=chromium --grep-invert '@real'
+    node node_modules/@playwright/test/cli.js test console.spec.ts --project=chromium --grep-invert '@real'
 
 # Explicit maintenance only; ordinary builds use committed generated resources.
 [group('Go, builds and quality')]
@@ -270,7 +271,7 @@ test-windows-package *args:
     task_arguments test-windows-package "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    node --test "$KONE_TASK_ROOT/test/integration/windows-package.test.mjs" "$KONE_TASK_ROOT/test/integration/windows-native-argv.test.mjs" "$KONE_TASK_ROOT/test/integration/windows-bun.test.mjs"
+    node --test "$KONE_TASK_ROOT/test/integration/windows-package.test.mjs" "$KONE_TASK_ROOT/test/integration/windows-native-argv.test.mjs"
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]

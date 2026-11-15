@@ -2,6 +2,8 @@
 
 ## Bugfixes
 
+- Launch frontend tools through their official entrypoints across platforms, avoiding generated Windows executable shims; report task failures once without the duplicate colored wrapper message.
+
 - Recognize Bun shell launchers on Windows during initialization, dependency installation and builds.
 
 - Accept compatible development tools during initialization (Go 1.27+, Bun 1.4+, Node 22.12+, just 1.55+) without downloading a Go toolchain during version detection.

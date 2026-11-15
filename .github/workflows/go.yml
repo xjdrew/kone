@@ -134,9 +134,22 @@ jobs:
       - name: Regress upstream PE loader pointer bounds
         if: ${{ matrix.os == 'windows-latest' }}
         run: just ci test-pe
-      - name: Regress Windows packaging, arguments and Bun launchers
+      - name: Regress Windows packaging without PowerShell 7
         if: ${{ matrix.os == 'windows-latest' }}
         run: just ci test-windows-package
+      - uses: actions/setup-node@v7.1.0
+        if: ${{ matrix.os == 'windows-latest' && hashFiles('web/bun.lock') != '' }}
+        with:
+          node-version: '26.13.0'
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        if: ${{ matrix.os == 'windows-latest' && hashFiles('web/bun.lock') != '' }}
+        with:
+          bun-version: '1.4.4'
+      - name: Verify Windows development initialization and build
+        if: ${{ matrix.os == 'windows-latest' && hashFiles('web/bun.lock') != '' }}
+        run: |
+          just init
+          just build
       - name: Check out exact PR base for coverage
         if: ${{ matrix.os == 'windows-latest' && github.event_name == 'pull_request' }}
         uses: actions/checkout@v7.0.1
