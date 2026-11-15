@@ -28,9 +28,9 @@ for (const failure of ["missing", "incompatible", "unusable"]) {
     assert.doesNotMatch(output, /extra line/);
     assert.match(output, /Tools needing attention:/);
     assert.match(output, {
-      missing: /go: not found on PATH; install Go 1.27.4/,
-      incompatible: /go: installed go version go1.26.0 linux\/amd64; requires Go 1.27.4. Update this tool/,
-      unusable: /go: could not check version; check that Go 1.27.4 runs/,
+      missing: /go: not found on PATH; install Go 1\.27 or later/,
+      incompatible: /go: installed go version go1.26.0 linux\/amd64; requires Go 1\.27 or later. Update this tool/,
+      unusable: /go: could not check version; check that Go 1\.27 or later runs/,
     }[failure]);
     assert.match(output, /npm: unavailable; install npm/);
     assert.equal(calls.length, 7, "only version probes run, including npm after the Go failure");

@@ -60,7 +60,7 @@ jobs:
           bun-version: '1.4.4'
       - uses: actions/setup-go@v7.0.0
         with:
-          go-version-file: go.mod
+          go-version: '1.27.4'
           cache: true
       - run: just ci web-deps
       - run: just ci test-web

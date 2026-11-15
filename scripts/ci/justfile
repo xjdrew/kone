@@ -1,5 +1,5 @@
 # Comprehensive CI, native acceptance and advanced maintenance tasks.
-set minimum-version := '1.59.0'
+set minimum-version := '1.55.0'
 set shell := ["bash", "-euo", "pipefail", "-c"]
 set positional-arguments
 

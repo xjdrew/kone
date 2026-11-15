@@ -1,6 +1,6 @@
 module github.com/xjdrew/kone
 
-go 1.27.4
+go 1.27.0
 
 require (
 	github.com/Microsoft/go-winio v0.6.4

@@ -1,21 +1,35 @@
 import { ensureWebDependencies, main, npm } from "./common.mjs";
 import { showHelp } from "./help.mjs";
 
+function minimumVersion(format, minimum) {
+  return value => {
+    const match = value.trim().match(format);
+    if (!match) return false;
+    for (let index = 0; index < minimum.length; index++) {
+      const part = Number(match[index + 1]);
+      if (part !== minimum[index]) return part > minimum[index];
+    }
+    return true;
+  };
+}
+
 export async function initialize(ctx) {
   ctx.log("[1/3] Checking development tools…");
   const tools = [
     ["git", ["--version"], () => true, "Git"],
-    ["go", ["version"], (value) => /^go version go1\.27\.4\s/.test(value), "Go 1.27.4"],
-    ["node", ["--version"], (value) => /^v26\.(\d+)\./.test(value) && Number(value.split(".")[1]) >= 13, "Node 26.13 or later in the 26.x series"],
-    ["bun", ["--version"], (value) => value.trim() === "1.4.4", "Bun 1.4.4"],
-    ["just", ["--version"], (value) => /^just 1\.(\d+)/.test(value) && Number(value.split(".")[1]) >= 59, "just 1.59 or later"],
+    ["go", ["version"], minimumVersion(/^go version go(\d+)\.(\d+)\.(\d+)(?:\s|$)/, [1, 27, 0]), "Go 1.27 or later"],
+    ["node", ["--version"], minimumVersion(/^v(\d+)\.(\d+)\.(\d+)\s*$/, [22, 12, 0]), "Node 22.12 or later"],
+    ["bun", ["--version"], minimumVersion(/^(\d+)\.(\d+)\.(\d+)(?:\+[^\s]+)?\s*$/, [1, 4, 0]), "Bun 1.4 or later"],
+    ["just", ["--version"], minimumVersion(/^just (\d+)\.(\d+)\.(\d+)(?:\s|$)/, [1, 55, 0]), "just 1.55 or later"],
     ["bash", ["--version"], () => true, "Bash (Git Bash on Windows)"],
   ];
   const installed = [];
   const issues = [];
   for (const [command, args, valid, label] of tools) {
     try {
-      const version = ctx.run(command, args, { capture: true });
+      // Inspect the installed SDK without triggering a module-driven download.
+      const settings = command === "go" ? { env: { ...ctx.env, GOTOOLCHAIN: "local" } } : {};
+      const version = ctx.run(command, args, { ...settings, capture: true });
       const detected = version.split(/\r?\n/)[0];
       if (valid(version)) installed.push(`${command}: ${detected}`);
       else issues.push(`${command}: installed ${detected}; requires ${label}. Update this tool.`);
