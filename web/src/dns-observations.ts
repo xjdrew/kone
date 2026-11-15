@@ -1,8 +1,9 @@
 import type { DNSQuery } from "./model";
 
-export function groupDNSQueries(events: DNSQuery[]) {
+export function groupBusinessDNSQueries(events: DNSQuery[]) {
   const groups = new Map<string, DNSQuery[]>();
   for (const event of events) {
+    if (event.origin !== "business") continue;
     const name = event.name.toLowerCase().replace(/\.$/, "");
     const history = groups.get(name) ?? [];
     history.push(event);

@@ -366,6 +366,7 @@ export interface LogPage {
   bytes: number;
 }
 export interface DNSQuery {
+  origin: string;
   id: string;
   time: string;
   name: string;

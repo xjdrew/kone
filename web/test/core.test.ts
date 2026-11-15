@@ -28,7 +28,7 @@ import { configuration, documentFixture, flowFixture, graphFixture } from "./fac
 import english from "../../pkg/locale/catalog/en.json";
 import chinese from "../../pkg/locale/catalog/zh.json";
 import { canEnable } from "../src/readiness";
-import { dnsAnswerLines, dnsQueryAge, groupDNSQueries } from "../src/dns-observations";
+import { dnsAnswerLines, dnsQueryAge, groupBusinessDNSQueries } from "../src/dns-observations";
 import type { DNSQuery, Readiness, ReadinessCheck } from "../src/model";
 
 test("default direct routing needs no consent, but cannot bypass real blockers", () => {
@@ -359,6 +359,7 @@ test("DNS domains keep the latest result, stable order, accurate ages and readab
     time: new Date(now).toISOString(),
     name: "z.example",
     type: "A",
+    origin: "business",
     source: "application",
     scope: "dns",
     transport: "udp",
@@ -371,9 +372,18 @@ test("DNS domains keep the latest result, stable order, accurate ages and readab
   const older = query({ name: "Example.COM.", time: new Date(now - 60000).toISOString() });
   const latest = query({ id: "dns-10", name: "example.com", type: "AAAA" });
   const sameTime = query({ id: "dns-2", name: "EXAMPLE.com", type: "HTTPS" });
-  const events = [query({}), older, sameTime, latest];
+  const internal = query({
+    id: "dns-11",
+    name: "example.com",
+    origin: "internal",
+    time: new Date(now + 1000).toISOString(),
+    real_addresses: ["142.251.8.84"],
+  });
+  const diagnostic = query({ name: "diagnostic.example", origin: "diagnostic" });
+  const unknown = query({ name: "unknown.example", origin: "" });
+  const events = [query({}), older, sameTime, internal, latest, diagnostic, unknown];
   const original = [...events];
-  const groups = groupDNSQueries(events);
+  const groups = groupBusinessDNSQueries(events);
   expect(groups.map(({ name }) => name)).toEqual(["example.com", "z.example"]);
   expect(groups[0]!.history).toEqual([latest, sameTime, older]);
   expect(events).toEqual(original);

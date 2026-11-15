@@ -2,6 +2,8 @@
 
 ## Bugfixes
 
+- Show only business DNS queries in observations so internal resolution and diagnostics cannot replace client Fake-IP results or inflate query history.
+
 - Let Smart settings apply while proxying without implicitly changing the base policy; choose manual outbounds with editable suffix/exact/keyword rules and correctly extracted root domains.
 
 - Keep DNS observations stable with one latest result per domain, inline query history, relative query ages, readable DNS answers and combined resolver/cache information.

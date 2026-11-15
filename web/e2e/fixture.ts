@@ -177,6 +177,7 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
         queries: [
           {
             id: "dns-1",
+            origin: "business",
             name: "www.google.com",
             type: "A",
             time: "2026-11-07T09:30:00Z",

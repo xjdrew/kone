@@ -1,6 +1,6 @@
 import { ConnectionHealth } from "./connection-health";
 import { copyText } from "../browser";
-import { dnsAnswerLines, dnsQueryAge, groupDNSQueries } from "../dns-observations";
+import { dnsAnswerLines, dnsQueryAge, groupBusinessDNSQueries } from "../dns-observations";
 import { Fragment, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -817,7 +817,7 @@ function DNSView({ target }: { target: string }) {
   }, []);
   const rows = useMemo(
     () =>
-      groupDNSQueries(
+      groupBusinessDNSQueries(
         (frozen ?? data.data?.queries ?? []).filter(
           (event) =>
             event.name.toLowerCase().includes(target.toLowerCase()) &&

@@ -887,6 +887,7 @@ test("@compat DNS shows latest results by domain and expands retained history", 
     name,
     type: "A",
     time: new Date(now - seconds * 1000).toISOString(),
+    origin: "business",
     source: "application",
     scope: "dns",
     transport: "udp",
@@ -907,6 +908,19 @@ test("@compat DNS shows latest results by domain and expands retained history", 
       cache: "fake-ip",
     }),
     query("dns-4", "empty.example", 90, { type: "AAAA", cache: "ipv6-policy" }),
+    query("dns-100", "a.example", 0, {
+      origin: "internal",
+      cache: "hit",
+      upstream: "cache",
+      answers: ["a.example. 30 IN A 142.251.8.84"],
+    }),
+    query("dns-101", "internal-only.example", 0, { origin: "internal" }),
+    query("dns-102", "diagnostic-only.example", 0, { origin: "diagnostic" }),
+    query("dns-103", "a.example", 0, {
+      origin: "diagnostic",
+      answers: ["a.example. 30 IN A 198.51.100.44"],
+    }),
+    query("dns-104", "unknown-origin.example", 0, { origin: "" }),
   ];
   await page.route("**/api/v1/dns", (route) =>
     route.fulfill({
@@ -937,11 +951,17 @@ test("@compat DNS shows latest results by domain and expands retained history", 
   await expect(rows.nth(2)).toContainText("NXDOMAIN");
   await expect(rows.nth(2).getByRole("cell").nth(1)).toHaveText("1h");
   await expect(table).not.toContainText("Unknown");
+  await expect(table).not.toContainText("142.251.8.84");
+  await expect(table).not.toContainText("internal-only.example");
+  await expect(table).not.toContainText("diagnostic-only.example");
+  await expect(table).not.toContainText("unknown-origin.example");
   const domain = page.getByRole("button", { name: "a.example 2", exact: true });
   await domain.click();
   await expect(domain).toHaveAttribute("aria-expanded", "true");
   const history = page.getByRole("table", { name: "Query history for a.example", exact: true });
   await expect(history.locator("tbody > tr")).toHaveCount(2);
+  await expect(history).not.toContainText("142.251.8.84");
+  await expect(history).not.toContainText("198.51.100.44");
   await expect(history.locator("tbody > tr").nth(1)).toContainText("2001:db8::1");
   await history.getByRole("button", { name: "Technical details", exact: true }).nth(0).click();
   await expect(page.locator(".inspector")).toContainText("NOERROR");
