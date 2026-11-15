@@ -129,6 +129,8 @@ Windows 支持 `system = true`，要求 `listen-port = 53`。DNS 监听就绪后
 
 `policy.rule-version = 2` 依次执行系统保护、原始域名/关联 CNAME、IP、FINAL。最多跟随 16 个 CNAME、收集 64 个相关地址；无关 Answer/Additional 不参与决定。DNS 证据缺失或失败保持明确状态，不能视作 IP 未命中；业务协议/端口未出现时只建立捕获入口。获准地址写入决定，直连/代理共用同一候选，不由代理重新解析选择其他 IP。
 
+新建/重置管理配置默认 IPv6 Fake-IP 子网为 fd00:10:192::/64，网关 ::1、协议栈保留 ::2，Fake-AAAA 与原生 IPv6 出口是否可达分开。ULA CIDR 输入自动转换为首个主机地址/前缀供 TUN 使用；地址池仍受 DnsIPPoolMaxSpace 上限约束。
+
 默认直连的纯兜底可以返回真实地址；明确域名/IP 决定以及全局捕获下的 direct 例外保留 Fake-IP。真实地址证据按 TTL 过期，新流重新查询；虚拟地址的域名身份独立保留。
 
 ```mermaid

@@ -295,6 +295,8 @@
     "settings.tun": "TUN 名称",
     "settings.stack": "网络栈",
     "settings.network": "IPv4 Fake-IP 网段",
+    "settings.ipv6Gateway": "TUN 本机网关：{{gateway}}",
+    "settings.ipv6Hint": "填写 ULA CIDR 子网，例如 fd00:10:192::/64，首个主机地址作为网关；留空关闭。",
     "settings.ipv6": "IPv6 Fake-IP 网段",
     "settings.capture4": "接管全部 IPv4 流量",
     "settings.capture6": "接管全部 IPv6 流量",

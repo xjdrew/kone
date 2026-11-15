@@ -41,7 +41,7 @@ func TestIPv6ConfigurationBoundsAndPlatformAdmission(t *testing.T) {
 		require.True(t, one.DNSStatus().IPv6)
 		require.NoError(t, one.Close())
 	}
-	for _, network := range []string{"2001:db8::1/64", "fd7a:203::/64", "fd7a:203::1/63", "fd7a:203::1/121", "192.0.2.1/24"} {
+	for _, network := range []string{"2001:db8::1/64", "fd00::/6", "fd00::/127", "fd00::1/128", "fd00::3/126", "192.0.2.1/24"} {
 		_, err := ParseConfig([]byte("[core]\nipv6-network='" + network + "'"))
 		require.Error(t, err)
 	}
@@ -53,6 +53,19 @@ func TestIPv6ConfigurationBoundsAndPlatformAdmission(t *testing.T) {
 	} {
 		_, err := ParseConfig([]byte(text))
 		require.Error(t, err, text)
+	}
+	for _, tc := range []struct{ input, gateway string }{
+		{"FD00::/8", "fd00::1/8"},
+		{"fd00:10:192::/64", "fd00:10:192::1/64"},
+		{"fd00:10:192::1/64", "fd00:10:192::1/64"},
+		{"fc00::/7", "fc00::1/7"},
+		{"fd00::/126", "fd00::1/126"},
+		{"fd00::9/121", "fd00::9/121"},
+	} {
+		parsed, err := ParseManagedConfig([]byte("[core]\nipv6-network='" + tc.input + "'"))
+		require.NoError(t, err, tc.input)
+		require.Equal(t, tc.gateway, parsed.Core.IPv6Network)
+		require.Equal(t, netip.MustParsePrefix(tc.gateway), deviceOptions(parsed.Core).Inet6Address[0])
 	}
 	options := deviceOptions(configuration.Core)
 	require.Equal(t, []netip.Prefix{netip.MustParsePrefix(configuration.Core.IPv6Network)}, options.Inet6Address)

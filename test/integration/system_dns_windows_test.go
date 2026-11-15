@@ -121,7 +121,9 @@ func TestSystemWindowsDNS(t *testing.T) {
 				t.Cleanup(func() {
 					windowsDNSNativeScript(t, `Remove-DnsClientNrptRule -Name $p.Name -Force`, map[string]string{"Name": private})
 				})
-				one, done, cancel := startWindowsDNSCapture(t, windowsDNSNativeConfig(t, stack))
+				cfg := windowsDNSNativeConfig(t, stack)
+				cfg.Core.IPv6Network = "fd00:10:192::/64"
+				one, done, cancel := startWindowsDNSCapture(t, cfg)
 				lease := windowsDNSLease(t)
 				require.Equal(t, "active", lease.Status)
 				require.False(t, lease.CanRecover)
@@ -132,6 +134,9 @@ func TestSystemWindowsDNS(t *testing.T) {
 				// an explicit -Server would bypass precisely the feature under test.
 				answer := windowsDNSNativeScript(t, `Resolve-DnsName -Name $p.Name -Type A -DnsOnly -NoHostsFile | Where-Object Type -eq 'A' | Select-Object -ExpandProperty IPAddress`, map[string]string{"Name": fmt.Sprintf("%d.kone-resolver.invalid", time.Now().UnixNano())})
 				require.True(t, strings.HasPrefix(answer, "10.207.0."), "system resolver did not reach KONE Fake-IP: %s", answer)
+				answer6 := windowsDNSNativeScript(t, `Resolve-DnsName -Name $p.Name -Type AAAA -DnsOnly -NoHostsFile | Where-Object Type -eq 'AAAA' | Select-Object -ExpandProperty IPAddress`, map[string]string{"Name": fmt.Sprintf("%d.kone-resolver.invalid", time.Now().UnixNano())})
+				require.True(t, strings.HasPrefix(answer6, "fd00:10:192:"), "system resolver did not return the default Fake-AAAA: %s", answer6)
+
 				windowsDNSNativeScript(t, `$r=Get-DnsClientNrptRule -Name $p.Name; if([string]$r.NameServers -cne '192.0.2.53'){throw 'private policy changed'}`, map[string]string{"Name": private})
 				cancel()
 				require.NoError(t, <-done)

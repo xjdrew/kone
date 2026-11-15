@@ -997,3 +997,33 @@ test("@compat DNS shows latest results by domain and expands retained history", 
     true,
   );
 });
+
+test("@compat IPv6 subnet settings accept network CIDRs and show the TUN gateway", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  data.document.config.core["ipv6-network"] = "fd00:10:192::1/64";
+  await page.goto("/#/settings?section=capture");
+  const subnet = page.getByRole("textbox", { name: "IPv6 Fake-IP subnet", exact: true });
+  await expect(subnet).toHaveValue("fd00:10:192::/64");
+  await expect(page.getByText("TUN gateway: fd00:10:192::1/64", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  await subnet.fill("FD00::/8");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(subnet).toHaveValue("fd00:10:192::/64");
+
+  for (const [input, gateway] of [
+    ["FD00::/8", "fd00::1/8"],
+    ["fd00:10:192::/64", "fd00:10:192::1/64"],
+  ]) {
+    await subnet.fill(input!);
+    await expect(page.getByText(`TUN gateway: ${gateway}`, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect.poll(() => data.document.config.core["ipv6-network"]).toBe(gateway);
+    await page.reload();
+    await expect(subnet).toHaveValue(input!.toLowerCase());
+  }
+  await subnet.fill("");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => data.document.config.core["ipv6-network"]).toBe("");
+});

@@ -255,8 +255,12 @@ func managementDefaults() *kone.KoneConfig {
 	cfg.Policy.RuleVersion = 2
 	cfg.DNS.PersistentFakeIP = true
 	cfg.Core.IPv6Network = kone.DefaultIPv6Network()
-	if ipv4, ipv6, err := kone.FreshFakeIPNetworks(cfg); err == nil {
-		cfg.Core.Network, cfg.Core.IPv6Network = ipv4, ipv6
+	// Fresh IPv4 avoids legacy volatile ownership; new IPv6 profiles use the
+	// standard default pool, whose persistent ownership is verified at startup.
+	ipv4Only := *cfg
+	ipv4Only.Core.IPv6Network = ""
+	if ipv4, _, err := kone.FreshFakeIPNetworks(&ipv4Only); err == nil {
+		cfg.Core.Network = ipv4
 	}
 	cfg.Rule = []kone.RuleConfig{{ID: "rule-default-direct", Source: "default", Schema: "FINAL", Outbound: kone.BuiltinDirect}}
 	cfg.DNS.System = kone.SupportsSystemDNS()

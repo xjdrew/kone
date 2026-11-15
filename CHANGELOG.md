@@ -2,6 +2,8 @@
 
 ## Bugfixes
 
+- Accept standard IPv6 ULA subnets, show the derived TUN gateway, and default new/reset management profiles to fd00:10:192::/64 for Fake-AAAA without a native IPv6 uplink.
+
 - Show only business DNS queries in observations so internal resolution and diagnostics cannot replace client Fake-IP results or inflate query history.
 
 - Let Smart settings apply while proxying without implicitly changing the base policy; choose manual outbounds with editable suffix/exact/keyword rules and correctly extracted root domains.

@@ -36,3 +36,19 @@ func TestDNSPoolAddressBoundariesAndReuse(t *testing.T) {
 	}
 	require.Equal(t, DnsIPPoolMaxSpace, NewDnsIPPool(netip.MustParsePrefix("10.0.0.1/8")).Capacity())
 }
+
+func TestIPv6PoolSupportsStandardPrefixesWithBoundedAllocation(t *testing.T) {
+	for _, value := range []string{"fd00::1/8", "fd00:10:192::1/64", "fc00::1/7", "fd00::1/121", "fd00::1/126"} {
+		prefix := netip.MustParsePrefix(value)
+		pool := NewDnsIPPool(prefix)
+		pool.reserve(prefix.Addr().Next())
+		require.LessOrEqual(t, pool.Capacity(), DnsIPPoolMaxSpace)
+		require.Positive(t, pool.Capacity())
+		address := pool.Alloc("google.com")
+		require.True(t, address.Is6(), value)
+		require.True(t, prefix.Contains(address), value)
+		require.NotEqual(t, prefix.Masked().Addr(), address)
+		require.NotEqual(t, prefix.Addr(), address)
+		require.NotEqual(t, prefix.Addr().Next(), address)
+	}
+}

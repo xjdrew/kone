@@ -295,6 +295,8 @@
     "settings.tun": "TUN name",
     "settings.stack": "Network stack",
     "settings.network": "IPv4 Fake-IP subnet",
+    "settings.ipv6Gateway": "TUN gateway: {{gateway}}",
+    "settings.ipv6Hint": "ULA CIDR subnet, e.g. fd00:10:192::/64. The first host is the gateway. Leave blank to disable.",
     "settings.ipv6": "IPv6 Fake-IP subnet",
     "settings.capture4": "Capture all IPv4 traffic",
     "settings.capture6": "Capture all IPv6 traffic",

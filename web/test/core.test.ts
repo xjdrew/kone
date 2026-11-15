@@ -21,6 +21,7 @@ import {
   normalizeRuleTarget,
   ruleCoversHost,
 } from "../src/target-rule";
+import { ipv6Subnet } from "../src/ipv6-subnet";
 import { diagnosticRequest } from "../src/diagnostic-request";
 import { graphLayout } from "../src/graph-layout";
 import { ApiError, clearSession, request, setSession } from "../src/api/client";
@@ -464,4 +465,30 @@ test("outbound rules preview suffix/keyword scope and reuse only matching perman
   const permanent = selectTargetOutbound(config, suffix, "direct");
   expect(permanent.rules[0]!["expires-at"]).toBeUndefined();
   expect(permanent.rules[0]!.id).not.toBe("rule-google");
+});
+
+test("IPv6 subnet inputs show canonical networks and usable TUN gateways", () => {
+  for (const [input, subnet, gateway] of [
+    ["FD00::/8", "fd00::/8", "fd00::1/8"],
+    ["fd00:10:192::/64", "fd00:10:192::/64", "fd00:10:192::1/64"],
+    ["fd00:0010:0192:0:0:0:0:1/64", "fd00:10:192::/64", "fd00:10:192::1/64"],
+    ["fc00::/7", "fc00::/7", "fc00::1/7"],
+    ["fd00::/126", "fd00::/126", "fd00::1/126"],
+    ["fd00::9/121", "fd00::/121", "fd00::9/121"],
+  ])
+    expect(ipv6Subnet(input!)).toEqual({ subnet, gateway });
+  for (const input of [
+    "",
+    "fd00::",
+    "fd00::/6",
+    "fd00::/127",
+    "fd00::/128",
+    "fd00::3/126",
+    "2001:db8::/64",
+    "::ffff:192.0.2.1/64",
+    "192.0.2.1/24",
+    "fd00:xyz::/64",
+    "fd00::/999",
+  ])
+    expect(ipv6Subnet(input)).toBeUndefined();
 });
