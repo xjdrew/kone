@@ -2,6 +2,8 @@
 
 ## Bugfixes
 
+- Build with Go 1.27.4 to include the net/http security fix for GO-2026-6859.
+
 - Make Recovery inspect automatically, explain blocked actions and resource ownership, and show recovery progress/results with automatic reinspection.
 
 # 2026/11/08
