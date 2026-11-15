@@ -475,6 +475,13 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 		apiError(w, 404, "not_found", "Operation expired or unknown")
 	case path == "rules/simulate" && r.Method == http.MethodPost:
 		c.simulate(w, r)
+	case path == "rules/target" && r.Method == http.MethodGet:
+		target, err := suggestRuleTarget(r.URL.Query().Get("target"))
+		if err != nil {
+			apiError(w, 400, "target", err.Error())
+			return
+		}
+		writeJSON(w, 200, target)
 	case path == "rules/exact" && r.Method == http.MethodPost:
 		c.exactRule(w, r)
 	case path == "sessions" && r.Method == http.MethodGet:

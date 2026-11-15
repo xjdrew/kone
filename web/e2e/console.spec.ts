@@ -623,11 +623,14 @@ test("@compat health combines ports and saves an outbound choice without a probe
   const data = await fixture(page);
   data.state.data_state = "running";
   data.state.state = "running";
+  data.document.capture_locked = true;
+  data.document.config.policy = undefined;
+  data.document.config.rules[0]!.outbound = "direct";
   const actions: string[] = [];
   const entry = {
     id: 1,
     generation: 2,
-    domain: "service.example",
+    domain: "www.google.com",
     scope: "",
     status: "attention",
     reason: "web_unreachable",
@@ -685,27 +688,54 @@ test("@compat health combines ports and saves an outbound choice without a probe
   });
   await page.goto("/#/traffic?view=overview");
   const health = page.getByRole("region", { name: "Connection health" });
-  await expect(health.getByRole("button", { name: "service.example", exact: true })).toBeVisible();
+  await expect(health.getByRole("button", { name: "www.google.com", exact: true })).toBeVisible();
   await expect(health.getByRole("columnheader", { name: "Port status", exact: true })).toHaveCount(
     1,
   );
   await expect(page.getByText("Recent failed connection evidence", { exact: true })).toHaveCount(0);
   await health.getByRole("button", { name: "Choose outbound", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Local HTTP", exact: true }).click();
+  const editor = health.getByRole("group", { name: "Choose outbound", exact: true });
+  await expect(editor.getByLabel("Match type", { exact: true })).toHaveValue("DOMAIN-SUFFIX");
+  const matchType = editor.getByLabel("Match type", { exact: true });
+  const pattern = editor.getByLabel("Match value", { exact: true });
+  await matchType.selectOption("DOMAIN-KEYWORD");
+  await expect(pattern).toHaveValue("google");
+  await expect(editor).toContainText("every domain containing");
+  await matchType.selectOption("DOMAIN");
+  await expect(pattern).toHaveValue("www.google.com");
+  await matchType.selectOption("DOMAIN-SUFFIX");
+  await pattern.fill("other.example");
+  await expect(editor.getByRole("button", { name: "Local HTTP", exact: true })).toBeDisabled();
+  await pattern.fill("google.com");
+
+  await editor.getByRole("button", { name: "Local HTTP", exact: true }).click();
   await expect.poll(() => actions).toEqual(["handled"]);
   expect(data.document.config.rules[0]).toMatchObject({
-    type: "DOMAIN",
-    pattern: "service.example",
+    type: "DOMAIN-SUFFIX",
+    pattern: "google.com",
     outbound: "Local HTTP",
   });
-  await expect(health.getByRole("button", { name: "service.example", exact: true })).toHaveCount(0);
+  expect(
+    data.document.config.rules.filter(
+      (rule) => rule.type === "DOMAIN-SUFFIX" && rule.pattern === "google.com",
+    ),
+  ).toHaveLength(1);
+  expect(data.document.config.rules[0]!.id).toBe("rule-google");
+  await expect(health.getByRole("button", { name: "www.google.com", exact: true })).toHaveCount(0);
+  const liveAuto = health.getByRole("checkbox", {
+    name: "Automatically select outbounds",
+    exact: true,
+  });
+  await liveAuto.check();
+  await expect.poll(() => data.document.config.policy?.smart?.["auto-enabled"]).toBe(true);
+  expect(data.document.config).not.toHaveProperty("policy.mode");
+  expect(data.state.data_state).toBe("running");
+  await liveAuto.uncheck();
+  await expect.poll(() => data.document.config.policy?.smart?.["auto-enabled"]).toBe(false);
+
   await health.getByRole("button", { name: "History", exact: true }).click();
-  await expect(health.getByRole("button", { name: "service.example", exact: true })).toBeVisible();
-  data.document.config.policy = {
-    mode: "direct-first",
-    ...data.document.config.policy,
-    "rule-version": 1,
-  };
+  await expect(health.getByRole("button", { name: "www.google.com", exact: true })).toBeVisible();
+  data.document.config.policy = { "rule-version": 1 };
   data.state.data_state = "paused";
   data.state.state = "paused";
   await page.reload();

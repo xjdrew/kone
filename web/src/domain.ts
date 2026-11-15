@@ -1,4 +1,5 @@
 import { newID } from "./browser";
+import { matchingTargetRules, type RuleMatch } from "./target-rule";
 import type { Flow, Rule, Document, SaveRequest, Config, Credentials, SankeyPath } from "./model";
 
 let formattingLocale = "en";
@@ -57,14 +58,10 @@ export function exactRule(target: string, protocol?: string): Rule {
   };
 }
 // A health-row outbound choice is an explicit persistent target rule.
-export function selectTargetOutbound(config: Config, target: string, outbound: string): Config {
+export function selectTargetOutbound(config: Config, match: RuleMatch, outbound: string): Config {
   const next = structuredClone(config);
-  const draft = { ...exactRule(target), outbound, source: "user" };
-  const matches = next.rules.filter(
-    (r) =>
-      r.type === draft.type &&
-      (r.type === "DOMAIN" ? targetHost(r.pattern ?? "").host : r.pattern) === draft.pattern,
-  );
+  const draft = { id: newID(), ...match, outbound, source: "user" };
+  const matches = matchingTargetRules(next, match);
   if (matches.length) {
     for (const rule of matches) rule.outbound = outbound;
     next.rules = [...matches, ...next.rules.filter((r) => !matches.includes(r))];

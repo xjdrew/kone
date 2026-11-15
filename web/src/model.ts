@@ -112,7 +112,7 @@ export interface Config {
       candidates?: string[];
       "allow-direct"?: boolean;
     };
-    mode: string;
+    mode?: string;
     "ipv4-only"?: boolean;
     "udp-exception"?: boolean;
   };
@@ -387,6 +387,12 @@ export interface DNSQuery {
   real_addresses?: string[];
   answers?: string[];
   answers_truncated?: boolean;
+}
+export interface RuleTarget {
+  host: string;
+  type: string;
+  pattern: string;
+  keyword?: string;
 }
 export interface OutboundHealth {
   id: string;

@@ -15,6 +15,12 @@ import {
   rememberDiagnostic,
   diagnosticElapsed,
 } from "../src/diagnostic-history";
+import {
+  matchingTargetRules,
+  normalizeMatchPattern,
+  normalizeRuleTarget,
+  ruleCoversHost,
+} from "../src/target-rule";
 import { diagnosticRequest } from "../src/diagnostic-request";
 import { graphLayout } from "../src/graph-layout";
 import { ApiError, clearSession, request, setSession } from "../src/api/client";
@@ -322,7 +328,11 @@ test("health outbound choice updates exact rules in place and takes precedence o
     { ...exactRule("example.com"), type: "DOMAIN-SUFFIX", outbound: "direct" },
     rule,
   );
-  const next = selectTargetOutbound(config, "example.com", "Local HTTP");
+  const next = selectTargetOutbound(
+    config,
+    { type: "DOMAIN", pattern: "example.com" },
+    "Local HTTP",
+  );
   expect(next.rules.filter((r) => r.id === "existing")).toHaveLength(1);
   expect(next.rules[0]).toMatchObject({
     id: "existing",
@@ -332,7 +342,7 @@ test("health outbound choice updates exact rules in place and takes precedence o
   });
   expect(next.rules[1]?.type).toBe("DOMAIN-SUFFIX");
   expect(config.rules[1]?.outbound).toBe("direct");
-  const added = selectTargetOutbound(next, "new.example", "direct");
+  const added = selectTargetOutbound(next, { type: "DOMAIN", pattern: "new.example" }, "direct");
   expect(added.rules[0]).toMatchObject({
     type: "DOMAIN",
     pattern: "new.example",
@@ -399,4 +409,49 @@ test("DNS domains keep the latest result, stable order, accurate ages and readab
       query({ virtual_addresses: ["10.192.0.4"], real_addresses: ["10.192.0.4", "192.0.2.1"] }),
     ),
   ).toEqual(["Fake-IP 10.192.0.4", "192.0.2.1"]);
+});
+
+test("outbound rules preview suffix/keyword scope and reuse only matching permanent rules", () => {
+  expect(normalizeRuleTarget("www.食狮.com.cn:443")).toBe("www.xn--85x722f.com.cn:443");
+  expect(normalizeRuleTarget("www。google。com。")).toBe("www.google.com.");
+  expect(normalizeRuleTarget("[::1]:443")).toBe("[::1]:443");
+  expect(normalizeMatchPattern("DOMAIN-SUFFIX", " Google.COM. ")).toBe("google.com");
+  expect(normalizeMatchPattern("DOMAIN", "食狮.com.cn")).toBe("xn--85x722f.com.cn");
+  expect(normalizeMatchPattern("DOMAIN-KEYWORD", "127")).toBe("127");
+  expect(normalizeMatchPattern("DOMAIN-KEYWORD", "google.")).toBe("google.");
+  expect(normalizeMatchPattern("DOMAIN", "https://x.com")).toBe("");
+  expect(ruleCoversHost("www.google.com", { type: "DOMAIN-SUFFIX", pattern: "google.com" })).toBe(
+    true,
+  );
+  expect(ruleCoversHost("notgoogle.com", { type: "DOMAIN-SUFFIX", pattern: "google.com" })).toBe(
+    false,
+  );
+  expect(ruleCoversHost("www.google.com", { type: "DOMAIN", pattern: "google.com" })).toBe(false);
+  expect(ruleCoversHost("x.com", { type: "DOMAIN-KEYWORD", pattern: "x" })).toBe(true);
+  expect(ruleCoversHost("x.com", { type: "DOMAIN-KEYWORD", pattern: "" })).toBe(false);
+  expect(ruleCoversHost("192.0.2.1", { type: "IP-CIDR", pattern: "192.0.2.1/32" })).toBe(true);
+  expect(ruleCoversHost("2001:db8::1", { type: "IP-CIDR6", pattern: "2001:db8::1/128" })).toBe(
+    true,
+  );
+  const config = configuration();
+  config.rules.unshift({ ...exactRule("www.google.com"), id: "exact", outbound: "direct" });
+  const suffix = { type: "DOMAIN-SUFFIX", pattern: "google.com" };
+  const next = selectTargetOutbound(config, suffix, "direct");
+  expect(matchingTargetRules(next, suffix)).toHaveLength(1);
+  expect(next.rules[0]).toMatchObject({ id: "rule-google", ...suffix, outbound: "direct" });
+  expect(next.rules[1]).toMatchObject({ id: "exact", type: "DOMAIN", pattern: "www.google.com" });
+  const keyword = selectTargetOutbound(
+    next,
+    { type: "DOMAIN-KEYWORD", pattern: "google" },
+    "Local HTTP",
+  );
+  expect(keyword.rules[0]).toMatchObject({
+    type: "DOMAIN-KEYWORD",
+    pattern: "google",
+    outbound: "Local HTTP",
+  });
+  config.rules[1]!["expires-at"] = "2020-01-01T00:00:00Z";
+  const permanent = selectTargetOutbound(config, suffix, "direct");
+  expect(permanent.rules[0]!["expires-at"]).toBeUndefined();
+  expect(permanent.rules[0]!.id).not.toBe("rule-google");
 });

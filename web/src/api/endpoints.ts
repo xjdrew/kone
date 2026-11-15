@@ -1,4 +1,5 @@
 import { query, request } from "./client";
+import { normalizeRuleTarget } from "../target-rule";
 import type {
   Document,
   RuntimeState,
@@ -91,6 +92,11 @@ export const api = {
       signal,
     }),
   policy: () => request<PolicyState>("/policy"),
+  ruleTarget: (target: string, signal?: AbortSignal) =>
+    request<import("../model").RuleTarget>(
+      `/rules/target?target=${encodeURIComponent(normalizeRuleTarget(target))}`,
+      { signal },
+    ),
   policyPreview: (body: PolicyRequest) =>
     request<PolicyPlan>("/policy/preview", { method: "POST", body }),
   policyApply: (body: PolicyRequest) => request<Document>("/policy", { method: "PUT", body }),

@@ -2,6 +2,8 @@
 
 ## Bugfixes
 
+- Let Smart settings apply while proxying without implicitly changing the base policy; choose manual outbounds with editable suffix/exact/keyword rules and correctly extracted root domains.
+
 - Keep DNS observations stable with one latest result per domain, inline query history, relative query ages, readable DNS answers and combined resolver/cache information.
 
 - Keep Traffic usable during capture startup and empty helper snapshots by returning empty arrays consistently and handling null collections in Web responses.

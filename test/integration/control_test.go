@@ -116,6 +116,8 @@ func TestManagementConfigurationCaptureAndPauseEndToEnd(t *testing.T) {
 	require.Equal(t, 200, status)
 	inbound := doc["inbound"].(map[string]any)
 	inbound["enabled"] = true
+	// A saved policy can omit mode; changing Smart must not implicitly set it.
+	doc["config"].(map[string]any)["policy"] = map[string]any{"rule-version": 2}
 	status, _ = call("PUT", "config", map[string]any{"base_version": doc["version"], "config": doc["config"], "inbound": inbound, "direct_only_confirmed": true})
 	require.Equal(t, 200, status)
 	for _, action := range []string{"start", "pause", "start", "stop"} {
@@ -130,15 +132,49 @@ func TestManagementConfigurationCaptureAndPauseEndToEnd(t *testing.T) {
 			expectedState = "running"
 		}
 		require.Equal(t, expectedState, state["data_state"], "%s: control=%v data=%v", action, state["control_state"], state["data_state"])
+		if action == "start" {
+			for _, enabled := range []bool{true, false} {
+				status, live := call("GET", "config", nil)
+				require.Equal(t, 200, status)
+				config := live["config"].(map[string]any)
+				policy := config["policy"].(map[string]any)
+				require.Empty(t, policy["mode"])
+				policy["smart"] = map[string]any{"auto-enabled": enabled}
+				status, saved := call("PUT", "config", map[string]any{"base_version": live["version"], "config": config, "inbound": live["inbound"]})
+				require.Equal(t, 200, status, "%#v", saved)
+				require.Equal(t, true, saved["applied"])
+				require.Equal(t, saved["version"], saved["running_version"])
+			}
+			status, suggested := call("GET", "rules/target?target=news.china.gov.cn", nil)
+			require.Equal(t, 200, status)
+			require.Equal(t, "DOMAIN-SUFFIX", suggested["type"])
+			require.Equal(t, "china.gov.cn", suggested["pattern"])
+			require.Equal(t, "china", suggested["keyword"])
+			status, live := call("GET", "config", nil)
+			require.Equal(t, 200, status)
+			config := live["config"].(map[string]any)
+			rules := []any{map[string]any{"id": "suffix-manual", "type": suggested["type"], "pattern": suggested["pattern"], "outbound": "direct"}}
+			for _, rule := range config["rules"].([]any) {
+				if rule.(map[string]any)["id"] != "suffix-manual" {
+					rules = append(rules, rule)
+				}
+			}
+			config["rules"] = rules
+			status, saved := call("PUT", "config", map[string]any{"base_version": live["version"], "config": config, "inbound": live["inbound"]})
+			require.Equal(t, 200, status, "%#v", saved)
+			require.Equal(t, true, saved["applied"])
+			require.Equal(t, saved["version"], saved["running_version"])
+		}
 	}
 	require.EqualValues(t, 2, dnsInspections.Load(), "both starts must use the injected DNS inspector")
 	status, state := call("GET", "state", nil)
 	require.Equal(t, 200, status)
 	require.Equal(t, "paused", state["data_state"])
+	finalVersion := c.State().SavedVersion
 	require.NoError(t, c.Close())
 	reopened, err := control.New(control.Options{Directory: directory})
 	require.NoError(t, err)
 	defer reopened.Close()
 	require.Equal(t, "paused", reopened.State().State)
-	require.Equal(t, uint64(2), reopened.State().SavedVersion)
+	require.Equal(t, finalVersion, reopened.State().SavedVersion)
 }
