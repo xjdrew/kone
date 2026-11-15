@@ -103,6 +103,8 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
       - name: Check out workflow task definitions
         if: ${{ inputs.ref != '' }}
         uses: actions/checkout@v7.0.1
