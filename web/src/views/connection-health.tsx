@@ -3,10 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { useConsole } from "../context";
 import { request } from "../api/client";
-import { ActionMenu, Button, ErrorNotice, Toggle } from "../components/ui";
+import { Button, ErrorNotice, Toggle } from "../components/ui";
 
 import { selectTargetOutbound, timestamp } from "../domain";
 import styles from "./connection-health.module.css";
+import { TargetOutbound } from "./target-outbound";
+import type { RuleMatch } from "../target-rule";
 interface Result {
   dns_code?: string;
   message?: string;
@@ -54,6 +56,7 @@ export function ConnectionHealth() {
   const [view, setView] = useState("attention");
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<number>();
+  const [editing, setEditing] = useState<number>();
   const [busy, setBusy] = useState(false);
   const [autoDesired, setAutoDesired] = useState<boolean>();
   const [error, setError] = useState<unknown>();
@@ -64,7 +67,8 @@ export function ConnectionHealth() {
         `/connection-health?offset=${offset}&limit=100&status=${view}&search=${encodeURIComponent(search)}`,
         { signal },
       ),
-    refetchInterval: 3000,
+    refetchInterval: editing === undefined ? 3000 : false,
+    refetchOnWindowFocus: editing === undefined,
     enabled: !!doc,
   });
   const smart = doc?.config.policy?.smart;
@@ -82,7 +86,7 @@ export function ConnectionHealth() {
     setError(undefined);
     try {
       const config = structuredClone(doc.config);
-      config.policy = { mode: "direct-first", ...config.policy };
+      config.policy = { ...config.policy };
       config.policy.smart = { enabled: false, ...config.policy.smart, ...values };
       await context.save(doc, config);
     } catch (cause) {
@@ -117,12 +121,12 @@ export function ConnectionHealth() {
       setBusy(false);
     }
   }
-  async function chooseOutbound(e: Incident, outbound: string) {
+  async function chooseOutbound(e: Incident, match: RuleMatch, outbound: string) {
     if (!doc) return;
     setBusy(true);
     setError(undefined);
     try {
-      const result = await context.save(doc, selectTargetOutbound(doc.config, e.domain, outbound));
+      const result = await context.save(doc, selectTargetOutbound(doc.config, match, outbound));
       if (!result.apply_error) {
         await request("/connection-health", {
           method: "POST",
@@ -136,6 +140,7 @@ export function ConnectionHealth() {
         });
       }
       await query.refetch();
+      if (!result.apply_error) setEditing(undefined);
     } catch (cause) {
       setError(cause);
     } finally {
@@ -193,7 +198,6 @@ export function ConnectionHealth() {
                         : candidateIDs.filter((id) => id !== o.id);
                       const config = structuredClone(doc.config);
                       config.policy = {
-                        mode: "direct-first",
                         ...config.policy,
                         "preferred-proxy-id":
                           config.policy?.mode === "proxy-first"
@@ -220,7 +224,7 @@ export function ConnectionHealth() {
           </div>
         </details>
       </div>
-      <ErrorNotice error={error ?? query.error} />
+      <ErrorNotice error={query.error ?? (editing === undefined ? error : undefined)} />
       {query.data?.error && (
         <div role="alert" className="dangerText">
           {t("health.storageError")}
@@ -355,25 +359,41 @@ export function ConnectionHealth() {
                         >
                           {t("health.recheck")}
                         </Button>
-                        <ActionMenu
-                          label={t("health.chooseOutbound")}
-                          description={t("health.outboundScope", { target: e.domain })}
-                          actions={[{ name: "direct", enabled: true }, ...doc.config.outbounds]
-                            .filter((o) => o.enabled !== false)
-                            .map((o) => ({
-                              id: o.name,
-                              label: o.name,
-                              disabled: busy || !context.admin,
-                              run: () => {
-                                void chooseOutbound(e, o.name);
-                              },
-                            }))}
+                        <Button
+                          aria-expanded={editing === e.id}
+                          aria-controls={`health-rule-${e.id}`}
+                          disabled={busy || !context.admin}
+                          onClick={() => {
+                            setError(undefined);
+                            setEditing(editing === e.id ? undefined : e.id);
+                          }}
                         >
-                          {t("health.chooseOutbound")} ▾
-                        </ActionMenu>
+                          {t("health.chooseOutbound")}
+                        </Button>
                       </div>
                     </td>
                   </tr>
+                  {editing === e.id && (
+                    <tr className={styles.ruleRow}>
+                      <td colSpan={5} id={`health-rule-${e.id}`}>
+                        <TargetOutbound
+                          target={e.domain}
+                          config={doc.config}
+                          busy={busy}
+                          error={error}
+                          onSelect={(match, outbound) => void chooseOutbound(e, match, outbound)}
+                          onClose={() => {
+                            setEditing(undefined);
+                            region.current
+                              ?.querySelector<HTMLButtonElement>(
+                                `[aria-controls="health-rule-${e.id}"]`,
+                              )
+                              ?.focus();
+                          }}
+                        />
+                      </td>
+                    </tr>
+                  )}
                   {expanded === e.id && (
                     <tr>
                       <td colSpan={5}>

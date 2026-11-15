@@ -131,6 +131,7 @@ func TestDNSTruncationRetriesTCPAndRecordsActualResolver(t *testing.T) {
 	require.Equal(t, "tcp", events[0].UpstreamTransport)
 	require.Equal(t, address, events[0].Upstream)
 	require.Equal(t, "NOERROR", events[0].Status)
+	require.Equal(t, []string{msg.Answer[0].String()}, events[0].Answers)
 }
 
 func TestDNSClientUDPAndTCPShareFakeIPPolicy(t *testing.T) {
@@ -156,6 +157,8 @@ func TestDNSClientUDPAndTCPShareFakeIPPolicy(t *testing.T) {
 	require.Equal(t, "tcp", events[0].Transport)
 	require.Equal(t, "udp", events[1].Transport)
 	require.Equal(t, []string{virtual}, events[0].VirtualAddresses)
+	require.Len(t, events[0].Answers, 1)
+	require.Contains(t, events[0].Answers[0], virtual)
 	require.Empty(t, events[0].RealAddresses)
 	require.Empty(t, events[0].Upstream)
 }

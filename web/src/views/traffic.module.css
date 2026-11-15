@@ -63,3 +63,69 @@
   margin: 0;
   color: var(--muted);
 }
+
+.dnsQuery {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.dnsCount {
+  color: var(--muted);
+  font-size: var(--font-small);
+  font-variant-numeric: tabular-nums;
+}
+.dnsRawAnswers {
+  white-space: pre-wrap;
+}
+.dnsAnswers {
+  min-width: 180px;
+  max-width: 300px;
+}
+.dnsAnswer,
+.dnsSecondary,
+.dnsError {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 300px;
+}
+.dnsSecondary {
+  color: var(--muted);
+  font-size: var(--font-small);
+  margin-top: 3px;
+}
+.dnsFailure {
+  color: var(--danger);
+  font-family: var(--mono);
+}
+.dnsError {
+  display: block;
+  font-family: inherit;
+}
+.dnsExpanded > td[colspan] {
+  padding: 0 12px 10px 22px;
+  background: var(--bg);
+}
+.dnsHistory {
+  border-inline-start: 2px solid var(--line);
+  background: var(--surface);
+}
+.dnsHistoryHeading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  padding: 9px 12px;
+  font-size: var(--font-small);
+}
+.dnsHistoryHeading strong {
+  font-weight: 500;
+}
+.dnsHistoryHeading span {
+  color: var(--muted);
+}
+.dnsHistoryScroll {
+  max-height: 340px;
+  overflow: auto;
+}

@@ -77,6 +77,17 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
     if (path === "/config" && method === "GET") return respond(data.document);
     if (path === "/config" && method === "PUT") {
       const input = body as SaveRequest;
+      if (
+        data.state.data_state === "running" &&
+        (input.config.policy?.mode !== data.document.config.policy?.mode ||
+          ["core", "dns", "general", "geoip"].some(
+            (key) =>
+              JSON.stringify(input.config[key as keyof Config]) !==
+              JSON.stringify(data.document.config[key as keyof Config]),
+          ) ||
+          JSON.stringify(input.inbound) !== JSON.stringify(data.document.inbound))
+      )
+        return respond({ error: { code: "capture_locked" } }, 409);
       if (data.conflict || input.base_version !== data.document.version)
         return respond(
           { error: { code: "version_conflict", details: "Another editor saved a revision" } },
@@ -150,12 +161,23 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
     if (path === "/flows") return respond(trafficFixture().traffic);
     if (path.startsWith("/flows/"))
       return respond(trafficFixture().traffic.records.find((flow) => path.endsWith(flow.id)));
+    if (path === "/rules/target") {
+      const host = url.searchParams.get("target") ?? "";
+      const roots: Record<string, string> = {
+        "www.google.com": "google.com",
+        "news.china.gov.cn": "china.gov.cn",
+        "x.com": "x.com",
+      };
+      const root = roots[host] ?? host;
+      return respond({ host, type: "DOMAIN-SUFFIX", pattern: root, keyword: root.split(".")[0] });
+    }
     if (path === "/dns")
       return respond({
         status: { capacity: 512, dropped: 0 },
         queries: [
           {
             id: "dns-1",
+            origin: "business",
             name: "www.google.com",
             type: "A",
             time: "2026-11-07T09:30:00Z",
@@ -163,7 +185,8 @@ export async function fixture(page: Page, options: { readonly?: boolean; remote?
             scope: "default",
             transport: "udp",
             upstream: "192.168.1.1:53",
-            status: "success",
+            status: "NOERROR",
+            answers: ["www.google.com. 30 IN A 10.192.0.4"],
             duration_ms: 2.3,
             cache: "hit",
             version: 7,

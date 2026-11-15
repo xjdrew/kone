@@ -10,7 +10,8 @@ runs:
     - uses: actions/setup-go@v7.0.0
       id: go
       with:
-        go-version-file: go.mod
+        # CI uses a patched SDK independently of the local go.mod minimum.
+        go-version: '1.27.4'
         cache: false
     - name: Locate Go caches
       id: paths

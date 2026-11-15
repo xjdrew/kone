@@ -2,6 +2,22 @@
 
 ## Bugfixes
 
+- Accept standard IPv6 ULA subnets, show the derived TUN gateway, and default new/reset management profiles to fd00:10:192::/64 for Fake-AAAA without a native IPv6 uplink.
+
+- Show only business DNS queries in observations so internal resolution and diagnostics cannot replace client Fake-IP results or inflate query history.
+
+- Let Smart settings apply while proxying without implicitly changing the base policy; choose manual outbounds with editable suffix/exact/keyword rules and correctly extracted root domains.
+
+- Keep DNS observations stable with one latest result per domain, inline query history, relative query ages, readable DNS answers and combined resolver/cache information.
+
+- Keep Traffic usable during capture startup and empty helper snapshots by returning empty arrays consistently and handling null collections in Web responses.
+- Report Web script errors with call stacks, page/build/runtime context and bounded response shapes while retaining workspace navigation.
+- Launch frontend tools through their official entrypoints across platforms, avoiding generated Windows executable shims; report task failures once without the duplicate colored wrapper message.
+
+- Recognize Bun shell launchers on Windows during initialization, dependency installation and builds.
+
+- Accept compatible development tools during initialization (Go 1.27+, Bun 1.4+, Node 22.12+, just 1.55+) without downloading a Go toolchain during version detection.
+
 - Keep processed connection-health incidents closed when earlier probes finish, including on coarse clocks.
 
 - Build with Go 1.27.4 to include the net/http security fix for GO-2026-6859.

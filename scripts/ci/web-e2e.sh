@@ -12,7 +12,7 @@ if [[ -z "${KONE_MANAGEMENT_TEST_BINARY:-}" ]]; then
 fi
 cd web
 if [[ -f bun.lock ]]; then
-  bunx playwright test --project=chromium --grep '@real' --list
+  node node_modules/@playwright/test/cli.js test --project=chromium --grep '@real' --list
   bun run test:e2e
 else
   npx playwright test --project=chromium --grep '@real' --list

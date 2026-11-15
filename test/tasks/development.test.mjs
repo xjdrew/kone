@@ -33,6 +33,11 @@ async function fixture(t, options = {}) {
   const calls = [];
   const logs = [];
   const run = (command, args, settings = {}) => {
+    const bunMarker = args.indexOf("kone-bun");
+    if (command === "bash" && bunMarker !== -1) {
+      command = "bun";
+      args = args.slice(bunMarker + 1);
+    }
     calls.push({ command, args, settings });
     if (command === options.missing) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     if (command === "git") return args[0] === "rev-parse" ? sha : "git version 2.50";
@@ -69,7 +74,7 @@ const bunCalls = (calls, command) => calls.filter(call => call.command === "bun"
 test("init reports missing base tools before installing any dependencies", async (t) => {
   const f = await fixture(t, { missing: "go" });
   await assert.rejects(initialize(f.ctx), /Development setup needs attention/);
-  assert.match(f.logs.join("\n"), /go: not found on PATH; install Go 1.27.4/);
+  assert.match(f.logs.join("\n"), /go: not found on PATH; install Go 1\.27 or later/);
   assert.match(f.logs.join("\n"), /\[OK\] npm: 11.20.0/);
   assert.equal(bunCalls(f.calls, "install --frozen-lockfile").length, 0);
   assert.ok(!f.calls.some((call) => call.command === "go" && call.args[0] === "list"));

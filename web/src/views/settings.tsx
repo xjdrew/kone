@@ -10,6 +10,7 @@ import { api } from "../api/endpoints";
 import { request } from "../api/client";
 import { Button, Details, ErrorNotice, Field, KeyValues, Status, Toggle } from "../components/ui";
 import { preference, saveAppearance } from "../startup";
+import { ipv6Subnet } from "../ipv6-subnet";
 import type { Document, Json } from "../model";
 import styles from "./settings.module.css";
 
@@ -75,6 +76,11 @@ function Configuration({ initial, section }: { initial: Document; section: strin
   const context = useConsole();
   const [base, setBase] = useState(initial);
   const [draft, setDraft] = useState(structuredClone(initial));
+  const [ipv6Input, setIPv6Input] = useState(
+    () =>
+      ipv6Subnet(initial.config.core["ipv6-network"])?.subnet ??
+      initial.config.core["ipv6-network"],
+  );
   const [error, setError] = useState<unknown>();
   const [busy, setBusy] = useState(false);
   const [validation, setValidation] = useState<unknown>();
@@ -98,10 +104,15 @@ function Configuration({ initial, section }: { initial: Document; section: strin
       // oxlint-disable-next-line react/set-state-in-effect
       setBase(initial);
       setDraft(structuredClone(initial));
+      setIPv6Input(
+        ipv6Subnet(initial.config.core["ipv6-network"])?.subnet ??
+          initial.config.core["ipv6-network"],
+      );
     }
   }, [initial, dirty, base.version]);
   const core = draft.config.core,
     dns = draft.config.dns;
+  const ipv6 = ipv6Subnet(core["ipv6-network"]);
   const changeCore = (key: string, value: string | boolean) =>
     setDraft({ ...draft, config: { ...draft.config, core: { ...core, [key]: value } } });
   async function save() {
@@ -126,6 +137,10 @@ function Configuration({ initial, section }: { initial: Document; section: strin
       );
       setBase(result);
       setDraft(structuredClone(result));
+      setIPv6Input(
+        ipv6Subnet(result.config.core["ipv6-network"])?.subnet ??
+          result.config.core["ipv6-network"],
+      );
     } catch (caught) {
       setError(caught);
     } finally {
@@ -190,11 +205,23 @@ function Configuration({ initial, section }: { initial: Document; section: strin
                   onChange={(event) => changeCore("network", event.target.value)}
                 />
               </Field>
-              <Field label={t("settings.ipv6")}>
+              <Field
+                label={t("settings.ipv6")}
+                help={
+                  ipv6
+                    ? t("settings.ipv6Gateway", { gateway: ipv6.gateway })
+                    : t("settings.ipv6Hint")
+                }
+              >
                 <input
                   className="mono"
-                  value={core["ipv6-network"]}
-                  onChange={(event) => changeCore("ipv6-network", event.target.value)}
+                  placeholder="fd00:10:192::/64"
+                  value={ipv6Input}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setIPv6Input(value);
+                    changeCore("ipv6-network", ipv6Subnet(value)?.gateway ?? value);
+                  }}
                 />
               </Field>
               <div className="wide">
@@ -257,6 +284,10 @@ function Configuration({ initial, section }: { initial: Document; section: strin
         <Button
           onClick={() => {
             setDraft(structuredClone(base));
+            setIPv6Input(
+              ipv6Subnet(base.config.core["ipv6-network"])?.subnet ??
+                base.config.core["ipv6-network"],
+            );
             setError(null);
           }}
           disabled={!dirty}

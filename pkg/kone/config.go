@@ -402,9 +402,16 @@ func (cfg *KoneConfig) Validate() error {
 	prefix6 := netip.Prefix{}
 	if cfg.Core.IPv6Network != "" {
 		prefix6, err = netip.ParsePrefix(cfg.Core.IPv6Network)
-		if err != nil || !prefix6.Addr().Is6() || prefix6.Addr().Is4In6() || !prefix6.Addr().IsPrivate() || prefix6.Bits() < 64 || prefix6.Bits() > 120 || prefix6.Addr() == prefix6.Masked().Addr() || !prefix6.Contains(prefix6.Addr().Next()) {
-			return errors.New("core.ipv6-network requires a ULA IPv6 host/prefix of length 64..120 with room for the next stack address")
+		if err != nil || !prefix6.Addr().Is6() || prefix6.Addr().Is4In6() || !prefix6.Addr().IsPrivate() || prefix6.Bits() < 7 || prefix6.Bits() > 126 {
+			return errors.New("core.ipv6-network requires a ULA IPv6 subnet (/7..126) with room for the gateway, stack and Fake-IP addresses")
 		}
+		if prefix6.Addr() == prefix6.Masked().Addr() {
+			prefix6 = netip.PrefixFrom(prefix6.Addr().Next(), prefix6.Bits())
+		}
+		if !prefix6.Contains(prefix6.Addr().Next()) {
+			return errors.New("core.ipv6-network must leave an address after the TUN gateway for the stack")
+		}
+		cfg.Core.IPv6Network = prefix6.String()
 	}
 	if cfg.Core.AutoRoute6 && (!prefix6.IsValid() || cfg.Core.OutboundInterface == "") {
 		return errors.New("core.auto-route6 requires core.ipv6-network and core.outbound-interface")

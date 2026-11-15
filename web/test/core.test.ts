@@ -15,6 +15,13 @@ import {
   rememberDiagnostic,
   diagnosticElapsed,
 } from "../src/diagnostic-history";
+import {
+  matchingTargetRules,
+  normalizeMatchPattern,
+  normalizeRuleTarget,
+  ruleCoversHost,
+} from "../src/target-rule";
+import { ipv6Subnet } from "../src/ipv6-subnet";
 import { diagnosticRequest } from "../src/diagnostic-request";
 import { graphLayout } from "../src/graph-layout";
 import { ApiError, clearSession, request, setSession } from "../src/api/client";
@@ -22,7 +29,8 @@ import { configuration, documentFixture, flowFixture, graphFixture } from "./fac
 import english from "../../pkg/locale/catalog/en.json";
 import chinese from "../../pkg/locale/catalog/zh.json";
 import { canEnable } from "../src/readiness";
-import type { Readiness, ReadinessCheck } from "../src/model";
+import { dnsAnswerLines, dnsQueryAge, groupBusinessDNSQueries } from "../src/dns-observations";
+import type { DNSQuery, Readiness, ReadinessCheck } from "../src/model";
 
 test("default direct routing needs no consent, but cannot bypass real blockers", () => {
   const permissions: ReadinessCheck = {
@@ -321,7 +329,11 @@ test("health outbound choice updates exact rules in place and takes precedence o
     { ...exactRule("example.com"), type: "DOMAIN-SUFFIX", outbound: "direct" },
     rule,
   );
-  const next = selectTargetOutbound(config, "example.com", "Local HTTP");
+  const next = selectTargetOutbound(
+    config,
+    { type: "DOMAIN", pattern: "example.com" },
+    "Local HTTP",
+  );
   expect(next.rules.filter((r) => r.id === "existing")).toHaveLength(1);
   expect(next.rules[0]).toMatchObject({
     id: "existing",
@@ -331,7 +343,7 @@ test("health outbound choice updates exact rules in place and takes precedence o
   });
   expect(next.rules[1]?.type).toBe("DOMAIN-SUFFIX");
   expect(config.rules[1]?.outbound).toBe("direct");
-  const added = selectTargetOutbound(next, "new.example", "direct");
+  const added = selectTargetOutbound(next, { type: "DOMAIN", pattern: "new.example" }, "direct");
   expect(added.rules[0]).toMatchObject({
     type: "DOMAIN",
     pattern: "new.example",
@@ -339,4 +351,144 @@ test("health outbound choice updates exact rules in place and takes precedence o
   });
   expect(added.rules[0]?.ports).toBeUndefined();
   expect(added.rules.at(-1)?.type).toBe("FINAL");
+});
+
+test("DNS domains keep the latest result, stable order, accurate ages and readable answers", () => {
+  const now = Date.parse("2026-11-15T12:00:00Z");
+  const query = (overrides: Partial<DNSQuery>): DNSQuery => ({
+    id: "dns-1",
+    time: new Date(now).toISOString(),
+    name: "z.example",
+    type: "A",
+    origin: "business",
+    source: "application",
+    scope: "dns",
+    transport: "udp",
+    status: "NOERROR",
+    duration_ms: 1,
+    cache: "miss",
+    version: 7,
+    ...overrides,
+  });
+  const older = query({ name: "Example.COM.", time: new Date(now - 60000).toISOString() });
+  const latest = query({ id: "dns-10", name: "example.com", type: "AAAA" });
+  const sameTime = query({ id: "dns-2", name: "EXAMPLE.com", type: "HTTPS" });
+  const internal = query({
+    id: "dns-11",
+    name: "example.com",
+    origin: "internal",
+    time: new Date(now + 1000).toISOString(),
+    real_addresses: ["142.251.8.84"],
+  });
+  const diagnostic = query({ name: "diagnostic.example", origin: "diagnostic" });
+  const unknown = query({ name: "unknown.example", origin: "" });
+  const events = [query({}), older, sameTime, internal, latest, diagnostic, unknown];
+  const original = [...events];
+  const groups = groupBusinessDNSQueries(events);
+  expect(groups.map(({ name }) => name)).toEqual(["example.com", "z.example"]);
+  expect(groups[0]!.history).toEqual([latest, sameTime, older]);
+  expect(events).toEqual(original);
+  for (const [seconds, expected] of [
+    [0, "0s"],
+    [59, "59s"],
+    [60, "1m"],
+    [3599, "59m"],
+    [3600, "1h"],
+    [86400, "1d"],
+    [-1, "0s"],
+  ] as const)
+    expect(dnsQueryAge(new Date(now - seconds * 1000).toISOString(), now)).toBe(expected);
+  expect(dnsQueryAge("bad timestamp", now)).toBe("—");
+  expect(
+    dnsAnswerLines(
+      query({
+        answers: [
+          "example.com.\t30\tIN\tCNAME\ttarget.example.",
+          "target.example.\t30\tIN\tA\t10.192.0.4",
+          'example.com. 30 IN TXT "two  spaces"',
+        ],
+        virtual_addresses: ["10.192.0.4"],
+      }),
+    ),
+  ).toEqual(["CNAME\ttarget.example.", "Fake-IP 10.192.0.4", 'TXT "two  spaces"']);
+  expect(dnsAnswerLines(query({ real_addresses: ["192.0.2.1"] }))).toEqual(["192.0.2.1"]);
+  expect(dnsAnswerLines(query({ answers: ["a. 30 IN AAAA 2001:db8::1"] }))).toEqual([
+    "2001:db8::1",
+  ]);
+  expect(
+    dnsAnswerLines(
+      query({ virtual_addresses: ["10.192.0.4"], real_addresses: ["10.192.0.4", "192.0.2.1"] }),
+    ),
+  ).toEqual(["Fake-IP 10.192.0.4", "192.0.2.1"]);
+});
+
+test("outbound rules preview suffix/keyword scope and reuse only matching permanent rules", () => {
+  expect(normalizeRuleTarget("www.食狮.com.cn:443")).toBe("www.xn--85x722f.com.cn:443");
+  expect(normalizeRuleTarget("www。google。com。")).toBe("www.google.com.");
+  expect(normalizeRuleTarget("[::1]:443")).toBe("[::1]:443");
+  expect(normalizeMatchPattern("DOMAIN-SUFFIX", " Google.COM. ")).toBe("google.com");
+  expect(normalizeMatchPattern("DOMAIN", "食狮.com.cn")).toBe("xn--85x722f.com.cn");
+  expect(normalizeMatchPattern("DOMAIN-KEYWORD", "127")).toBe("127");
+  expect(normalizeMatchPattern("DOMAIN-KEYWORD", "google.")).toBe("google.");
+  expect(normalizeMatchPattern("DOMAIN", "https://x.com")).toBe("");
+  expect(ruleCoversHost("www.google.com", { type: "DOMAIN-SUFFIX", pattern: "google.com" })).toBe(
+    true,
+  );
+  expect(ruleCoversHost("notgoogle.com", { type: "DOMAIN-SUFFIX", pattern: "google.com" })).toBe(
+    false,
+  );
+  expect(ruleCoversHost("www.google.com", { type: "DOMAIN", pattern: "google.com" })).toBe(false);
+  expect(ruleCoversHost("x.com", { type: "DOMAIN-KEYWORD", pattern: "x" })).toBe(true);
+  expect(ruleCoversHost("x.com", { type: "DOMAIN-KEYWORD", pattern: "" })).toBe(false);
+  expect(ruleCoversHost("192.0.2.1", { type: "IP-CIDR", pattern: "192.0.2.1/32" })).toBe(true);
+  expect(ruleCoversHost("2001:db8::1", { type: "IP-CIDR6", pattern: "2001:db8::1/128" })).toBe(
+    true,
+  );
+  const config = configuration();
+  config.rules.unshift({ ...exactRule("www.google.com"), id: "exact", outbound: "direct" });
+  const suffix = { type: "DOMAIN-SUFFIX", pattern: "google.com" };
+  const next = selectTargetOutbound(config, suffix, "direct");
+  expect(matchingTargetRules(next, suffix)).toHaveLength(1);
+  expect(next.rules[0]).toMatchObject({ id: "rule-google", ...suffix, outbound: "direct" });
+  expect(next.rules[1]).toMatchObject({ id: "exact", type: "DOMAIN", pattern: "www.google.com" });
+  const keyword = selectTargetOutbound(
+    next,
+    { type: "DOMAIN-KEYWORD", pattern: "google" },
+    "Local HTTP",
+  );
+  expect(keyword.rules[0]).toMatchObject({
+    type: "DOMAIN-KEYWORD",
+    pattern: "google",
+    outbound: "Local HTTP",
+  });
+  config.rules[1]!["expires-at"] = "2020-01-01T00:00:00Z";
+  const permanent = selectTargetOutbound(config, suffix, "direct");
+  expect(permanent.rules[0]!["expires-at"]).toBeUndefined();
+  expect(permanent.rules[0]!.id).not.toBe("rule-google");
+});
+
+test("IPv6 subnet inputs show canonical networks and usable TUN gateways", () => {
+  for (const [input, subnet, gateway] of [
+    ["FD00::/8", "fd00::/8", "fd00::1/8"],
+    ["fd00:10:192::/64", "fd00:10:192::/64", "fd00:10:192::1/64"],
+    ["fd00:0010:0192:0:0:0:0:1/64", "fd00:10:192::/64", "fd00:10:192::1/64"],
+    ["fc00::/7", "fc00::/7", "fc00::1/7"],
+    ["fd00::/126", "fd00::/126", "fd00::1/126"],
+    ["fd00::9/121", "fd00::/121", "fd00::9/121"],
+  ])
+    expect(ipv6Subnet(input!)).toEqual({ subnet, gateway });
+  for (const input of [
+    "",
+    "fd00::",
+    "fd00::/6",
+    "fd00::/127",
+    "fd00::/128",
+    "fd00::3/126",
+    "2001:db8::/64",
+    "::ffff:192.0.2.1/64",
+    "192.0.2.1/24",
+    "fd00:xyz::/64",
+    "fd00::/999",
+  ])
+    expect(ipv6Subnet(input)).toBeUndefined();
 });

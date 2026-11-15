@@ -43,6 +43,8 @@ type DNSQueryEvent struct {
 	Version            uint64    `json:"version"`
 	VirtualAddresses   []string  `json:"virtual_addresses,omitempty"`
 	RealAddresses      []string  `json:"real_addresses,omitempty"`
+	Answers            []string  `json:"answers,omitempty"`
+	AnswersTruncated   bool      `json:"answers_truncated,omitempty"`
 }
 
 type dnsMetaKey struct{}
@@ -110,6 +112,7 @@ func (h *dnsHistory) snapshot(now time.Time) []DNSQueryEvent {
 		event.RealAddresses = append([]string(nil), event.RealAddresses...)
 		event.VirtualAddresses = append([]string(nil), event.VirtualAddresses...)
 		event.AttemptedResolvers = append([]string(nil), event.AttemptedResolvers...)
+		event.Answers = append([]string(nil), event.Answers...)
 		result = append(result, event)
 	}
 	return result
@@ -158,6 +161,16 @@ func (d *Dns) recordQuery(request, reply *dns.Msg, err error, transport, source 
 	if reply != nil {
 		event.Status = dns.RcodeToString[reply.Rcode]
 		event.RealAddresses = dnsAddresses(reply)
+		answerBytes := 0
+		for _, answer := range reply.Answer {
+			value := answer.String()
+			if len(event.Answers) >= 64 || answerBytes+len(value) > 8192 {
+				event.AnswersTruncated = true
+				break
+			}
+			event.Answers = append(event.Answers, value)
+			answerBytes += len(value)
+		}
 	}
 	if err != nil {
 		event.Error = err.Error()

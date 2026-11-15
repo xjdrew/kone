@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/xjdrew/kone/pkg/kone"
 )
 
 func TestLoopbackAutomaticSession(t *testing.T) {
@@ -90,4 +92,20 @@ func TestSavedIPv6ChoiceSurvivesManagementRestart(t *testing.T) {
 	require.NoError(t, c.Close())
 	reopened := testController(t, Options{Directory: c.directory})
 	require.Empty(t, reopened.doc.Config.Core.IPv6Network)
+}
+
+func TestManagementDefaultsUseTheStandardIPv6Subnet(t *testing.T) {
+	c := testController(t, Options{})
+	if !kone.SupportsIPv6Capture() {
+		return
+	}
+	require.Equal(t, "fd00:10:192::1/64", c.doc.Config.Core.IPv6Network)
+	for _, input := range []string{"FD00::/8", "fd00:10:192::/64"} {
+		save := currentRequest(c)
+		save.Config["core"].(map[string]any)["ipv6-network"] = input
+		_, err := c.Save(save)
+		require.NoError(t, err)
+		prefix := netip.MustParsePrefix(c.doc.Config.Core.IPv6Network)
+		require.Equal(t, prefix.Masked().Addr().Next(), prefix.Addr())
+	}
 }

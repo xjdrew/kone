@@ -84,7 +84,7 @@ func (pool *DnsIPPool) address(index int) netip.Addr {
 
 func NewDnsIPPool(prefix netip.Prefix) *DnsIPPool {
 	pool := new(DnsIPPool)
-	if !prefix.IsValid() || prefix.Addr().Is4() && prefix.Bits() > 30 || prefix.Addr().Is6() && (!prefix.Addr().IsPrivate() || prefix.Bits() < 64 || prefix.Bits() > 120) {
+	if !prefix.IsValid() || prefix.Addr().Is4() && prefix.Bits() > 30 || prefix.Addr().Is6() && (prefix.Addr().Is4In6() || !prefix.Addr().IsPrivate() || prefix.Bits() < 7 || prefix.Bits() > 126) {
 		return pool
 	}
 	pool.base = prefix.Masked().Addr().Next()

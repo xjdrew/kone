@@ -3,6 +3,8 @@ package kone
 import (
 	"context"
 	"net"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -58,13 +60,15 @@ func TestDNSHistoryRetentionCapacityAndClear(t *testing.T) {
 	history := newDNSHistory(2, time.Second)
 	now := time.Now()
 	for _, name := range []string{"a", "b", "c"} {
-		history.add(DNSQueryEvent{Time: now, Name: name, RealAddresses: []string{"192.0.2.1"}})
+		history.add(DNSQueryEvent{Time: now, Name: name, RealAddresses: []string{"192.0.2.1"}, Answers: []string{"a. 30 IN A 192.0.2.1"}})
 	}
 	entries := history.snapshot(now)
 	require.Len(t, entries, 2)
 	require.Equal(t, "c", entries[0].Name)
 	require.Equal(t, uint64(1), history.dropped)
 	entries[0].RealAddresses[0] = "mutated"
+	entries[0].Answers[0] = "mutated"
+	require.Equal(t, "a. 30 IN A 192.0.2.1", history.snapshot(now)[0].Answers[0])
 	require.Equal(t, "192.0.2.1", history.snapshot(now)[0].RealAddresses[0])
 	require.Empty(t, history.snapshot(now.Add(2*time.Second)))
 	history.add(DNSQueryEvent{Time: now.Add(2 * time.Second), Name: "d"})
@@ -117,4 +121,39 @@ func TestDNSMaintenanceCancelsWithoutNetworkChanges(t *testing.T) {
 	empty.ClearDNSQueries()
 	empty.ClearDNSCache()
 	require.Empty(t, empty.DNSStatus().Servers)
+}
+
+func TestDNSObservationAnswersAreCompleteAndBounded(t *testing.T) {
+	request := new(dns.Msg)
+	request.SetQuestion("alias.example.", dns.TypeA)
+	cname, err := dns.NewRR("alias.example. 30 IN CNAME target.example.")
+	require.NoError(t, err)
+	address, err := dns.NewRR("target.example. 30 IN A 192.0.2.10")
+	require.NoError(t, err)
+	text, err := dns.NewRR(`alias.example. 30 IN TXT "two  spaces"`)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name      string
+		answers   []dns.RR
+		want      []string
+		truncated bool
+	}{
+		{name: "complete", answers: []dns.RR{cname, address, text}, want: []string{cname.String(), address.String(), text.String()}},
+		{name: "record limit", answers: slices.Repeat([]dns.RR{address}, 65), want: slices.Repeat([]string{address.String()}, 64), truncated: true},
+		{name: "byte limit", answers: []dns.RR{cname, &dns.TXT{Hdr: *text.Header(), Txt: slices.Repeat([]string{strings.Repeat("x", 255)}, 33)}}, want: []string{cname.String()}, truncated: true},
+		{name: "no answers"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			observer := &Dns{history: newDNSHistory(1, time.Minute)}
+			reply := new(dns.Msg)
+			reply.SetReply(request)
+			reply.Answer = tc.answers
+			observer.recordQuery(request, reply, nil, "udp", "application", 7, time.Now(), nil)
+			events := observer.Queries()
+			require.Len(t, events, 1)
+			require.Equal(t, tc.want, events[0].Answers)
+			require.Equal(t, tc.truncated, events[0].AnswersTruncated)
+			require.Equal(t, "NOERROR", events[0].Status)
+		})
+	}
 }

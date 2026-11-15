@@ -4,15 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bunx --bun vite --host 127.0.0.1",
-    "build": "bun run typecheck && bunx --bun vite build",
-    "typecheck": "tsc --noEmit",
-    "lint": "oxlint src --deny-warnings",
-    "fmt": "oxfmt \"src/**/*.{ts,tsx,css}\" \"test/**/*.{ts,tsx,mjs}\" \"e2e/**/*.{ts,mjs}\" *.json *.ts *.js *.html",
-    "fmt:check": "oxfmt --check \"src/**/*.{ts,tsx,css}\" \"test/**/*.{ts,tsx,mjs}\" \"e2e/**/*.{ts,mjs}\" *.json *.ts *.js *.html",
+    "dev": "bun ./node_modules/vite/bin/vite.js --host 127.0.0.1",
+    "build": "bun run typecheck && bun ./node_modules/vite/bin/vite.js build",
+    "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
+    "lint": "node ./node_modules/oxlint/bin/oxlint src --deny-warnings",
+    "fmt": "node ./node_modules/oxfmt/bin/oxfmt \"src/**/*.{ts,tsx,css}\" \"test/**/*.{ts,tsx,mjs}\" \"e2e/**/*.{ts,mjs}\" *.json *.ts *.js *.html",
+    "fmt:check": "node ./node_modules/oxfmt/bin/oxfmt --check \"src/**/*.{ts,tsx,css}\" \"test/**/*.{ts,tsx,mjs}\" \"e2e/**/*.{ts,mjs}\" *.json *.ts *.js *.html",
     "test": "bun test test/core.test.ts test/components.test.tsx && node --test test/native.test.mjs test/real-results.test.mjs",
-    "test:e2e": "playwright test",
-    "preview": "bunx --bun vite preview --host 127.0.0.1",
+    "test:e2e": "node ./node_modules/@playwright/test/cli.js test",
+    "preview": "bun ./node_modules/vite/bin/vite.js preview --host 127.0.0.1",
     "test:build": "node --test test/build.test.mjs"
   },
   "dependencies": {

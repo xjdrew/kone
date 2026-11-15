@@ -133,3 +133,53 @@
     margin-inline-start: auto;
   }
 }
+
+.ruleRow > td[colspan] {
+  padding: 0 12px 12px 22px;
+}
+.ruleEditor {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  border-inline-start: 2px solid var(--accent);
+  background: var(--bg);
+  padding: 10px 14px;
+  max-width: 780px;
+}
+.ruleEditor header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ruleFields {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) minmax(200px, 2fr);
+  gap: 10px;
+  margin-block: 8px;
+}
+.ruleScope {
+  color: var(--muted);
+  font-size: var(--font-small);
+  margin: 5px 0;
+  overflow-wrap: anywhere;
+}
+.ruleOutbounds {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ruleOutbounds > span {
+  color: var(--muted);
+  font-size: var(--font-small);
+}
+@media (max-width: 767px) {
+  .ruleRow > td[colspan] {
+    padding-inline: 12px;
+  }
+  .ruleFields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

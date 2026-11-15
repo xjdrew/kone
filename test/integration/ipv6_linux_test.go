@@ -17,7 +17,7 @@ import (
 func ipv6SystemConfig(t *testing.T) *kone.KoneConfig {
 	t.Helper()
 	cfg := systemConfig(t)
-	cfg.Core.IPv6Network = "fd7a:203::1/120"
+	cfg.Core.IPv6Network = "fd00:10:192::/64"
 	cfg.Core.OutboundInterface = "lo"
 	return cfg
 }
@@ -26,7 +26,7 @@ func fakeAAAA(t *testing.T, cfg *kone.KoneConfig, name, transport string) string
 	t.Helper()
 	question := new(dns.Msg)
 	question.SetQuestion(dns.Fqdn(name), dns.TypeAAAA)
-	address := fmt.Sprintf("[fd7a:203::1]:%d", cfg.DNS.ListenPort)
+	address := fmt.Sprintf("[fd00:10:192::1]:%d", cfg.DNS.ListenPort)
 	response, _, err := (&dns.Client{Net: transport, Timeout: 2 * time.Second}).Exchange(question, address)
 	require.NoError(t, err)
 	require.Equal(t, dns.RcodeSuccess, response.Rcode)

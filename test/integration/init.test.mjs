@@ -18,7 +18,7 @@ test("just init reports an incompatible Go version with recovery instructions", 
   assert.ifError(result.error);
   assert.equal(result.status, 1);
   assert.match(result.stdout, /Installed and ready:/);
-  assert.match(result.stdout, /go: installed go version go1.26.0 linux\/amd64; requires Go 1.27.4/);
+  assert.match(result.stdout, /go: installed go version go1.26.0 linux\/amd64; requires Go 1\.27 or later/);
   assert.match(result.stderr, /KONE: Development setup needs attention.*just init/);
   assert.doesNotMatch(result.stdout + result.stderr, /Preparing Go modules|Preparing Web dependencies|unexpected dependency installation/);
 });

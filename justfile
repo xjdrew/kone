@@ -1,5 +1,7 @@
 # Daily development entrypoints. Windows requires Git Bash on PATH.
-set minimum-version := '1.59.0'
+set minimum-version := '1.55.0'
+# Task scripts already report the cause; avoid a second outer error message.
+set no-exit-message
 set shell := ["bash", "-euo", "pipefail", "-c"]
 set positional-arguments
 

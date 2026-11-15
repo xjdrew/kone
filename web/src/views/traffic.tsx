@@ -1,6 +1,7 @@
 import { ConnectionHealth } from "./connection-health";
 import { copyText } from "../browser";
-import { Fragment, useDeferredValue, useEffect, useState, type ReactNode } from "react";
+import { dnsAnswerLines, dnsQueryAge, groupBusinessDNSQueries } from "../dns-observations";
+import { Fragment, useDeferredValue, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -808,9 +809,22 @@ function DNSView({ target }: { target: string }) {
     queryFn: ({ signal }) => api.dns(signal),
     refetchInterval: frozen ? false : 1500,
   });
-  const rows = (frozen ?? data.data?.queries ?? []).filter(
-    (event) =>
-      event.name.toLowerCase().includes(target.toLowerCase()) && (!type || event.type === type),
+  const [expanded, setExpanded] = useWorkspaceState<string[]>("dns.expanded", []);
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const rows = useMemo(
+    () =>
+      groupBusinessDNSQueries(
+        (frozen ?? data.data?.queries ?? []).filter(
+          (event) =>
+            event.name.toLowerCase().includes(target.toLowerCase()) &&
+            (!type || event.type === type),
+        ),
+      ),
+    [frozen, data.data?.queries, target, type],
   );
   const currentPage = Math.min(page, Math.max(0, Math.ceil(rows.length / 50) - 1));
   function movePage(next: number) {
@@ -849,31 +863,33 @@ function DNSView({ target }: { target: string }) {
           <table className="dataTable">
             <thead>
               <tr>
-                {[
-                  "common.time",
-                  "dns.query",
-                  "dns.type",
-                  "dns.resolver",
-                  "dns.latency",
-                  "dns.cache",
-                  "common.status",
-                  "common.actions",
-                ].map((key) => (
-                  <th key={key}>{t(key)}</th>
-                ))}
+                <th aria-sort="ascending">{t("dns.query")}</th>
+                <DNSHeaders />
               </tr>
             </thead>
             <tbody>
-              {rows.slice(currentPage * 50, (currentPage + 1) * 50).map((event) => (
-                <DNSRow key={event.id} event={event} onSelect={() => setSelected(event)} />
+              {rows.slice(currentPage * 50, (currentPage + 1) * 50).map(({ name, history }) => (
+                <DNSDomainRow
+                  key={name}
+                  name={name}
+                  history={history}
+                  now={now}
+                  expanded={expanded.includes(name)}
+                  onToggle={() =>
+                    setExpanded(
+                      expanded.includes(name)
+                        ? expanded.filter((item) => item !== name)
+                        : [...expanded, name],
+                    )
+                  }
+                  onSelect={setSelected}
+                />
               ))}
             </tbody>
           </table>
           {!rows.length && <Empty title={t("common.empty")} description={t("dns.noQueries")} />}
           <div className="tableFoot">
-            <span>
-              {formatNumber(rows.length)} {t("dns.query")}
-            </span>
+            <span>{t("dns.domainCount", { count: rows.length })}</span>
             <Button disabled={currentPage === 0} onClick={() => movePage(currentPage - 1)}>
               {t("common.previous")}
             </Button>
@@ -896,30 +912,185 @@ function DNSView({ target }: { target: string }) {
     </>
   );
 }
-function DNSRow({ event, onSelect }: { event: DNSQuery; onSelect: () => void }) {
-  const actions = useTargetActions(event.name);
+function DNSHeaders() {
   const { t } = useTranslation();
   return (
-    <ContextActions actions={actions}>
-      <tr>
-        <td className="muted nowrap">{timestamp(event.time)}</td>
-        <td className="mono">
-          <button className="textButton" onClick={onSelect}>
-            {event.name}
-          </button>
-        </td>
-        <td className="mono">{event.type}</td>
-        <td className="mono muted">{event.upstream || "—"}</td>
-        <td className="numeric">{formatNumber(event.duration_ms, 2)} ms</td>
-        <td>{t(`dns.cache.${event.cache}`, { defaultValue: t("common.unknown") })}</td>
-        <td>
-          <Status value={event.status} />
-        </td>
-        <td>
-          <ActionMenu actions={actions} />
-        </td>
-      </tr>
-    </ContextActions>
+    <>
+      {[
+        "dns.age",
+        "dns.type",
+        "dns.answers",
+        "dns.resolverCache",
+        "dns.latency",
+        "common.actions",
+      ].map((key) => (
+        <th key={key}>{t(key)}</th>
+      ))}
+    </>
+  );
+}
+function DNSDomainRow({
+  name,
+  history,
+  now,
+  expanded,
+  onToggle,
+  onSelect,
+}: {
+  name: string;
+  history: DNSQuery[];
+  now: number;
+  expanded: boolean;
+  onToggle: () => void;
+  onSelect: (event: DNSQuery) => void;
+}) {
+  const event = history[0]!;
+  const actions = useTargetActions(name);
+  const { t } = useTranslation();
+  return (
+    <>
+      <ContextActions actions={actions}>
+        <tr data-selected={expanded}>
+          <td className="mono">
+            <button
+              className={`textButton ${styles.dnsQuery}`}
+              onClick={onToggle}
+              aria-expanded={expanded}
+              aria-controls={`dns-history-${name}`}
+            >
+              <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
+              {name}
+              <span
+                className={styles.dnsCount}
+                title={t("dns.historyCount", { count: history.length })}
+              >
+                {history.length}
+              </span>
+            </button>
+          </td>
+          <DNSCells event={event} now={now} />
+          <td>
+            <ActionMenu actions={actions} />
+          </td>
+        </tr>
+      </ContextActions>
+      {expanded && (
+        <tr className={styles.dnsExpanded}>
+          <td colSpan={7}>
+            <DNSHistory name={name} history={history} now={now} onSelect={onSelect} />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+function DNSHistory({
+  name,
+  history,
+  now,
+  onSelect,
+}: {
+  name: string;
+  history: DNSQuery[];
+  now: number;
+  onSelect: (event: DNSQuery) => void;
+}) {
+  const { t } = useTranslation();
+  const [page, setPage] = useState(0);
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(history.length / 50) - 1));
+  return (
+    <div className={styles.dnsHistory} id={`dns-history-${name}`}>
+      <div className={styles.dnsHistoryHeading}>
+        <strong>{t("dns.historyCount", { count: history.length })}</strong>
+        <span>{t("dns.historyHint")}</span>
+      </div>
+      <div className={styles.dnsHistoryScroll}>
+        <table className="dataTable" aria-label={t("dns.historyFor", { name })}>
+          <thead>
+            <tr>
+              <DNSHeaders />
+            </tr>
+          </thead>
+          <tbody>
+            {history.slice(currentPage * 50, (currentPage + 1) * 50).map((event) => (
+              <tr key={event.id}>
+                <DNSCells event={event} now={now} />
+                <td>
+                  <Button tone="quiet" onClick={() => onSelect(event)}>
+                    {t("common.details")}
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {history.length > 50 && (
+        <div className="tableFoot">
+          <Button disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>
+            {t("common.previous")}
+          </Button>
+          <span className="mono">
+            {currentPage + 1} / {Math.ceil(history.length / 50)}
+          </span>
+          <Button
+            disabled={(currentPage + 1) * 50 >= history.length}
+            onClick={() => setPage(currentPage + 1)}
+          >
+            {t("common.next")}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+function DNSCells({ event, now }: { event: DNSQuery; now: number }) {
+  const { t } = useTranslation();
+  const answers = dnsAnswerLines(event);
+  const failed =
+    !!event.error || !["NOERROR", "SUCCESS", "ANSWERED"].includes(event.status.toUpperCase());
+  const real =
+    event.virtual_addresses?.length && event.answers?.length ? event.real_addresses : undefined;
+  return (
+    <>
+      <td className="mono muted nowrap" title={timestamp(event.time)}>
+        {dnsQueryAge(event.time, now)}
+      </td>
+      <td className="mono">{event.type}</td>
+      <td className={styles.dnsAnswers}>
+        {failed && (
+          <div className={styles.dnsFailure} title={event.error}>
+            {event.status || t("common.failed")}
+            {event.error && <span className={styles.dnsError}>{event.error}</span>}
+          </div>
+        )}
+        {answers.length > 0 ? (
+          <div className="mono" title={answers.join("\n")}>
+            {answers.slice(0, 2).map((answer, index) => (
+              <div className={styles.dnsAnswer} key={index}>
+                {answer}
+              </div>
+            ))}
+            {answers.length > 2 && <span className="muted">+{answers.length - 2}</span>}
+          </div>
+        ) : (
+          !failed && !event.answers_truncated && <span className="muted">{t("dns.noAnswers")}</span>
+        )}
+        {!!real?.length && (
+          <div className={`mono ${styles.dnsSecondary}`} title={real.join(", ")}>
+            {t("traffic.realIP")}: {real.join(", ")}
+          </div>
+        )}
+        {event.answers_truncated && <span className="muted">{t("common.truncated")}</span>}
+      </td>
+      <td>
+        <div className="mono">{event.upstream || "—"}</div>
+        <div className={styles.dnsSecondary}>
+          {t(`dns.cache.${event.cache}`, { defaultValue: event.cache || "—" })}
+        </div>
+      </td>
+      <td className="numeric nowrap">{formatNumber(event.duration_ms, 2)} ms</td>
+    </>
   );
 }
 function DNSInspector({ event, onClose }: { event: DNSQuery; onClose: () => void }) {
@@ -938,6 +1109,15 @@ function DNSInspector({ event, onClose }: { event: DNSQuery; onClose: () => void
       <KeyValues
         entries={[
           [t("dns.type"), event.type],
+          [t("dns.responseCode"), event.status],
+          [
+            t("dns.answers"),
+            <span key="answers" className={`mono ${styles.dnsRawAnswers}`}>
+              {event.answers?.join("\n") ||
+                dnsAnswerLines(event).join("\n") ||
+                t(event.answers_truncated ? "common.truncated" : "dns.noAnswers")}
+            </span>,
+          ],
           [t("dns.resolver"), event.upstream || "—"],
           [t("settings.interface"), event.resolver_interface || "—"],
           [t("traffic.realIP"), event.real_addresses?.join(", ") || "—"],
