@@ -344,6 +344,13 @@ func TestHealthLateRetestCannotUndoUserAcknowledgement(t *testing.T) {
 	<-entered
 	_, err = one.HealthAction(HealthAction{Action: "handled", Domain: e.domain, Generation: entry.Generation})
 	require.NoError(t, err)
+	// Simulate timestamps that cannot order acknowledgement against the probe
+	// (coarse clocks or a wall-clock correction). Processing order must win.
+	h.ledger.mu.Lock()
+	acknowledged := h.ledger.entries[healthKey(e.domain, "")]
+	acknowledged.ClosedAt = entry.First
+	h.ledger.entries[healthKey(e.domain, "")] = acknowledged
+	h.ledger.mu.Unlock()
 	close(release)
 	<-finished
 	state, _ := one.HealthData(HealthQuery{})

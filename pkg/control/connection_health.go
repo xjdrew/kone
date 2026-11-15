@@ -161,6 +161,7 @@ func (c *Controller) connectionHealthRoute(w http.ResponseWriter, r *http.Reques
 			if e.Domain == action.Domain && e.Scope == action.Scope && e.Generation == action.Generation {
 				state.Entries[i].Status = "history"
 				state.Entries[i].Resolution = "user"
+				state.Entries[i].ResolutionRevision++
 				state.Entries[i].ClosedAt = time.Now()
 				state.Entries[i].Transitions = append(state.Entries[i].Transitions, kone.HealthTransition{Generation: e.Generation, Resolution: "user", Time: state.Entries[i].ClosedAt})
 				found = true

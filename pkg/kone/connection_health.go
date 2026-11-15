@@ -35,7 +35,8 @@ type HealthTransition struct {
 	Time       time.Time `json:"time"`
 }
 type HealthIncident struct {
-	Transitions []HealthTransition `json:"transitions,omitempty"`
+	ResolutionRevision uint64             `json:"resolution_revision,omitempty"`
+	Transitions        []HealthTransition `json:"transitions,omitempty"`
 
 	Checking bool `json:"checking"`
 
@@ -193,6 +194,7 @@ func (l *HealthLedger) Resolve(domain, scope string, generation uint64, resoluti
 		e.Status = "adjusted"
 	}
 	e.Resolution = resolution
+	e.ResolutionRevision++
 	e.Transitions = append(e.Transitions, HealthTransition{generation, resolution, now})
 	if len(e.Transitions) > 20 {
 		e.Transitions = e.Transitions[len(e.Transitions)-20:]

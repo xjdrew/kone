@@ -69,6 +69,8 @@ type healthEvidence struct {
 	expires    time.Time
 }
 type connectionHealth struct {
+	// Serializes probe commits with user processing; no network I/O holds it.
+	reconcile     sync.Mutex
 	networkSample func(string) (string, error)
 
 	dnsClient func(*http.Transport) *http.Client
@@ -465,7 +467,9 @@ func (h *connectionHealth) check(e healthEvent) {
 	if e.version != s.version {
 		return
 	}
-	checkStarted := time.Now()
+	h.ledger.mu.Lock()
+	prior := cloneHealthIncident(h.ledger.entries[key])
+	h.ledger.mu.Unlock()
 	if decision := s.rule.DecideDNS(e.domain, nil, "", 0); decision.Outbound == BuiltinReject && !decision.CaptureOnly && decision.Evidence != "dns_failed" {
 		h.ledger.mu.Lock()
 		entry, exists := h.ledger.entries[key]
@@ -542,9 +546,6 @@ func (h *connectionHealth) check(e healthEvent) {
 	if message == nil || len(dnsAddresses(message)) == 0 {
 		return
 	}
-	h.ledger.mu.Lock()
-	prior := cloneHealthIncident(h.ledger.entries[key])
-	h.ledger.mu.Unlock()
 	ports := []uint16{80, 443}
 	for _, r := range prior.Results {
 		if r.Source == "business" && r.Protocol == "tcp" && r.Port != 0 && !slices.Contains(ports, r.Port) {
@@ -628,10 +629,15 @@ func (h *connectionHealth) check(e healthEvent) {
 	if networkChanged {
 		return
 	}
+	h.reconcile.Lock()
+	defer h.reconcile.Unlock()
+	if ctx.Err() != nil || h.one.policy.Load() != s {
+		return
+	}
 	h.ledger.mu.Lock()
-	closedAt := h.ledger.entries[key].ClosedAt
+	resolutionRevision := h.ledger.entries[key].ResolutionRevision
 	h.ledger.mu.Unlock()
-	if closedAt.After(checkStarted) {
+	if resolutionRevision != prior.ResolutionRevision {
 		return
 	}
 	now := time.Now()
@@ -768,6 +774,8 @@ func (one *One) HealthAction(a HealthAction) (HealthIncident, error) {
 	if h == nil {
 		return HealthIncident{}, errors.New("health unavailable")
 	}
+	h.reconcile.Lock()
+	defer h.reconcile.Unlock()
 	h.mu.Lock()
 	ledger := h.ledger
 	h.mu.Unlock()
@@ -875,6 +883,8 @@ func (h *connectionHealth) route(domain string, port uint16, protocol string, de
 // A reply on a current, explicit domain-proxy rule is stronger evidence than
 // an auxiliary native DNS failure. Only count its presence, never its content.
 func (h *connectionHealth) acceptBusinessSuccess(e healthEvent) {
+	h.reconcile.Lock()
+	defer h.reconcile.Unlock()
 	s := h.one.policy.Load()
 	if e.version != s.version || e.result.Outbound == BuiltinDirect {
 		return
