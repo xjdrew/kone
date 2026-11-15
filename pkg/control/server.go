@@ -338,6 +338,10 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 				apiError(w, 503, "data_unavailable", "Capture statistics are unavailable; refresh state or pause capture")
 				return
 			}
+			traffic.Records = jsonArray(traffic.Records)
+			sankey.Nodes = jsonArray(sankey.Nodes)
+			sankey.Links = jsonArray(sankey.Links)
+			sankey.Paths = jsonArray(sankey.Paths)
 			writeJSON(w, 200, map[string]any{"traffic": traffic, "sankey": sankey})
 		} else {
 			writeJSON(w, 200, map[string]any{"traffic": observer.Snapshot(query), "sankey": observer.Sankey(query, options)})
@@ -353,6 +357,7 @@ func (c *Controller) route(w http.ResponseWriter, r *http.Request, path string, 
 				apiError(w, 503, "data_unavailable", "Capture statistics are unavailable")
 				return
 			}
+			traffic.Records = jsonArray(traffic.Records)
 			writeJSON(w, 200, traffic)
 			return
 		}

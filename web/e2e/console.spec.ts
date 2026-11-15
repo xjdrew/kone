@@ -16,7 +16,7 @@ test("@compat script errors retain navigation and print diagnostic context witho
     const response = trafficFixture();
     return route.fulfill({
       contentType: "application/json",
-      body: JSON.stringify({ ...response, sankey: { ...response.sankey, paths: null } }),
+      body: JSON.stringify({ ...response, traffic: { ...response.traffic, totals: null } }),
     });
   });
   await page.goto("/#/traffic?view=overview&target=private.example");
@@ -29,7 +29,7 @@ test("@compat script errors retain navigation and print diagnostic context witho
   expect(
     report.responses.some(
       (response: { path: string; shape: Record<string, string> }) =>
-        response.path === "/traffic" && response.shape["sankey.paths"] === "null",
+        response.path === "/traffic" && response.shape["traffic.totals"] === "null",
     ),
   ).toBe(true);
   for (const secret of ["private-password", "fixture-csrf", "private.example"])
@@ -39,6 +39,47 @@ test("@compat script errors retain navigation and print diagnostic context witho
     .toBe(true);
   await page.getByRole("link", { name: "Outbounds", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Outbounds", exact: true })).toBeVisible();
+});
+
+test("@compat Traffic recovers from startup unavailability and null empty collections", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  data.state.data_state = "starting";
+  let available = false;
+  let populated = false;
+  await page.route("**/api/v1/traffic?**", (route) => {
+    if (!available)
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "data_unavailable" } }),
+      });
+    const response = trafficFixture();
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(
+        populated
+          ? response
+          : {
+              traffic: { ...response.traffic, records: null, total: 0 },
+              sankey: { ...response.sankey, nodes: null, links: null, paths: null, total: 0 },
+            },
+      ),
+    });
+  });
+  await page.goto("/#/traffic?view=overview");
+  await expect.poll(() => data.requests.some((request) => request.path === "/state")).toBe(true);
+  await expect(page.locator(".errorToast")).toBeVisible();
+  available = true;
+  await expect(page.locator("main")).toContainText("Paths appear when traffic enters KONE.");
+  await page.getByRole("link", { name: "Connections", exact: true }).click();
+  await expect(page.locator("main")).toContainText("No matching records. Adjust your filters.");
+  populated = true;
+  await expect(
+    page.locator("main").getByRole("button", { name: "www.google.com", exact: true }).first(),
+  ).toBeVisible();
+  await expect(page.locator("main")).not.toContainText("[KONE Web] Script error:");
 });
 
 test("@compat default direct routing starts immediately; only real blockers require recovery", async ({

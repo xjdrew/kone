@@ -26,6 +26,10 @@ export interface Auth {
   locale?: string;
   password_configured?: boolean;
 }
+
+// Collection fields may arrive as null while talking to a helper-backed host.
+const trafficRecords = (data: Traffic): Traffic => ({ ...data, records: data.records ?? [] });
+
 export const api = {
   auth: (signal?: AbortSignal) => request<Auth>("/auth", { signal }),
   session: (body: object) =>
@@ -43,10 +47,20 @@ export const api = {
     request<Operation>(`/operations/${encodeURIComponent(id)}`, { signal }),
   operations: (signal?: AbortSignal) =>
     request<{ operations: Operation[] }>("/operations", { signal }),
-  traffic: (values: TrafficFilter & { metric?: string }, signal?: AbortSignal) =>
-    request<TrafficResponse>(`/traffic?${query({ ...values })}`, { signal }),
+  traffic: async (values: TrafficFilter & { metric?: string }, signal?: AbortSignal) => {
+    const data = await request<TrafficResponse>(`/traffic?${query({ ...values })}`, { signal });
+    return {
+      traffic: trafficRecords(data.traffic),
+      sankey: {
+        ...data.sankey,
+        nodes: data.sankey.nodes ?? [],
+        links: data.sankey.links ?? [],
+        paths: data.sankey.paths ?? [],
+      },
+    };
+  },
   flows: (values: TrafficFilter, signal?: AbortSignal) =>
-    request<Traffic>(`/flows?${query({ ...values })}`, { signal }),
+    request<Traffic>(`/flows?${query({ ...values })}`, { signal }).then(trafficRecords),
   flow: (id: string, signal?: AbortSignal) =>
     request<import("../model").Flow>(`/flows/${encodeURIComponent(id)}`, { signal }),
   dnsConfiguration: (signal?: AbortSignal) =>
