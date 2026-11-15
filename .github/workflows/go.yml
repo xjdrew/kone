@@ -134,7 +134,7 @@ jobs:
       - name: Regress upstream PE loader pointer bounds
         if: ${{ matrix.os == 'windows-latest' }}
         run: just ci test-pe
-      - name: Regress Windows packaging without PowerShell 7
+      - name: Regress Windows packaging, arguments and Bun launchers
         if: ${{ matrix.os == 'windows-latest' }}
         run: just ci test-windows-package
       - name: Check out exact PR base for coverage

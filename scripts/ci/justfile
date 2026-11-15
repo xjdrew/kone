@@ -108,7 +108,7 @@ test-tasks *args:
     task_arguments test-tasks "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    node --test "$KONE_TASK_ROOT"/test/tasks/*.test.mjs "$KONE_TASK_ROOT/scripts/tasks/init.test.mjs" "$KONE_TASK_ROOT/test/integration/init.test.mjs"
+    node --test "$KONE_TASK_ROOT"/test/tasks/*.test.mjs "$KONE_TASK_ROOT/scripts/tasks/init.test.mjs" "$KONE_TASK_ROOT/test/integration/init.test.mjs" "$KONE_TASK_ROOT/test/integration/windows-bun.test.mjs"
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
@@ -270,7 +270,7 @@ test-windows-package *args:
     task_arguments test-windows-package "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    node --test "$KONE_TASK_ROOT/test/integration/windows-package.test.mjs" "$KONE_TASK_ROOT/test/integration/windows-native-argv.test.mjs"
+    node --test "$KONE_TASK_ROOT/test/integration/windows-package.test.mjs" "$KONE_TASK_ROOT/test/integration/windows-native-argv.test.mjs" "$KONE_TASK_ROOT/test/integration/windows-bun.test.mjs"
 
 [group('Go, builds and quality')]
 [script('bash', '-euo', 'pipefail')]

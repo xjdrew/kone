@@ -1,4 +1,4 @@
-import { ensureWebDependencies, main, npm } from "./common.mjs";
+import { bun, ensureWebDependencies, main, npm } from "./common.mjs";
 import { showHelp } from "./help.mjs";
 
 function minimumVersion(format, minimum) {
@@ -29,7 +29,9 @@ export async function initialize(ctx) {
     try {
       // Inspect the installed SDK without triggering a module-driven download.
       const settings = command === "go" ? { env: { ...ctx.env, GOTOOLCHAIN: "local" } } : {};
-      const version = ctx.run(command, args, { ...settings, capture: true });
+      const version = command === "bun"
+        ? bun(ctx, args, { capture: true })
+        : ctx.run(command, args, { ...settings, capture: true });
       const detected = version.split(/\r?\n/)[0];
       if (valid(version)) installed.push(`${command}: ${detected}`);
       else issues.push(`${command}: installed ${detected}; requires ${label}. Update this tool.`);

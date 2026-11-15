@@ -33,6 +33,11 @@ async function fixture(t, options = {}) {
   const calls = [];
   const logs = [];
   const run = (command, args, settings = {}) => {
+    const bunMarker = args.indexOf("kone-bun");
+    if (command === "bash" && bunMarker !== -1) {
+      command = "bun";
+      args = args.slice(bunMarker + 1);
+    }
     calls.push({ command, args, settings });
     if (command === options.missing) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
     if (command === "git") return args[0] === "rev-parse" ? sha : "git version 2.50";

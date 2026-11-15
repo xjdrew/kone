@@ -2,6 +2,8 @@
 
 ## Bugfixes
 
+- Recognize Bun shell launchers on Windows during initialization, dependency installation and builds.
+
 - Accept compatible development tools during initialization (Go 1.27+, Bun 1.4+, Node 22.12+, just 1.55+) without downloading a Go toolchain during version detection.
 
 - Keep processed connection-health incidents closed when earlier probes finish, including on coarse clocks.

@@ -15,6 +15,8 @@
 
 本地初始化按最低兼容版本检查，允许更高的稳定版本，不要求与 CI 完全一致。Go 版本探测使用本机 SDK，不触发工具链自动下载。Git、Bash、npm 只检查可执行性；Windows 使用 Git Bash，并确保 `go`、`bun` 等命令已加入当前终端的 PATH。
 
+Windows 下的 Bun 检测、依赖安装与构建统一通过 Git Bash 解析命令，兼容直接安装的 `bun.exe` 和 npm 等安装方式生成的启动脚本。
+
 CI 固定 Go 1.27.4、Node 26.13.0、Bun 1.4.4、just 1.59.0，容器发布使用 Go 1.27.4；这些验证版本与本地最低要求独立维护。`web/package.json` 的 `packageManager` 记录参考 Bun 版本，依赖仍由锁文件固定。
 
 在仓库根目录运行：

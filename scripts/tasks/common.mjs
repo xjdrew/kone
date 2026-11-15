@@ -36,6 +36,10 @@ export function npm(ctx, args, settings = {}) {
 }
 
 export function bun(ctx, args, settings = {}) {
+  // npm installs may expose Bun as a shell/.cmd shim rather than bun.exe.
+  // Use the same Git Bash resolver as just, with arguments passed as data.
+  if (ctx.platform === "win32")
+    return ctx.run("bash", ["-euo", "pipefail", "-c", 'exec bun "$@"', "kone-bun", ...args], settings);
   return ctx.run("bun", args, settings);
 }
 
