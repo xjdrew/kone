@@ -15,6 +15,9 @@ import (
 func captureRoutes(cfg CoreConfig, rule *Rule) []string {
 	seen := map[string]bool{}
 	add := func(prefix string) { seen[prefix] = true }
+	for _, prefix := range rule.retired {
+		add(prefix.String())
+	}
 	if cfg.AutoRoute {
 		add("0.0.0.0/1")
 		add("128.0.0.0/1")
@@ -26,6 +29,11 @@ func captureRoutes(cfg CoreConfig, rule *Rule) []string {
 	for _, pattern := range rule.patterns {
 		p, ok := pattern.(IPCIDRPattern)
 		if !ok || rule.OutboundType(p.Proxy()) == OutboundDirect {
+			continue
+		}
+		if slices.ContainsFunc(rule.protected, func(protected netip.Prefix) bool {
+			return protected.Bits() <= p.prefix.Bits() && protected.Contains(p.prefix.Addr())
+		}) {
 			continue
 		}
 		if p.prefix.Addr().Is6() && cfg.IPv6Network == "" {

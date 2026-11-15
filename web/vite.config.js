@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -21,12 +22,15 @@ function lineEndings() {
       if (!publicDirectory) return;
       const visit = async (directory, prefix = "") => {
         for (const entry of await readdir(directory, { withFileTypes: true })) {
-          const path = join(directory, entry.name), name = prefix + entry.name;
+          const path = join(directory, entry.name),
+            name = prefix + entry.name;
           if (entry.isDirectory()) await visit(path, `${name}/`);
-          else if (entry.isFile() && entry.name.endsWith(".svg")) this.emitFile({
-            type: "asset", fileName: name,
-            source: (await readFile(path, "utf8")).replace(/\r\n?/g, "\n"),
-          });
+          else if (entry.isFile() && entry.name.endsWith(".svg"))
+            this.emitFile({
+              type: "asset",
+              fileName: name,
+              source: (await readFile(path, "utf8")).replace(/\r\n?/g, "\n"),
+            });
         }
       };
       await visit(publicDirectory);
@@ -35,7 +39,7 @@ function lineEndings() {
 }
 
 export default defineConfig({
-  plugins: [lineEndings()],
+  plugins: [react(), lineEndings()],
   build: {
     // All UI code is one offline module; native module support is sufficient.
     modulePreload: false,

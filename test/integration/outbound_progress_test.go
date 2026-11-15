@@ -77,6 +77,7 @@ func TestExplicitOutboundProbeReportsLiveProgressAndMeasuredEvidenceOverHTTP(t *
 	call("POST", "auth/password", map[string]any{"password": "outbound-evidence-password", "confirm_password": "outbound-evidence-password"})
 	doc := call("GET", "config", nil)
 	config := doc["config"].(map[string]any)
+	config["policy"] = map[string]any{"mode": "custom"}
 	config["dns"] = map[string]any{"system": false, "servers": []string{"127.0.0.1:9"}}
 	config["outbounds"] = []map[string]any{{"name": "measured", "url": strings.Replace(proxy.URL, "://", "://probe-user:private-probe-key@", 1)}}
 	config["rules"] = []map[string]any{{"type": "FINAL", "outbound": "measured"}}

@@ -103,6 +103,7 @@ func TestUDPDiagnosticRequiresMatchedDNSResponseAndSeparatesDNSOutcome(t *testin
 				require.Equal(t, "127.0.0.1:53", address)
 				return conn, nil
 			}
+			one.policy.Load().outbounds.directDial = one.policy.Load().outbounds.dial
 			var progress []DiagnosticResult
 			ctx := WithDiagnosticProgress(t.Context(), func(value DiagnosticResult) { progress = append(progress, value) })
 			result, err := one.ProbeDiagnosticRequestVersion(ctx, BuiltinDirect, "127.0.0.1:53", DiagnosticOptions{Protocol: "udp"}, 0)
@@ -148,6 +149,7 @@ func TestUDPDiagnosticRejectsFallbackDisabledVirtualAndUnappliedBeforeNetwork(t 
 		t.Fatal("policy/capability/identity failure must not dial")
 		return nil, errors.New("unexpected")
 	}
+	one.policy.Load().outbounds.directDial = one.policy.Load().outbounds.dial
 	for _, tc := range []struct {
 		name, target, stage, status string
 		version                     uint64
@@ -197,6 +199,7 @@ func TestUDPDiagnosticUsesPinnedResolverAndExplicitAddressFamily(t *testing.T) {
 				}
 				return &diagnosticDNSConn{}, nil
 			}
+			one.policy.Load().outbounds.directDial = one.policy.Load().outbounds.dial
 			r, err := one.ProbeDiagnosticRequestVersion(t.Context(), BuiltinDirect, "resolver.invalid:53", DiagnosticOptions{Protocol: "udp", AddressFamily: family, DNSType: "AAAA"}, 0)
 			require.NoError(t, err)
 			require.Equal(t, "reachable", r.Status)
@@ -217,6 +220,7 @@ func TestUDPDiagnosticCancellationClosesBlockedSocket(t *testing.T) {
 	defer peer.Close()
 	entered := make(chan struct{})
 	one.policy.Load().outbounds.dial = func(context.Context, string, string) (net.Conn, error) { close(entered); return client, nil }
+	one.policy.Load().outbounds.directDial = one.policy.Load().outbounds.dial
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan DiagnosticResult, 1)
 	go func() {
@@ -239,6 +243,7 @@ func TestDiagnosticsRejectMappedAndZonedUnspecifiedTargetsBeforeDialing(t *testi
 		t.Fatal("unspecified diagnostic targets must never open a socket")
 		return nil, errors.New("unexpected dial")
 	}
+	one.policy.Load().outbounds.directDial = one.policy.Load().outbounds.dial
 	for _, target := range []string{"[::ffff:0.0.0.0]:53", "[::%lo0]:53", "[::ffff:224.0.0.1]:53"} {
 		require.Error(t, ValidateDiagnosticTarget(target), target)
 		for _, protocol := range []string{"tcp", "udp"} {

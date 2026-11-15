@@ -7,6 +7,24 @@
 # 日志格式：text 或 json，均输出到 stderr。
 # log-format = "text"
 
+# 可选基础策略元数据；省略保持旧配置行为，管理新配置默认 direct-first。
+# [policy]
+# rule-version = 1 # legacy ordered rules; 2: protection, domain, IP, FINAL
+# preferred-proxy-id = "" # stable [[outbounds]].id, shared by Global FINAL and Smart
+# mode = "direct-first" # direct-first / proxy-first / custom；须与无条件 FINAL 一致
+# ipv4-only = false # proxy-first 默认覆盖可用 IPv6；仅 IPv4 时须显式 true
+# udp-exception = false # HTTP/HTTPS 出站的 UDP direct 回退须显式同意
+# 全局代理还须 core.auto-route、真实出口、可用默认代理及相应 IPv6 接管。
+
+# 管理模式首次使用全局策略后记录此标记；局域网直连规则可编辑，删除后不会补回。
+# lan-defaults-initialized = false
+
+# [policy.smart]
+# enabled = false # 兼容一期建议设置；不授予自动选择权限
+# auto-enabled = false # 新的临时出口选择授权；默认关闭，监控仍运行
+# candidates = ["office-proxy"] # 可选，稳定出站 ID；最多 16 个
+# allow-direct = false # 全局代理回退直连须显式允许
+
 [core]
 # 新建的 TUN 名称；空字符串自动分配。macOS 指定时必须使用 utunN。
 # 不得使用已有网卡名称；创建和修改网络需要管理员/root 权限。
@@ -38,12 +56,18 @@ stack = "system"
 # [dns] 整段可省略；默认在启动前读取当前系统 DNS，用于真实域名解析。
 # 系统上游会固定到本次运行，规则热更新不会重读已指向 KONE 的网卡 DNS。
 # [dns]
-# 可选系统 DNS 引导：Linux 使用 resolved 自有 link，macOS 使用临时解析服务，Windows 使用自有 NRPT 根规则。
-# Linux 需要已有 resolved stub；三平台均验证真实上游，只恢复自有状态，不覆盖物理/VPN DNS。
-# Windows 要求监听端口为 53；已有根规则、域策略或严格加密策略冲突时拒绝启用。
-# CLI 默认 false；三平台管理模式首次默认 true，可在界面关闭，既有选择保持不变。
+# persistent-fake-ip = false # v2: durable address ownership, administrator-owned host storage
+# retired-fake-ip-pools = [] # migration tombstones; old cached IPs remain captured and rejected
+# 模式：host 接管本机 DNS；gate 只向局域网提供 DNS，系统 DNS 保持不变。
+# 管理模式新配置默认 host。空值仅兼容旧 CLI 配置，此时由 system 决定是否接管。
+# mode = ""
+# Gate 监听的本机地址，通常选择局域网网卡 IP；避免 0.0.0.0:53 与系统 stub 端口冲突。
+# listen-address = "192.168.1.2"
+# 兼容旧配置的开关；显式 mode 优先，界面不再使用此开关。
 # system = false
-# 上游 DNS 地址；省略或 [] 使用系统 DNS，不内置公共 DNS 作为回退。
+# Host：Linux 优先 resolved；其他 Linux 临时替换本机 resolv.conf 入口，停止后恢复原文件/符号链接。
+# macOS 使用临时解析服务，Windows 使用自有 NRPT；启动前固定原始上游，避免回环。
+# 上游省略或 [] 时读取系统 DNS。Host/Gate 获取不到时告警并使用 Google/Cloudflare 公共默认值。
 # 可指定 IPv4/IPv6 地址和端口，例如 ["1.1.1.1", "[2001:4860:4860::8888]:53"]。
 # 不得指向 KONE 虚拟网段；IPv6 上游地址不代表支持 IPv6 流量代理。
 # servers = []
@@ -112,12 +136,19 @@ url = "http://127.0.0.1:8080"
 # 回退不改变 TCP 或 reject 规则；可随代理/规则热更新。
 # udp-fallback = ""
 
+# 管理模式每 60 秒通过真实代理协议检查目标；暂停接管后仍检查，文件/CLI 模式不执行。
+# check-enabled = true
+# 连接目标可只填域名/IP，省略端口默认使用 80；DNS 上游仍默认使用 53。
+# check-target = "example.com:443"
+# check-tls = true
+
 # 规则按顺序匹配，outbound 引用代理名称或内置 direct、reject（小写）。
 # direct：KONE 接收后直接连接目标；reject：拒绝连接，域名 DNS 查询返回 REFUSED。
 # type：DOMAIN、DOMAIN-SUFFIX、DOMAIN-KEYWORD、IP-CIDR、IP-CIDR6、GEOIP、FINAL。
 # pattern：域名/后缀/关键词、IPv4/IPv6 CIDR 或大写两字母国家代码；FINAL 不填。
 # FINAL 可省略，但写出时必须是最后一条；没有匹配规则时隐式直连。
 # Web 将 FINAL 固定在底部分组，仅编辑兜底出站，普通规则的匹配方式不包含 FINAL。
+
 [[rules]]
 # 可选稳定规则标识与来源；管理界面自动分配，手写配置可省略。
 # id = "local-network"

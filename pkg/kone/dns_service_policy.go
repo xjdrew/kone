@@ -2,6 +2,7 @@ package kone
 
 import (
 	"context"
+	"net"
 	"strconv"
 	"strings"
 
@@ -29,6 +30,27 @@ func serviceBindingBaseName(name string, kind uint16) string {
 func (d *Dns) queryServiceBinding(ctx context.Context, s *runtimeSnapshot, request *dns.Msg) (*dns.Msg, error) {
 	owner := normalizeDomain(request.Question[0].Name)
 	base := serviceBindingBaseName(owner, request.Question[0].Qtype)
+	if s.rule.layered {
+		// Service hints must not bypass the identity retained by A/AAAA policy.
+		addressReply, err := d.queryLayered(ctx, s, new(dns.Msg).SetQuestion(dns.Fqdn(base), dns.TypeA))
+		if err != nil {
+			return nil, err
+		}
+		captured := addressReply.Rcode == dns.RcodeRefused
+		for _, address := range dnsAddresses(addressReply) {
+			if d.one.dnsTable.IsLocalIP(net.ParseIP(address)) {
+				captured = true
+			}
+		}
+		if captured {
+			reply := new(dns.Msg).SetReply(request)
+			reply.RecursionAvailable = true
+			reply.Rcode = addressReply.Rcode
+			return reply, nil
+		}
+		return d.resolve(ctx, request)
+	}
+
 	policy := func(response *dns.Msg) string {
 		if owner == base {
 			return s.rule.ProxyDNS(owner, response)

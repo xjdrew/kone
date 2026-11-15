@@ -1,0 +1,75 @@
+.content {
+  min-height: 0;
+  overflow: auto;
+  max-height: 52dvh;
+  overflow-wrap: anywhere;
+}
+.checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.check {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.check[data-blocked="true"] {
+  border-inline-start: 2px solid var(--danger);
+  padding-inline-start: 12px;
+  margin-bottom: 8px;
+}
+.heading,
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px 12px;
+}
+.heading strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.check p,
+.footer p {
+  margin: 8px 0;
+  line-height: 1.6;
+}
+.actions {
+  font-size: 12px;
+}
+.details {
+  min-width: 0;
+  flex: 1;
+}
+.details pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.details summary,
+.group > summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+.group > summary {
+  padding: 10px 0;
+}
+.footer {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+.footer p {
+  color: var(--muted);
+  font-size: 12px;
+}
+.buttons {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.buttons button:disabled {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--muted);
+}

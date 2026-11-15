@@ -10,6 +10,16 @@ import (
 // unbounded prompts. Canceled callers immediately abandon their private pipes.
 var authorizationSlot = make(chan struct{}, 1)
 
+// AuthorizationError carries a stable UI code without parsing OS error prose.
+type AuthorizationError struct {
+	Code  string
+	Cause error
+}
+
+func (e *AuthorizationError) Error() string     { return e.Code + ": " + e.Cause.Error() }
+func (e *AuthorizationError) Unwrap() error     { return e.Cause }
+func (e *AuthorizationError) ErrorCode() string { return e.Code }
+
 func boundedAuthorization(ctx context.Context, launch func() error, slot chan struct{}) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -17,7 +27,7 @@ func boundedAuthorization(ctx context.Context, launch func() error, slot chan st
 	select {
 	case slot <- struct{}{}:
 	default:
-		return errors.New("a previous administrator authorization is still pending; finish or cancel that dialog before retrying")
+		return &AuthorizationError{Code: "authorization_pending", Cause: errors.New("a previous administrator authorization is still pending; finish or cancel that dialog before retrying")}
 	}
 	result := make(chan error, 1)
 	go func() { err := func() error { defer func() { <-slot }(); return launch() }(); result <- err }()

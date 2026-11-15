@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/xjdrew/kone/pkg/dnsconfig"
 	"github.com/xjdrew/kone/pkg/proxy"
 )
 
@@ -43,6 +42,10 @@ type CoreConfig struct {
 }
 
 type DNSConfig struct {
+	PersistentFakeIP bool             `toml:"persistent-fake-ip,omitempty"`
+	RetiredPools     []string         `toml:"retired-fake-ip-pools,omitempty"`
+	Mode             string           `toml:"mode,omitempty"`
+	ListenAddress    string           `toml:"listen-address,omitempty"`
 	System           bool             `toml:"system"`
 	ListenPort       uint16           `toml:"listen-port"`
 	TTL              uint             `toml:"ttl"`
@@ -55,6 +58,19 @@ type DNSConfig struct {
 	CacheLimit       uint             `toml:"cache-limit"`
 	Rules            []DNSRouteConfig `toml:"rules,omitempty"`
 	SystemContext    DNSSystemContext `toml:"-"`
+}
+
+func (cfg DNSConfig) SystemEnabled() bool {
+	if cfg.Mode != "" {
+		return cfg.Mode == "host"
+	}
+	return cfg.System
+}
+
+// PublicDNSDefaults are used only when automatic system discovery has no usable
+// upstream. Explicit user servers and private split-DNS routes never fall back.
+func PublicDNSDefaults() []string {
+	return []string{"8.8.8.8:53", "8.8.4.4:53", "1.1.1.1:53", "1.0.0.1:53"}
 }
 
 type DNSRouteConfig struct {
@@ -79,11 +95,14 @@ const (
 )
 
 type OutboundConfig struct {
-	ID          string `toml:"id,omitempty"`
-	Enabled     *bool  `toml:"enabled,omitempty"`
-	Name        string `toml:"name"`
-	URL         string `toml:"url"`
-	UDPFallback string `toml:"udp-fallback,omitempty"`
+	ID           string `toml:"id,omitempty"`
+	Enabled      *bool  `toml:"enabled,omitempty"`
+	Name         string `toml:"name"`
+	URL          string `toml:"url"`
+	UDPFallback  string `toml:"udp-fallback,omitempty"`
+	CheckEnabled *bool  `toml:"check-enabled,omitempty"`
+	CheckTarget  string `toml:"check-target,omitempty"`
+	CheckTLS     *bool  `toml:"check-tls,omitempty"`
 }
 
 func builtinOutbounds() map[string]OutboundType {
@@ -106,6 +125,7 @@ type RuleConfig struct {
 
 type KoneConfig struct {
 	source    any
+	Policy    PolicyConfig     `toml:"policy,omitempty"`
 	General   GeneralConfig    `toml:"general"`
 	Core      CoreConfig       `toml:"core"`
 	DNS       DNSConfig        `toml:"dns"`
@@ -202,6 +222,23 @@ func parseConfig(source any, environment bool) (*KoneConfig, error) {
 			}
 		}
 	}
+	for i := range cfg.Outbounds {
+		outbound := &cfg.Outbounds[i]
+		if outbound.CheckTarget != "" {
+			target, err := NormalizeConnectionTarget(outbound.CheckTarget)
+			if err != nil {
+				return nil, fmt.Errorf("outbounds[%d].check-target: %w", i+1, err)
+			}
+			outbound.CheckTarget = target
+		}
+		if parsed, err := proxy.FromUrl(outbound.URL); err == nil {
+			original, err := url.Parse(outbound.URL)
+			if err == nil && original.Port() == "" {
+				original.Host = parsed.Url.Host
+				outbound.URL = original.String()
+			}
+		}
+	}
 	for i, addr := range cfg.DNS.Servers {
 		normalized, err := normalizeDNSServer(addr)
 		if err != nil {
@@ -257,12 +294,17 @@ func validateOutbounds(config []OutboundConfig) (map[string]OutboundType, error)
 			return nil, fail("duplicate outbound name " + o.Name)
 		}
 		if _, err := proxy.FromUrl(o.URL); err != nil {
-			return nil, fail("invalid proxy URL (expected http, https, socks5 or ss with host and port)")
+			return nil, fail("invalid proxy URL (expected http, https, socks5 or ss with a host and optional port)")
 		}
 		// Keep fallback targets terminal: never recurse through another
 		// unsupported proxy or a cycle.
 		if o.UDPFallback != "" && o.UDPFallback != BuiltinDirect && o.UDPFallback != BuiltinReject {
 			return nil, fail("udp-fallback must be direct or reject")
+		}
+		if o.CheckTarget != "" {
+			if _, err := NormalizeConnectionTarget(o.CheckTarget); err != nil {
+				return nil, fail("check-target requires a valid domain/IP and an optional port (default 80)")
+			}
 		}
 		types[o.Name] = OutboundProxy
 	}
@@ -275,6 +317,14 @@ func effectiveDNSConfig(cfg DNSConfig, read func() ([]string, error)) (DNSConfig
 	cfg.Servers = slices.Clone(cfg.Servers)
 	if len(cfg.Servers) == 0 {
 		servers, err := read()
+		if err != nil || len(servers) == 0 {
+			if cfg.Mode != "" || cfg.SystemEnabled() {
+				cfg.Servers = PublicDNSDefaults()
+				cfg.SystemContext.PublicFallback = true
+				cfg.SystemContext.Source = "public_fallback"
+				return cfg, nil
+			}
+		}
 		if err != nil {
 			return cfg, fmt.Errorf("read system DNS: %w (set dns.servers explicitly)", err)
 		}
@@ -294,7 +344,7 @@ func effectiveDNSConfig(cfg DNSConfig, read func() ([]string, error)) (DNSConfig
 }
 
 func systemDNSServers() ([]string, error) {
-	config := dnsconfig.ReadDnsConfig()
+	config := readPlatformDNSConfig()
 	return config.Servers, config.Err
 }
 
@@ -330,6 +380,9 @@ func validatePort(value string) error {
 
 // Validate runs before a device is created or any system routes are changed.
 func (cfg *KoneConfig) Validate() error {
+	if err := cfg.ValidatePolicy(); err != nil {
+		return err
+	}
 	if cfg == nil {
 		return errors.New("config is nil")
 	}
@@ -379,6 +432,32 @@ func (cfg *KoneConfig) Validate() error {
 	}
 	if cfg.DNS.ListenPort == 0 {
 		return errors.New("dns.listen-port must be nonzero")
+	}
+	if cfg.DNS.PersistentFakeIP && cfg.Policy.RuleVersion != 2 {
+		return errors.New("persistent Fake-IP ownership requires policy.rule-version = 2")
+	}
+	if len(cfg.DNS.RetiredPools) > fakeLedgerPoolLimit || len(cfg.DNS.RetiredPools) > 0 && !cfg.DNS.PersistentFakeIP {
+		return errors.New("retired Fake-IP pools require bounded persistent ownership")
+	}
+	for _, value := range cfg.DNS.RetiredPools {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil || prefix != prefix.Masked() || NewDnsIPPool(prefix).Capacity() == 0 {
+			return errors.New("invalid retired Fake-IP pool")
+		}
+		for _, active := range []string{cfg.Core.Network, cfg.Core.IPv6Network} {
+			if pool, err := netip.ParsePrefix(active); err == nil && pool.Overlaps(prefix) {
+				return errors.New("active and retired Fake-IP pools must not overlap")
+			}
+		}
+	}
+	if cfg.DNS.Mode != "" && cfg.DNS.Mode != "host" && cfg.DNS.Mode != "gate" {
+		return errors.New("dns.mode must be host or gate")
+	}
+	if cfg.DNS.Mode == "gate" {
+		ip, err := netip.ParseAddr(cfg.DNS.ListenAddress)
+		if err != nil || ip.IsMulticast() {
+			return errors.New("gate DNS requires a local dns.listen-address")
+		}
 	}
 	if cfg.DNS.TTL == 0 || cfg.DNS.TTL > math.MaxUint32 {
 		return errors.New("dns.ttl must be between 1 and 4294967295 seconds")

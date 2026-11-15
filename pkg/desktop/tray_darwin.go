@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -52,7 +53,8 @@ func RunTray(ctx context.Context, actions TrayActions) error {
 	if os.Geteuid() == 0 {
 		return errors.New("macOS menu bar management must run as an ordinary desktop user")
 	}
-	command := exec.Command("/usr/bin/osascript", "-l", "JavaScript", "-e", web.MacOSTrayScript)
+	labels, _ := json.Marshal(trayLabels())
+	command := exec.Command("/usr/bin/osascript", "-l", "JavaScript", "-e", "var koneTrayLabels = "+string(labels)+";\n"+web.MacOSTrayScript)
 	input, err := command.StdinPipe()
 	if err != nil {
 		return err

@@ -49,7 +49,7 @@ web-deps *args:
     task_arguments web-deps "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    cd web && npm ci
+    if [[ -f web/bun.lock ]]; then cd web && bun install --frozen-lockfile; else cd web && npm ci; fi
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
@@ -59,7 +59,7 @@ web-dev *args:
     task_arguments web-dev "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    cd web && npm run dev
+    if [[ -f web/bun.lock ]]; then cd web && bun run dev; else cd web && npm run dev; fi
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
@@ -69,7 +69,7 @@ web-preview *args:
     task_arguments web-preview "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    cd web && npm run preview
+    if [[ -f web/bun.lock ]]; then cd web && bun run preview; else cd web && npm run preview; fi
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
@@ -79,7 +79,15 @@ test-web *args:
     task_arguments test-web "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    cd web && npm test
+    if [[ -f web/bun.lock ]]; then
+      cd web
+      bun run fmt:check
+      bun run lint
+      bun run typecheck
+      bun run test
+    else
+      cd web && npm test
+    fi
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
@@ -120,7 +128,16 @@ web-build *args:
     task_arguments web-build "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    cd web && npm run build
+    if [[ -f web/bun.lock ]]; then
+      node "$KONE_TASK_ROOT/scripts/tasks/web-notices.mjs"
+      cd web
+      bun run build
+      bun run test:build
+    else
+      cd web
+      npm run build
+      node --test test/build.test.mjs
+    fi
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
@@ -130,7 +147,8 @@ web-check *args:
     task_arguments web-check "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    git diff --exit-code -- web/dist
+    if [[ -f web/bun.lock ]]; then node "$KONE_TASK_ROOT/scripts/tasks/web-notices.mjs" --check; fi
+    git diff --exit-code -- web/dist licenses/web-third-party.txt
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
@@ -140,7 +158,7 @@ web-browsers *args:
     task_arguments web-browsers "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     if (( TASK_ARG_COUNT )); then set -- "${TASK_ARGS[@]}"; else set --; fi
-    cd web && npx playwright install --with-deps chromium webkit firefox
+    if [[ -f web/bun.lock ]]; then cd web && bunx playwright install --with-deps chromium webkit firefox; else cd web && npx playwright install --with-deps chromium webkit firefox; fi
 
 [group('Web and contracts')]
 [script('bash', '-euo', 'pipefail')]
@@ -161,7 +179,7 @@ test-web-e2e-mock *args:
     task_arguments test-web-e2e-mock "$@"
     if [[ "$TASK_HELP" == true ]]; then exit 0; fi
     cd web
-    npx playwright test console.spec.js --project=chromium-1440x900 --grep-invert '@real'
+    bunx playwright test console.spec.ts --project=chromium --grep-invert '@real'
 
 # Explicit maintenance only; ordinary builds use committed generated resources.
 [group('Go, builds and quality')]

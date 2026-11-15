@@ -45,8 +45,6 @@ func TestResetConfigurationRestoresAllManagedDefaults(t *testing.T) {
 	installResetGeoIP(t, c)
 	_, remote, err := c.passwordSession("control-test-password", true)
 	require.NoError(t, err)
-	pair, err := c.pair("read")
-	require.NoError(t, err)
 	server := httptest.NewServer(c.Handler())
 	c.mu.Lock()
 	c.lan = &lanServer{server: server.Config, listener: server.Listener}
@@ -65,8 +63,6 @@ func TestResetConfigurationRestoresAllManagedDefaults(t *testing.T) {
 	require.Equal(t, []string{"info", "info"}, levels)
 	require.Equal(t, false, c.LANStatus()["enabled"])
 	require.False(t, c.revoke(remote.ID), "remote sessions are revoked")
-	_, _, err = c.claim("", pair.Code, true)
-	require.Error(t, err, "unused pairing codes are revoked")
 	require.Equal(t, 200, request(t, c, token, "GET", "/api/v1/state", nil).Code, "local login survives")
 	require.True(t, c.passwordConfigured())
 	repository, err := geoip.OpenRepository(filepath.Join(c.directory, "geoip"))
@@ -185,10 +181,7 @@ func TestResetConfigurationAPIAuthorizationAndInput(t *testing.T) {
 		require.Contains(t, []int{400, 409}, response.Code)
 	}
 	require.Equal(t, 401, request(t, c, "", "POST", "/api/v1/config/defaults", map[string]any{"base_version": 1}).Code)
-	pair, err := c.pair("read")
-	require.NoError(t, err)
-	readToken, _, err := c.claim("", pair.Code, true)
-	require.NoError(t, err)
+	readToken, _ := roleSession(c, "read")
 	require.Equal(t, 403, request(t, c, readToken, "POST", "/api/v1/config/defaults", map[string]any{"base_version": 1}).Code)
 	require.Equal(t, 200, request(t, c, token, "POST", "/api/v1/config/defaults", map[string]any{"base_version": 1}).Code)
 }

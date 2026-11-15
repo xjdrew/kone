@@ -35,6 +35,10 @@ export function npm(ctx, args, settings = {}) {
   return ctx.run("bash", ["-euo", "pipefail", "-c", 'exec npm "$@"', "kone-npm", ...args], settings);
 }
 
+export function bun(ctx, args, settings = {}) {
+  return ctx.run("bun", args, settings);
+}
+
 export async function readJSON(file) {
   try { return JSON.parse(await readFile(file, "utf8")); }
   catch (error) {
@@ -70,7 +74,7 @@ export async function fingerprint(root, names) {
 
 export async function ensureWebDependencies(ctx) {
   const web = join(ctx.cwd, "web");
-  const expected = `${ctx.platform}/${ctx.arch}/${process.versions.node}:${await fingerprint(web, ["package.json", "package-lock.json"])}`;
+  const expected = `${ctx.platform}/${ctx.arch}/${bun(ctx, ["--version"], {capture: true})}:${await fingerprint(web, ["package.json", "bun.lock"])}`;
   const stamp = join(web, "node_modules/.kone-dependencies.json");
   const ready = await readJSON(stamp);
   // Also detect removed dependencies instead of trusting the stamp alone.
@@ -81,11 +85,11 @@ export async function ensureWebDependencies(ctx) {
     return;
   }
   ctx.log("  Installing locked Web dependencies…");
-  npm(ctx, ["ci"], { cwd: web });
+  bun(ctx, ["install", "--frozen-lockfile"], { cwd: web });
   await writeJSON(stamp, { fingerprint: expected });
 }
 
-const webInputs = ["src", "public", "index.html", "vite.config.js", "package.json", "package-lock.json"];
+const webInputs = ["src", "public", "index.html", "vite.config.js", "tsconfig.json", "package.json", "bun.lock", "../pkg/locale/catalog"];
 
 export async function ensureFrontend(ctx) {
   const web = join(ctx.cwd, "web");
@@ -99,7 +103,7 @@ export async function ensureFrontend(ctx) {
   }
   await ensureWebDependencies(ctx);
   ctx.log("  Building embedded Web assets…");
-  npm(ctx, ["run", "build"], { cwd: web });
+  bun(ctx, ["run", "build"], { cwd: web });
   await writeJSON(stamp, { input, output: await fingerprint(web, ["dist"]) });
 }
 

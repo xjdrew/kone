@@ -6,16 +6,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"net"
-	"os"
-	"os/exec"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/xjdrew/kone/pkg/dnsconfig"
-	commandutil "github.com/xjdrew/kone/pkg/internal/command"
+	"github.com/xjdrew/kone/pkg/kone"
 )
 
 type NetworkChange struct {
@@ -33,7 +30,7 @@ func fingerprint(values []string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// sampleNetwork observes only; these commands cannot install routes, change DNS
+// sampleNetwork observes only; native table reads cannot install routes, change DNS
 // or alter an HTTP proxy. Sampling starts after capture is ready so its own
 // setup does not trigger a false external-network change.
 func sampleNetwork(ctx context.Context, ownedTunName string) (networkFingerprint, error) {
@@ -69,47 +66,11 @@ func sampleNetwork(ctx context.Context, ownedTunName string) (networkFingerprint
 		values = append(values, "search:"+search)
 	}
 	result.dns = fingerprint(values)
-	var routeData []byte
-	if runtime.GOOS == "linux" {
-		routeData, err = os.ReadFile("/proc/net/route")
-	} else {
-		queryCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		defer cancel()
-		var command *exec.Cmd
-		if runtime.GOOS == "windows" {
-			command = exec.CommandContext(queryCtx, "route.exe", "print", "-4")
-		} else {
-			command = exec.CommandContext(queryCtx, "route", "-n", "get", "default")
-		}
-		commandutil.Background(command)
-		routeData, err = command.Output()
-	}
+	routes, err := kone.PolicyRouteSnapshot(ownedTunName)
 	if err != nil {
 		return result, errors.New("system route inspection failed")
 	}
-	// Route order is not an ownership signal; normalize complete lines so a
-	// harmless ordering change does not pause a healthy engine.
-	lines := strings.Split(strings.ReplaceAll(string(routeData), "\r\n", "\n"), "\n")
-	if runtime.GOOS == "linux" {
-		values = nil
-		for _, line := range lines {
-			fields := strings.Fields(line)
-			if len(fields) >= 8 && fields[0] != "Iface" {
-				values = append(values, strings.Join([]string{fields[0], fields[1], fields[2], fields[3], fields[6], fields[7]}, " "))
-			}
-		}
-		lines = values
-	} else if runtime.GOOS == "darwin" {
-		values = nil
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "gateway:") || strings.HasPrefix(line, "interface:") || strings.HasPrefix(line, "flags:") {
-				values = append(values, line)
-			}
-		}
-		lines = values
-	}
-	result.routes = fingerprint(lines)
+	result.routes = fingerprint(routes)
 	return result, ctx.Err()
 }
 

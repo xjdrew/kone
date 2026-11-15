@@ -156,7 +156,9 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 		slog.Info("Starting KONE management", "stage", "startup", "version", options.version, "desktop", options.desktop, "capture", "paused")
 		controlOptions := control.Options{Directory: *directory, Version: options.version, LogStore: options.logs}
 		controlOptions.RecoverSystemDNS = func(ctx context.Context, id string) error {
-			return selectSystemDNSRecovery(ctx, id, func() bool { return runtime.GOOS == "windows" && desktop.NeedsHelper() }, kone.RecoverSystemDNS,
+			return selectSystemDNSRecovery(ctx, id, func() bool {
+				return (runtime.GOOS == "windows" || runtime.GOOS == "linux") && desktop.NeedsHelperForConfig(&kone.KoneConfig{DNS: kone.DNSConfig{Mode: "host"}})
+			}, kone.RecoverSystemDNS,
 				func(ctx context.Context, id string) error {
 					return desktop.RecoverSystemDNS(ctx, id, launchManagedHelper)
 				})
@@ -177,7 +179,7 @@ func runWithOptions(ctx context.Context, args []string, stdout, stderr io.Writer
 				if err != nil {
 					return nil, fmt.Errorf("saved GeoIP data needs repair: %w", err)
 				}
-				if desktop.NeedsHelper() {
+				if desktop.NeedsHelperForConfig(cfg) {
 					engine, err := desktop.NewEngine(cfg, launchManagedHelper)
 					if err != nil {
 						return nil, err

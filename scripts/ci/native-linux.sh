@@ -52,6 +52,12 @@ case "$1" in
       for test in TestSystemLifecyclePortFailure TestSystemLifecycleRouteFailure TestSystemLifecycleExclusiveDevice TestSystemLifecycleConcurrentClose TestSystemLifecycleTrafficAndReload TestSystemLifecycleLiveCIDRRoutes TestSystemLifecycleCLISignal TestSystemGatewayLANFullCapture TestSystemIPv6FakeAAAAProxyTCPAndUDP TestSystemIPv6FakeAAAADirectUsesRealAAAAAndUDP6 TestSystemIPv6ListenerAndRouteFailureRestore TestSystemPerformanceBaseline; do
         grep -Fq -- "--- PASS: $test (" "$baseline/$stack.log"
       done
+      if [[ -f pkg/kone/policy.go ]]; then
+        grep -Fq -- "--- PASS: TestSystemLifecycleGlobalPolicyAndPausedTransition (" "$baseline/$stack.log"
+      fi
+      if [[ -f test/integration/helper_linux_test.go ]]; then
+        grep -Fq -- "--- PASS: TestSystemLifecycleLinuxHelper (" "$baseline/$stack.log"
+      fi
     done
     ;;
   dns-tools)

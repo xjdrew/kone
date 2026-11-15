@@ -54,26 +54,31 @@ func readSystemResolverFile(path string) ([]byte, error) {
 }
 
 func CheckSystemDNS(ctx context.Context, cfg DNSConfig) error {
-	if !cfg.System {
+	if !cfg.SystemEnabled() {
 		return nil
 	}
-	return newResolvedDNS(runCommand).check(ctx)
+	err := newResolvedDNS(runCommand).check(ctx)
+	if errors.Is(err, ErrSystemDNSUnavailable) {
+		return checkResolvFileDNS(ctx, cfg)
+	}
+	return err
 }
 
 func (n systemNetwork) ConfigureSystemDNS(ctx context.Context, device Device, core CoreConfig, cfg DNSConfig) (Cleanup, error) {
-	if !cfg.System {
-		return nil, nil
+	cleanup, _, err := n.ConfigureSystemDNSLease(ctx, device, core, cfg)
+	return cleanup, err
+}
+
+func (n systemNetwork) ConfigureSystemDNSLease(ctx context.Context, device Device, core CoreConfig, cfg DNSConfig) (Cleanup, <-chan error, error) {
+	if !cfg.SystemEnabled() {
+		return nil, nil, nil
 	}
 	owned, ok := device.(*singDevice)
 	if !ok || owned == nil || isNilInterface(owned.Tun) {
-		return nil, errors.New("system DNS requires an exclusively owned live TUN device")
+		return nil, nil, errors.New("system DNS requires an exclusively owned live TUN device")
 	}
-	dns := newResolvedDNS(n.run)
-	if err := dns.check(ctx); err != nil {
-		return nil, err
-	}
-	return dns.configure(ctx, device.Name(), core, cfg, func() error {
-		name, err := owned.Tun.Name() // TUNGETIFF uses the open device, not a guessed name.
+	verifyOwned := func() error {
+		name, err := owned.Tun.Name()
 		if err != nil {
 			return err
 		}
@@ -81,7 +86,29 @@ func (n systemNetwork) ConfigureSystemDNS(ctx context.Context, device Device, co
 			return errors.New("owned TUN identity changed")
 		}
 		return nil
-	})
+	}
+	if err := verifyOwned(); err != nil {
+		return nil, nil, err
+	}
+	d := newResolvedDNS(n.run)
+	err := d.check(ctx)
+	if errors.Is(err, ErrSystemDNSUnavailable) {
+		if err := checkResolvFileDNS(ctx, cfg); err != nil {
+			return nil, nil, err
+		}
+		ip, _, err := net.ParseCIDR(core.Network)
+		if err != nil {
+			return nil, nil, err
+		}
+		return hostResolvFile().acquire(ctx, fixTunIP(ip).String())
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup, err := d.configure(ctx, device.Name(), core, cfg, verifyOwned)
+	// The resolved path retains the existing per-link ownership restoration.
+	// File-backed hosts additionally monitor the resolver entry for replacement.
+	return cleanup, make(chan error), err
 }
 
 func busJSON(data []byte, signature string, call bool) (json.RawMessage, error) {
@@ -210,8 +237,14 @@ func resolvedStubConfigured(data []byte) bool {
 
 func (d *resolvedDNS) check(ctx context.Context) error {
 	data, err := d.readFile("/etc/resolv.conf")
-	if err != nil || !resolvedStubConfigured(data) {
-		return errors.New("dns.system requires applications to already use the systemd-resolved stub; configure the OS resolver first or disable this option; KONE never rewrites resolv.conf")
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("%w: no system resolver entry", ErrSystemDNSUnavailable)
+	}
+	if err != nil {
+		return fmt.Errorf("inspect system resolver: %w", err)
+	}
+	if !resolvedStubConfigured(data) {
+		return fmt.Errorf("%w: the host does not use the systemd-resolved stub; use a temporary owned resolv.conf entry for Host mode", ErrSystemDNSUnavailable)
 	}
 	owner, err := d.realm(ctx)
 	if err != nil {

@@ -11,6 +11,11 @@ if [[ -z "${KONE_MANAGEMENT_TEST_BINARY:-}" ]]; then
   go build -tags with_gvisor -o "$KONE_MANAGEMENT_TEST_BINARY" "$entry"
 fi
 cd web
-npx playwright test --project=chromium-1440x900 --grep '@real' --list
-npm run test:e2e
+if [[ -f bun.lock ]]; then
+  bunx playwright test --project=chromium --grep '@real' --list
+  bun run test:e2e
+else
+  npx playwright test --project=chromium --grep '@real' --list
+  npm run test:e2e
+fi
 node e2e/assert-real-results.mjs test-results/results.json

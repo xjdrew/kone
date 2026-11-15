@@ -81,6 +81,7 @@ func TestActiveHelperOutboundProbeStreamsRealStagesThroughPrivateRPC(t *testing.
 	defer c.Close()
 	document := c.Document()
 	config := document["config"].(map[string]any)
+	config["policy"] = map[string]any{"mode": "custom"}
 	config["dns"] = map[string]any{"system": false, "servers": []string{"127.0.0.1:9"}}
 	config["outbounds"] = []map[string]any{{"name": "measured", "url": proxy.URL}}
 	config["rules"] = []map[string]any{{"type": "FINAL", "outbound": "measured"}}

@@ -14,6 +14,7 @@ for (const failure of ["missing", "incompatible", "unusable"]) {
           if (failure === "incompatible") return "go version go1.26.0 linux/amd64";
           throw Object.assign(new Error("failure"), { code: failure === "missing" ? "ENOENT" : "EACCES" });
         }
+        if (command === "bun") return "1.4.4";
         if (command === "node") return "v26.13.0";
         if (command === "just") return "just 1.59.0";
         if (args.includes("kone-npm")) throw new Error("npm unavailable");
@@ -27,11 +28,11 @@ for (const failure of ["missing", "incompatible", "unusable"]) {
     assert.doesNotMatch(output, /extra line/);
     assert.match(output, /Tools needing attention:/);
     assert.match(output, {
-      missing: /go: not found on PATH; install Go 1.27.3/,
-      incompatible: /go: installed go version go1.26.0 linux\/amd64; requires Go 1.27.3. Update this tool/,
-      unusable: /go: could not check version; check that Go 1.27.3 runs/,
+      missing: /go: not found on PATH; install Go 1.27.4/,
+      incompatible: /go: installed go version go1.26.0 linux\/amd64; requires Go 1.27.4. Update this tool/,
+      unusable: /go: could not check version; check that Go 1.27.4 runs/,
     }[failure]);
     assert.match(output, /npm: unavailable; install npm/);
-    assert.equal(calls.length, 6, "only version probes run, including npm after the Go failure");
+    assert.equal(calls.length, 7, "only version probes run, including npm after the Go failure");
   });
 }

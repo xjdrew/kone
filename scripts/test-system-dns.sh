@@ -18,6 +18,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# File-mode acceptance replaces the local resolver directory entry. Isolate
+# the whole parent directory, and keep persistent lease records off the runner.
+cp -a /etc "$KONE_FIXTURE/etc"
+mount --bind "$KONE_FIXTURE/etc" /etc
+mount -t tmpfs -o mode=755 tmpfs /var/lib
+
 # A private /run also hides the host system-bus socket even if a tool ignores
 # DBUS_SYSTEM_BUS_ADDRESS. All resolver state and the local stub stay private.
 mount -t tmpfs -o mode=755 tmpfs /run
@@ -48,7 +54,7 @@ printf 'nameserver 127.0.0.53\noptions timeout:1 attempts:1\n' > "$KONE_FIXTURE/
 KONE_RESOLV_TARGET=$(readlink -m /etc/resolv.conf)
 case "$KONE_RESOLV_TARGET" in
   /run/*) mkdir -p "$(dirname "$KONE_RESOLV_TARGET")"; cp "$KONE_FIXTURE/resolv.conf" "$KONE_RESOLV_TARGET"; chown systemd-resolve:systemd-resolve "$KONE_RESOLV_TARGET" ;;
-  /etc/resolv.conf) mount --bind "$KONE_FIXTURE/resolv.conf" /etc/resolv.conf ;;
+  /etc/resolv.conf) cp "$KONE_FIXTURE/resolv.conf" /etc/resolv.conf ;;
   *) echo 'Unexpected resolver file location; refusing bind mount.' >&2; exit 1 ;;
 esac
 cat > "$KONE_FIXTURE/bus.conf" <<'EOF'
@@ -75,8 +81,8 @@ if [[ -f pkg/kone/stack_modes.go ]]; then stacks=(system gvisor mixed); fi
 for stack in "${stacks[@]}"; do
   export KONE_SYSTEM_TEST=1 KONE_TEST_STACK="$stack"
   output="$KONE_FIXTURE/dns-$stack.log"
-  "$1" -test.run '^TestSystemDNSOwnedLink' -test.v -test.timeout 180s | tee "$output"
-  for test in TestSystemDNSOwnedLinkGuidanceAndRestore TestSystemDNSOwnedLinkRollsBackLateStartupFailure; do
+  "$1" -test.run '^TestSystemDNS(OwnedLink|HostFile)' -test.v -test.timeout 180s | tee "$output"
+  for test in TestSystemDNSOwnedLinkGuidanceAndRestore TestSystemDNSOwnedLinkRollsBackLateStartupFailure TestSystemDNSHostFileGuidanceAndSymlinkRestore; do
     grep -Fq -- "--- PASS: $test (" "$output"
   done
 done

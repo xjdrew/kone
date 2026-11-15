@@ -241,7 +241,7 @@ func CheckSystemDNS(ctx context.Context, cfg DNSConfig) error {
 }
 
 func checkWindowsSystemDNS(ctx context.Context, cfg DNSConfig, request func(context.Context, windowsDNSParameters) (windowsDNSResponse, error)) error {
-	if !cfg.System {
+	if !cfg.SystemEnabled() {
 		return nil
 	}
 	if cfg.ListenPort != 53 {
@@ -263,7 +263,7 @@ func (n systemNetwork) ConfigureSystemDNS(ctx context.Context, device Device, co
 }
 
 func (n systemNetwork) ConfigureSystemDNSLease(ctx context.Context, device Device, core CoreConfig, cfg DNSConfig) (Cleanup, <-chan error, error) {
-	if !cfg.System {
+	if !cfg.SystemEnabled() {
 		return nil, nil, nil
 	}
 	if cfg.ListenPort != 53 {

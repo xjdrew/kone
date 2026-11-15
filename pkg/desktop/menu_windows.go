@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"errors"
+	"github.com/xjdrew/kone/pkg/locale"
 	"math"
 	"unsafe"
 
@@ -64,14 +65,14 @@ func createTrayMenu(actions TrayActions, size int) (_ *trayMenu, result error) {
 		label   string
 		enabled bool
 	}{
-		{1, "Open KONE", actions.Open != nil},
+		{1, locale.Desktop("desktop.open"), actions.Open != nil},
 		{},
-		{4, "Start capture", status.CanStart},
-		{2, "Pause capture", status.CanPause},
+		{4, locale.Desktop("desktop.start"), status.CanStart},
+		{2, locale.Desktop("desktop.pause"), status.CanPause},
 		{},
-		{5, "Diagnostics", status.CanDiagnose},
+		{5, locale.Desktop("desktop.diagnostics"), status.CanDiagnose},
 		{},
-		{3, "Exit KONE", actions.Exit != nil},
+		{3, locale.Desktop("desktop.exit"), actions.Exit != nil},
 	} {
 		flags := uintptr(0)
 		if item.id == 0 {

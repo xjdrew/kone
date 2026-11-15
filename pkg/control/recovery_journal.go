@@ -194,14 +194,14 @@ func mergeSystemDNSRecovery(report RecoveryReport, entries []kone.SystemDNSRecov
 		report.Required, report.CanClear = true, false
 		report.Ownership = "unverified"
 		report.Items = append(report.Items, RecoveryItem{Kind: "system_dns", Status: "unverified", Message: "Machine resolver leases could not be inspected; DNS recovery must be verified before restarting capture"})
-		report.NextAction = "Inspect Windows resolver lease status before clearing the capture record"
+		report.NextAction = "Inspect system resolver lease status before clearing the capture record"
 		return report, errors.Join(journalErr, dnsErr)
 	}
 	if len(entries) > 0 {
 		report.Required, report.CanClear = true, false
 		report.SystemDNS = append([]kone.SystemDNSRecoveryEntry(nil), entries...)
 		report.Ownership = "recorded"
-		report.NextAction = "Explicitly recover the owned Windows DNS lease with administrator authorization before restarting capture"
+		report.NextAction = "Explicitly recover the owned system DNS lease with administrator authorization before restarting capture"
 		for _, entry := range entries {
 			report.Items = append(report.Items, RecoveryItem{Kind: "system_dns", Identity: entry.ID, Status: entry.Status, Message: entry.Message})
 			if !entry.CanRecover {

@@ -21,7 +21,7 @@ func TestRoutingSimulationIdentifiesOrdinaryFinalAndProtectedRules(t *testing.T)
 		{"matched.example", "domain-rule", "DOMAIN", "DOMAIN matched.example", "office", 1},
 		{"unmatched.example", "fallback-rule", "FINAL", "FINAL", BuiltinReject, 2},
 		{"192.0.2.1", "fallback-rule", "FINAL", "FINAL", BuiltinReject, 2},
-		{"endpoint.example", "protected:endpoint", "PROTECTED", "Proxy endpoint bypass", BuiltinDirect, 0},
+		{"endpoint.example", "fallback-rule", "FINAL", "FINAL", BuiltinReject, 2},
 	} {
 		for _, port := range []uint16{80, 443} {
 			for _, protocol := range []string{"tcp", "udp"} {

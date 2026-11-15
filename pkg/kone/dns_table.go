@@ -106,9 +106,12 @@ func (record *DomainRecord) Touch() {
 }
 
 type DnsTable struct {
-	ipNet  netip.Prefix // local network
-	ipPool *DnsIPPool   // dns ip pool
-	ttl    uint32
+	ledger         *fakeIPLedger
+	owners         map[string]netip.Addr
+	ownershipError error
+	ipNet          netip.Prefix // local network
+	ipPool         *DnsIPPool   // dns ip pool
+	ttl            uint32
 
 	// hijacked domain records
 	records     map[string]*DomainRecord // domain -> record
@@ -132,6 +135,11 @@ func (c *DnsTable) IsLocalIP(ip net.IP) bool {
 
 func (c *DnsTable) get(domain string) *DomainRecord {
 	record := c.records[domain]
+	if record == nil {
+		if address, ok := c.owners[domain]; ok {
+			record = c.restoreOwner(domain, address)
+		}
+	}
 	if record != nil {
 		record.Touch()
 	}
@@ -167,6 +175,7 @@ func forgeIPv4Answer(domain string, ip net.IP) *dns.A {
 }
 
 func (c *DnsTable) Set(domain string, proxy string) *DomainRecord {
+	domain = normalizeDomain(domain)
 	c.recordsLock.Lock()
 	defer c.recordsLock.Unlock()
 	record := c.records[domain]
@@ -175,30 +184,37 @@ func (c *DnsTable) Set(domain string, proxy string) *DomainRecord {
 		return cloneRecord(record)
 	}
 
-	// alloc a ip
-	address := c.ipPool.Alloc(domain)
-	if !address.IsValid() {
-		return nil
+	address, owned := c.owners[domain]
+	if !owned {
+		address = c.ipPool.Alloc(domain)
+		if !address.IsValid() {
+			return nil
+		}
+		if c.ledger != nil {
+			if err := c.ledger.commit(c.ipNet.String(), domain, address); err != nil {
+				c.ownershipError = err
+				return nil
+			}
+			c.owners[domain] = address
+		}
 	}
-	ip := net.IP(address.AsSlice())
-
-	record = new(DomainRecord)
-	record.IP = ip
-	record.Hostname = domain
+	record = c.restoreOwner(domain, address)
 	record.Proxy = proxy
+	return cloneRecord(record)
+}
+
+func (c *DnsTable) restoreOwner(domain string, address netip.Addr) *DomainRecord {
+	ip := net.IP(address.AsSlice())
+	record := &DomainRecord{IP: ip, Hostname: domain}
 	if address.Is4() {
 		record.answer = forgeIPv4Answer(domain, ip)
 		record.answer.Hdr.Ttl = c.ttl
 	} else {
 		record.answer6 = &dns.AAAA{Hdr: dns.RR_Header{Name: dns.Fqdn(domain), Rrtype: dns.TypeAAAA, Class: dns.ClassINET, Ttl: c.ttl}, AAAA: ip}
 	}
-
-	c.records[domain] = record
-	c.ip2Domain[ip.String()] = domain
-	slog.Debug("Virtual IP allocated", "domain", domain, "ip", ip.String())
-
+	c.records[domain], c.ip2Domain[ip.String()] = record, domain
 	record.Touch()
-	return cloneRecord(record)
+	return record
 }
 
 func (c *DnsTable) SetRealIP(domain string, msg *dns.Msg) {
@@ -294,9 +310,11 @@ func (c *DnsTable) clearExpiredDomain(now time.Time) {
 			continue
 		}
 		delete(c.records, domain)
-		delete(c.ip2Domain, record.IP.String())
-		address, _ := netip.AddrFromSlice(record.IP)
-		c.ipPool.Release(address)
+		if c.ledger == nil {
+			delete(c.ip2Domain, record.IP.String())
+			address, _ := netip.AddrFromSlice(record.IP)
+			c.ipPool.Release(address)
+		}
 		slog.Debug("Virtual IP released", "domain", domain, "ip", record.IP.String(), "hits", record.Hits)
 	}
 }
@@ -325,6 +343,7 @@ func NewDnsTable(ip net.IP, subnet *net.IPNet) *DnsTable {
 	c.ipNet = prefix.Masked()
 	c.ipPool = NewDnsIPPool(prefix)
 	c.records = make(map[string]*DomainRecord)
+	c.owners = make(map[string]netip.Addr)
 	c.pins = make(map[string]int)
 	c.ip2Domain = make(map[string]string)
 	c.nonProxyDomains = make(map[string]directRecord)

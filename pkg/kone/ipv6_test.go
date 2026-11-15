@@ -144,6 +144,7 @@ func TestAAAAFakeIPPolicyAndFamilyCorrectFlowResolution(t *testing.T) {
 		require.Equal(t, address, addr)
 		return nil, errors.New("IPv6 direct marker")
 	}
+	p.directDial = p.dial
 	_, err = p.DialUDPContext(context.Background(), BuiltinDirect, address)
 	require.ErrorContains(t, err, "IPv6 direct marker")
 	cfg.Rule[0].Outbound = BuiltinReject

@@ -106,11 +106,17 @@ func FromUrl(rawurl string) (*Proxy, error) {
 		}
 	}
 	if u.Opaque != "" || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(u.Host, " \t\r\n") {
-		return nil, errors.New("proxy: expected scheme://host:port without path, query or fragment")
+		return nil, errors.New("proxy: expected scheme://host[:port] without path, query or fragment")
+	}
+	if u.Port() == "" {
+		if strings.HasSuffix(u.Host, ":") || strings.Contains(u.Host, ":") && !strings.HasSuffix(u.Host, "]") {
+			return nil, errors.New("proxy: invalid explicit port")
+		}
+		u.Host = net.JoinHostPort(u.Hostname(), "80")
 	}
 	port, err := strconv.Atoi(u.Port())
 	if err != nil || port < 1 || port > 65535 {
-		return nil, errors.New("proxy: explicit port between 1 and 65535 required")
+		return nil, errors.New("proxy: port must be between 1 and 65535")
 	}
 
 	dailer, err := getDialerByURL(u, Direct)

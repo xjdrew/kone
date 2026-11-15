@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 test("mock browser maintenance excludes real-manager journeys and real fixtures use the terminal entrypoint", async () => {
   const justfile = await readFile(join(root, "scripts/ci/justfile"), "utf8");
   const mock = justfile.split("test-web-e2e-mock *args:\n")[1].split("\n\n")[0];
-  assert.match(mock, /npx playwright test console\.spec\.js --project=chromium-1440x900 --grep-invert '@real'/);
+  assert.match(mock, /bunx playwright test console\.spec\.ts --project=chromium --grep-invert '@real'/);
   assert.doesNotMatch(mock, /go build|KONE_MANAGEMENT_TEST_BINARY|ci-web-fixture/);
   for (const name of ["web-e2e.sh", "web-fixture.sh"]) {
     const source = await readFile(join(root, "scripts/ci", name), "utf8");

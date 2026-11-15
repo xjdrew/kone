@@ -142,7 +142,7 @@ func TestConfigValidation(t *testing.T) {
 		{"reserved direct", baseConfig + "[[outbounds]]\nname='direct'\nurl='http://127.0.0.1:8080'", "reserved for built-in outbound direct"},
 		{"reserved reject case", baseConfig + "[[outbounds]]\nname='REJECT'\nurl='http://127.0.0.1:8080'", "reserved for built-in outbound reject"},
 		{"bad proxy", baseConfig + "[[outbounds]]\nname='A'\nurl='ftp://127.0.0.1:8080'", "outbounds[1]"},
-		{"proxy no port", baseConfig + "[[outbounds]]\nname='A'\nurl='http://127.0.0.1'", "invalid proxy URL"},
+		{"proxy empty port", baseConfig + "[[outbounds]]\nname='A'\nurl='http://127.0.0.1:'", "invalid proxy URL"},
 		{"empty outbound name", "[[outbounds]]\nname=''\nurl='http://127.0.0.1:8080'", "name must be nonempty"},
 		{"whitespace outbound name", "[[outbounds]]\nname=' bad'\nurl='http://127.0.0.1:8080'", "name must be nonempty"},
 		{"missing outbound URL", "[[outbounds]]\nname='office'", "invalid proxy URL"},
@@ -215,4 +215,17 @@ func TestStructuredLogging(t *testing.T) {
 	require.NoError(t, ConfigureLogging(&out, GeneralConfig{LogLevel: "info", LogFormat: "text"}, true))
 	slog.Debug("visible", "key", "value")
 	require.True(t, strings.Contains(out.String(), "key=value"))
+}
+
+func TestOutboundTargetsDefaultPortInSavedAndProgrammaticConfiguration(t *testing.T) {
+	cfg, err := ParseConfig([]byte("[[outbounds]]\nname='office'\nurl='http://user:password@proxy.example'\ncheck-target='example.com'\ncheck-tls=false"))
+	require.NoError(t, err)
+	require.Equal(t, "example.com:80", cfg.Outbounds[0].CheckTarget)
+	require.Equal(t, "http://user:password@proxy.example:80", cfg.Outbounds[0].URL)
+	cfg.Outbounds[0].CheckTarget = "[::1]"
+	require.NoError(t, cfg.Validate())
+	for _, target := range []string{"example.com:", "example.com:0", "example.com:bad", "example.com:65536"} {
+		cfg.Outbounds[0].CheckTarget = target
+		require.Error(t, cfg.Validate())
+	}
 }

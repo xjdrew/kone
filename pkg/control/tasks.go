@@ -14,7 +14,15 @@ var ErrDiagnosticRateLimit = errors.New("diagnostic rate limit reached; allow on
 
 func probeUDPTarget(ctx context.Context, cfg *kone.KoneConfig, outbound, target string, options kone.DiagnosticOptions) ProbeResult {
 	now := time.Now()
-	base := ProbeResult{Target: target, Outbound: outbound, Protocol: "udp", Time: now, Expires: now.Add(5 * time.Minute), Scope: "explicit UDP/DNS response test; not application traffic"}
+	base := ProbeResult{Target: target, Outbound: outbound, Protocol: options.Protocol, Time: now, Expires: now.Add(5 * time.Minute), Scope: "saved_configuration"}
+	if options.Protocol == "dns" && outbound == "system" {
+		result, err := kone.ProbeSystemDNS(ctx, options)
+		if err == nil {
+			return result
+		}
+		base.Stage, base.Status, base.Message = "dns", "failed", safeMessage(err, cfg)
+		return base
+	}
 	one, err := kone.FromConfig(cfg)
 	if err != nil {
 		base.Stage, base.Status, base.Message = "configuration_or_dns", "failed", safeMessage(err, cfg)
@@ -33,15 +41,12 @@ func probeUDPTarget(ctx context.Context, cfg *kone.KoneConfig, outbound, target 
 	return result
 }
 
-func validTarget(target string) error {
-	return kone.ValidateDiagnosticTarget(target)
-}
-
 func probeTarget(ctx context.Context, cfg *kone.KoneConfig, outbound, target string, withTLS bool) (r ProbeResult) {
 	start := time.Now()
 	r = ProbeResult{Target: target, Outbound: outbound, Protocol: "tcp", Stage: "connect", Status: "failed", Time: start, Expires: start.Add(5 * time.Minute), Scope: "diagnostic; not application traffic"}
 	defer func() { r.DurationMS = time.Since(start).Milliseconds() }()
-	if err := validTarget(target); err != nil {
+	target, err := kone.NormalizeConnectionTarget(target)
+	if err != nil {
 		r.Message = err.Error()
 		return r
 	}
@@ -143,6 +148,13 @@ func (c *Controller) beginOperationAdmitted(kind, key string, timeout time.Durat
 				op.Status = "canceled"
 			}
 			op.Error = safeMessage(err, c.doc.Config)
+			var coded interface{ ErrorCode() string }
+			if errors.As(err, &coded) {
+				op.ErrorCode = coded.ErrorCode()
+				if op.ErrorCode == "authorization_canceled" {
+					op.Status = "canceled"
+				}
+			}
 		}
 	}()
 	return copy, nil
@@ -179,7 +191,15 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 	if err != nil {
 		return Operation{}, err
 	}
-	if err := validTarget(target); err != nil {
+	if options.Protocol == "tcp" {
+		target, err = kone.NormalizeConnectionTarget(target)
+	} else if options.Protocol == "dns" {
+		target = options.DNSName
+		outbounds = []string{"system", "kone"}
+	} else {
+		target, err = kone.NormalizeDNSTarget(target)
+	}
+	if err != nil {
 		return Operation{}, err
 	}
 	if len(outbounds) == 0 {
@@ -198,7 +218,7 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 		known[outbound.Name] = true
 	}
 	for _, name := range outbounds {
-		if !known[name] {
+		if options.Protocol != "dns" && !known[name] {
 			return Operation{}, errors.New("unknown or non-dialing outbound")
 		}
 	}
@@ -214,7 +234,23 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 		c.diagnosticRate.count += len(outbounds)
 		return nil
 	}
-	return c.beginOperationAdmitted("diagnostics", key, 20*time.Second, func(ctx context.Context) (any, error) {
+	gate := make(chan struct{})
+	operationID := ""
+	operation, operationErr := c.beginOperationAdmitted("diagnostics", key, 20*time.Second, func(ctx context.Context) (any, error) {
+		<-gate
+		rows := make([]ProbeResult, len(outbounds))
+		for i, name := range outbounds {
+			rows[i] = ProbeResult{Target: target, Outbound: name, Protocol: options.Protocol, DNSName: options.DNSName, DNSType: options.DNSType, Status: "pending", Stage: "queued"}
+		}
+		publish := func() {
+			snapshot := append([]ProbeResult(nil), rows...)
+			c.mu.Lock()
+			if op := c.operations[operationID]; op != nil && op.Status == "running" {
+				op.Result = map[string]any{"target": target, "protocol": options.Protocol, "results": snapshot, "automatic_rule": false}
+			}
+			c.mu.Unlock()
+		}
+		publish()
 		select {
 		case c.probeSlots <- struct{}{}:
 		default:
@@ -223,25 +259,35 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 		defer func() { <-c.probeSlots }()
 		results := make([]ProbeResult, 0, len(outbounds))
 		partial := func(cause error) (any, error) {
-			if options.Protocol == "udp" {
-				return map[string]any{"target": target, "protocol": "udp", "results": results, "automatic_rule": false, "suggest_proxy": false}, cause
+			if options.Protocol != "tcp" {
+				return map[string]any{"target": target, "protocol": options.Protocol, "results": results, "automatic_rule": false, "suggest_proxy": false}, cause
 			}
 			return results, cause
 		}
-		for _, name := range outbounds {
+		for index, name := range outbounds {
 			if err := ctx.Err(); err != nil {
 				return partial(err)
 			}
+			rows[index].Status, rows[index].Stage = "running", "connect"
+			if options.Protocol == "dns" {
+				rows[index].Stage = "dns"
+			}
+			publish()
 			probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			probeCtx = kone.WithDiagnosticProgress(probeCtx, func(progress kone.DiagnosticResult) {
+				progress.Target, progress.Outbound, progress.Protocol, progress.Status = target, name, options.Protocol, "running"
+				rows[index] = progress
+				publish()
+			})
 			var result ProbeResult
 			var probeErr error
-			if options.Protocol == "udp" {
+			if options.Protocol != "tcp" {
 				if active, ok := engine.(interface {
 					ProbeDiagnosticRequestVersion(context.Context, string, string, kone.DiagnosticOptions, uint64) (kone.DiagnosticResult, error)
 				}); ok {
 					result, probeErr = active.ProbeDiagnosticRequestVersion(probeCtx, name, target, options, doc.Version)
 				} else if engine != nil {
-					result = ProbeResult{Target: target, Outbound: name, Protocol: "udp", Status: "unsupported", Stage: "capability", Message: "The running engine does not support independent UDP diagnostics", ConfigVersion: doc.Version}
+					result = ProbeResult{Target: target, Outbound: name, Protocol: options.Protocol, Status: "unsupported", Stage: "capability", Message: "The running engine does not support this diagnostic protocol", ConfigVersion: doc.Version}
 				} else {
 					result = c.probeUDP(probeCtx, engineConfig(doc), name, target, options)
 					result.ConfigVersion = doc.Version
@@ -255,6 +301,9 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 				result.ConfigVersion = doc.Version
 			}
 			cancel()
+			result.Target, result.Outbound, result.Protocol = target, name, options.Protocol
+			rows[index] = result
+			publish()
 			results = append(results, result)
 			if probeErr != nil {
 				return partial(probeErr)
@@ -273,4 +322,17 @@ func (c *Controller) DiagnoseProtocol(target string, outbounds []string, options
 		}
 		return map[string]any{"target": target, "protocol": options.Protocol, "results": results, "suggest_proxy": suggested, "automatic_rule": false}, nil
 	}, admit)
+	operationID = operation.ID
+	if operation.ID != "" {
+		c.mu.Lock()
+		if op := c.operations[operation.ID]; op != nil {
+			if op.Target == "" {
+				op.Target, op.Outbounds, op.Protocol = target, append([]string(nil), outbounds...), options.Protocol
+			}
+			operation = *op
+		}
+		c.mu.Unlock()
+	}
+	close(gate)
+	return operation, operationErr
 }

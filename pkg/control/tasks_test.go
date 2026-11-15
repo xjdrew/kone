@@ -17,6 +17,40 @@ import (
 	"github.com/xjdrew/kone/pkg/kone"
 )
 
+func TestDiagnosticRowsPublishPendingRunningAndCompletedEvidence(t *testing.T) {
+	started := make(chan string, 2)
+	proceed := make(chan struct{}, 2)
+	c := testController(t, Options{Probe: func(ctx context.Context, cfg *kone.KoneConfig, name, target string, tls bool) ProbeResult {
+		kone.ReportDiagnosticProgress(ctx, ProbeResult{Stage: "proxy_handshake", Progress: kone.DiagnosticProgress{Stage: "proxy_handshake"}})
+		started <- name
+		select {
+		case <-proceed:
+		case <-ctx.Done():
+		}
+		return ProbeResult{Status: "reachable", Stage: "connect", DurationMS: 4}
+	}})
+	savedHealthOutbound(t, c, "http://127.0.0.1:7078")
+	op, err := c.Diagnose("149.154.167.50:443", []string{"direct", "office"}, false, "rows")
+	require.NoError(t, err)
+	require.Equal(t, "149.154.167.50:443", op.Target)
+	<-started
+	first := c.Operations()[0]
+	rows := first.Result.(map[string]any)["results"].([]ProbeResult)
+	require.Equal(t, "running", rows[0].Status)
+	require.Equal(t, "proxy_handshake", rows[0].Stage)
+	require.Equal(t, "pending", rows[1].Status)
+	proceed <- struct{}{}
+	<-started
+	second := c.Operations()[0]
+	rows = second.Result.(map[string]any)["results"].([]ProbeResult)
+	require.Equal(t, "reachable", rows[0].Status)
+	require.Equal(t, "running", rows[1].Status)
+	// The previously published snapshot remains unchanged as the task advances.
+	require.Equal(t, "pending", first.Result.(map[string]any)["results"].([]ProbeResult)[1].Status)
+	proceed <- struct{}{}
+	require.Equal(t, "succeeded", waitOperation(t, c, op.ID).Status)
+}
+
 func TestDiagnosticsBoundedIdempotentCancelableAndNoAutomaticRules(t *testing.T) {
 	c := testController(t, Options{Probe: func(ctx context.Context, cfg *kone.KoneConfig, name, target string, tls bool) ProbeResult {
 		status := "failed"

@@ -76,8 +76,10 @@ func (one *One) publishGeoIP(database *geoip.Database, baseVersion uint64) error
 		return nil
 	}
 	rule := NewRuleWithGeoIP(old.cfg.Rule, old.cfg.Outbounds, database)
+	one.protectRule(rule, old.cfg)
 	old.outbounds.bypassEndpoints(rule)
 	one.policy.Store(&runtimeSnapshot{version: old.version + 1, configVersion: old.configVersion, cfg: old.cfg, rule: rule, outbounds: old.outbounds, geoIP: database, previousGeoIP: old.geoIP})
+	one.smart.invalidate()
 	one.clearDirectDNSCaches()
 	return nil
 }

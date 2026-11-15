@@ -8,6 +8,9 @@ import (
 )
 
 func validateDNSListenerUpstreams(core CoreConfig, cfg DNSConfig) error {
+	if cfg.Mode == "gate" {
+		return validateGateDNSUpstreams(cfg)
+	}
 	self := func(server string) bool {
 		normalized, err := normalizeDNSServer(server)
 		if err != nil {

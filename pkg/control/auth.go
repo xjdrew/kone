@@ -1,11 +1,9 @@
 package control
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -22,11 +20,6 @@ type Session struct {
 	Remote  bool      `json:"remote"`
 	Local   bool      `json:"local_access,omitempty"`
 	csrf    string
-}
-type Pairing struct {
-	Code    string    `json:"code"`
-	Role    string    `json:"role"`
-	Expires time.Time `json:"expires"`
 }
 type rateWindow struct {
 	start time.Time
@@ -83,7 +76,7 @@ func (c *Controller) newSession(role string, remote bool) (string, *Session) {
 	c.sessions[tokenHash(token)] = session
 	return token, session
 }
-func (c *Controller) claim(token, code string, remote bool) (string, *Session, error) {
+func (c *Controller) claim(token string, remote bool) (string, *Session, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
@@ -107,43 +100,8 @@ func (c *Controller) claim(token, code string, remote bool) (string, *Session, e
 		s.Expires = now.Add(5 * time.Minute)
 		return t, s, nil
 	}
-	if pair, ok := c.pairs[code]; len(c.credentials.Hash) != 0 && code != "" && ok && now.Before(pair.Expires) {
-		delete(c.pairs, code)
-		t, s := c.newSession(pair.Role, remote)
-		return t, s, nil
-	}
 	return "", nil, errors.New("authorization expired or invalid")
 }
-func (c *Controller) pair(role string) (Pairing, error) {
-	if role != "read" && role != "admin" {
-		return Pairing{}, errors.New("role must be read or admin")
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.credentials.Hash) == 0 {
-		return Pairing{}, errors.New("set a management password before pairing devices")
-	}
-	for code, p := range c.pairs {
-		if c.now().After(p.Expires) {
-			delete(c.pairs, code)
-		}
-	}
-	if len(c.pairs) >= 4 {
-		return Pairing{}, errors.New("too many pending pairing codes")
-	}
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return Pairing{}, err
-	}
-	code := ""
-	for _, v := range b {
-		code += fmt.Sprint(v % 10)
-	}
-	p := Pairing{Code: code, Role: role, Expires: c.now().Add(2 * time.Minute)}
-	c.pairs[code] = p
-	return p, nil
-}
-
 func (c *Controller) authorize(r *http.Request) (*Session, bool) {
 	local := c.localAccess(r)
 	token := ""
@@ -151,7 +109,7 @@ func (c *Controller) authorize(r *http.Request) (*Session, bool) {
 	if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 		token = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		bearer = true
-	} else if cookie, err := r.Cookie("kone_session"); err == nil {
+	} else if cookie, err := r.Cookie(sessionCookieName(r)); err == nil {
 		token = cookie.Value
 	}
 	if len(token) != 64 {
@@ -200,8 +158,8 @@ func (c *Controller) validOrigin(r *http.Request) bool {
 			allowed = port == boundPort
 		}
 	}
-	if r.TLS != nil && lan != nil {
-		allowed = r.Host == lan.address
+	if remote, ok := r.Context().Value(remoteListenerKey{}).(*lanServer); ok {
+		allowed = remote == lan && remote.permits(r)
 	}
 	if !allowed {
 		return false
@@ -247,6 +205,9 @@ func (c *Controller) sessionList() []Session {
 
 // Local sessions are bound to the loopback listener, never to forwarded headers.
 func (c *Controller) localAccess(r *http.Request) bool {
+	if r.Context().Value(remoteListenerKey{}) != nil {
+		return false
+	}
 	host, _, err := net.SplitHostPort(r.Host)
 	address, parseErr := netip.ParseAddr(host)
 	return err == nil && parseErr == nil && address.IsLoopback() && r.TLS == nil && localRemote(r) && c.validOrigin(r)

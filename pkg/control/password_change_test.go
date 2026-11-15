@@ -49,13 +49,13 @@ func TestPasswordChangeValidatesCurrentPasswordAndStrictInput(t *testing.T) {
 	}
 }
 
-func TestPasswordChangeRotatesSessionsPairingAndPersists(t *testing.T) {
+func TestPasswordChangeRotatesSessionsAndPersists(t *testing.T) {
 	c := testController(t, Options{})
 	token := owner(t, c)
 	oldSalt := append([]byte(nil), c.credentials.Salt...)
 	_, oldSession, err := c.passwordSession("control-test-password", false)
 	require.NoError(t, err)
-	pair, err := c.pair("read")
+	_, remoteSession, err := c.passwordSession("control-test-password", true)
 	require.NoError(t, err)
 	password := strings.Repeat("中", 8)
 	response := request(t, c, token, "PUT", "/api/v1/auth/password", passwordChangeInput(password))
@@ -71,8 +71,7 @@ func TestPasswordChangeRotatesSessionsPairingAndPersists(t *testing.T) {
 	require.NotEmpty(t, result["session_id"])
 	require.Equal(t, 401, request(t, c, token, "GET", "/api/v1/state", nil).Code)
 	require.False(t, c.revoke(oldSession.ID))
-	_, _, err = c.claim("", pair.Code, true)
-	require.Error(t, err)
+	require.False(t, c.revoke(remoteSession.ID))
 	require.Equal(t, 200, request(t, c, cookie.Value, "GET", "/api/v1/state", nil).Code)
 	_, _, err = c.passwordSession("control-test-password", false)
 	require.Error(t, err)
@@ -91,16 +90,13 @@ func TestPasswordChangeRotatesSessionsPairingAndPersists(t *testing.T) {
 
 func TestPasswordChangeRequiresAdminCSRFAndTrustedOrigin(t *testing.T) {
 	c := testController(t, Options{})
-	setup, _, err := c.claim(c.BootstrapToken(), "", false)
+	setup, _, err := c.claim(c.BootstrapToken(), false)
 	require.NoError(t, err)
 	require.Equal(t, 403, request(t, c, setup, "PUT", "/api/v1/auth/password", passwordChangeInput("new-password")).Code)
 	setupResult := request(t, c, setup, "POST", "/api/v1/auth/password", map[string]any{"password": "control-test-password", "confirm_password": "control-test-password"})
 	require.Equal(t, 200, setupResult.Code)
 	token := setupResult.Result().Cookies()[0].Value
-	pair, err := c.pair("read")
-	require.NoError(t, err)
-	reader, _, err := c.claim("", pair.Code, true)
-	require.NoError(t, err)
+	reader, _ := roleSession(c, "read")
 	require.Equal(t, 403, request(t, c, reader, "PUT", "/api/v1/auth/password", passwordChangeInput("new-password")).Code)
 	require.Equal(t, 401, request(t, c, "", "PUT", "/api/v1/auth/password", passwordChangeInput("new-password")).Code)
 	for _, scenario := range []string{"missing-csrf", "wrong-csrf", "origin"} {

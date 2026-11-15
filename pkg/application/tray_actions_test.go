@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/xjdrew/kone/pkg/control"
 	"github.com/xjdrew/kone/pkg/desktop"
 )
 
@@ -83,6 +84,16 @@ func TestCaptureDiagnosticsFailuresStillLeaveVisibleFeedback(t *testing.T) {
 func TestFailedTrayStartKeepsDesktopManagementAvailable(t *testing.T) {
 	previous := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(previous) })
+	directory := t.TempDir()
+	controller, err := control.New(control.Options{Directory: directory})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, controller.Close()) })
+	document := controller.Document()
+	inbound := document["inbound"].(control.Inbound)
+	inbound.Enabled = false
+	_, err = controller.Save(control.SaveRequest{BaseVersion: controller.State().SavedVersion, Config: document["config"].(map[string]any), Inbound: inbound})
+	require.NoError(t, err)
+	require.NoError(t, controller.Close())
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	feedback := make(chan string, 2)
@@ -92,13 +103,13 @@ func TestFailedTrayStartKeepsDesktopManagementAvailable(t *testing.T) {
 		browser:       func(url string) error { feedback <- url; return nil },
 		captureNotice: func(action string) { feedback <- action },
 		tray: func(ctx context.Context, actions desktop.TrayActions) error {
-			actions.Start() // The default profile has no enabled TUN inbound.
+			actions.Start() // An explicitly disabled inbound fails without creating a real TUN.
 			state <- actions.State()
 			<-ctx.Done()
 			return nil
 		}}
 	go func() {
-		result <- runWithOptions(ctx, []string{"-data-dir", t.TempDir(), "-listen", "127.0.0.1:0", "-no-browser"}, io.Discard, io.Discard, elevateForWindows, options)
+		result <- runWithOptions(ctx, []string{"-data-dir", directory, "-listen", "127.0.0.1:0", "-no-browser"}, io.Discard, io.Discard, elevateForWindows, options)
 	}()
 	select {
 	case value := <-state:

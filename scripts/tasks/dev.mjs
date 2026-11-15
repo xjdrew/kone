@@ -1,13 +1,13 @@
 import { join } from "node:path";
 import { build } from "./build.mjs";
-import { ensureWebDependencies, main, npm } from "./common.mjs";
+import { ensureWebDependencies, main, bun } from "./common.mjs";
 import { showHelp } from "./help.mjs";
 
 export async function develop(ctx, mode = "desktop") {
   if (mode === "web") {
     await ensureWebDependencies(ctx);
     ctx.log("Starting the Web development server…");
-    npm(ctx, ["run", "dev"], { cwd: join(ctx.cwd, "web") });
+    bun(ctx, ["run", "dev"], { cwd: join(ctx.cwd, "web") });
   } else if (mode === "desktop") {
     await build(ctx);
     ctx.log("Opening management with capture paused. Stop with Ctrl+C or the tray menu.");

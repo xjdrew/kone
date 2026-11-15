@@ -55,6 +55,17 @@ func TestCaptureRoutePlanDeduplicatesDefaultAndIPv6(t *testing.T) {
 	require.ElementsMatch(t, []string{"0.0.0.0/1", "128.0.0.0/1", "::/1", "8000::/1"}, captureRoutes(cfg.Core, rule))
 }
 
+func TestCaptureRoutesOmitOwnedHostsButAllowPrivateProxyDestinations(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Rule = []RuleConfig{
+		{Schema: "IP-CIDR", Pattern: "127.0.0.1/32", Outbound: BuiltinReject},
+		{Schema: "IP-CIDR", Pattern: "192.168.20.0/24", Outbound: BuiltinReject},
+	}
+	rule := NewRule(cfg.Rule, nil)
+	rule.protectPolicy(cfg)
+	require.Equal(t, []string{"192.168.20.0/24"}, captureRoutes(cfg.Core, rule))
+}
+
 type routeFailureNetwork struct {
 	*memoryNetwork
 	removeFailure  string

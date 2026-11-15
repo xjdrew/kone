@@ -3,10 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
-const source = await readFile(
-  new URL("../native/tray-darwin.js", import.meta.url),
-  "utf8",
-);
+const source = await readFile(new URL("../native/tray-darwin.js", import.meta.url), "utf8");
 const sandbox = vm.createContext({});
 new vm.Script(source).runInContext(sandbox);
 

@@ -1,0 +1,115 @@
+.protection {
+  padding: 12px 22px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.protection summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.protection summary span {
+  font-weight: 400;
+  color: var(--muted);
+  margin-inline-start: 18px;
+}
+.protectionList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 8px 22px;
+  margin-top: 16px;
+  max-height: 230px;
+  overflow: auto;
+}
+.protectionEntry {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+}
+.fallback {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 22px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.fallback > span:first-child {
+  font-weight: 600;
+}
+.fallback > span:nth-child(2) {
+  color: var(--muted);
+}
+.fallback > button {
+  margin-inline-start: auto;
+}
+@media (max-width: 760px) {
+  .protection {
+    padding: 10px 12px;
+  }
+  .protection summary span {
+    display: block;
+    margin: 4px 0 0;
+  }
+  .fallback {
+    padding: 10px 12px;
+    gap: 12px;
+  }
+}
+
+.protectionList section {
+  min-width: 0;
+}
+.protectionList h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.protectionList h3 span {
+  color: var(--muted);
+  font-weight: 400;
+}
+.protectionList p {
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 0 0 10px;
+}
+.protectionEntry {
+  padding: 4px 0;
+}
+.protectionEntry code {
+  overflow-wrap: anywhere;
+}
+
+.layers {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+.poolTitle th {
+  background: var(--surface);
+  text-align: left;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.poolTitle span {
+  margin-inline-start: 16px;
+  color: var(--muted);
+  font-weight: 400;
+}
+@media (max-width: 760px) {
+  .layers {
+    padding: 10px 12px;
+    flex-wrap: wrap;
+  }
+  .poolTitle span {
+    display: block;
+    margin: 4px 0 0;
+  }
+}

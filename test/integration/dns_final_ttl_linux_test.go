@@ -18,7 +18,12 @@ func TestSystemDNSFinalProxyExpiresKnownDirectAddress(t *testing.T) {
 	cfg := systemConfig(t)
 	listener, err := net.Listen("tcp4", "127.0.0.2:0")
 	require.NoError(t, err)
-	oldServer := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "old direct connection") }), ReadHeaderTimeout: time.Second}
+	var oldConnections atomic.Int32
+	oldServer := &http.Server{ConnState: func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			oldConnections.Add(1)
+		}
+	}, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "old direct connection") }), ReadHeaderTimeout: time.Second}
 	serverDone := make(chan struct{})
 	go func() { defer close(serverDone); oldServer.Serve(listener) }()
 	t.Cleanup(func() { oldServer.Close(); listener.Close(); <-serverDone })
@@ -37,13 +42,13 @@ func TestSystemDNSFinalProxyExpiresKnownDirectAddress(t *testing.T) {
 	upstream, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	require.NoError(t, err)
 	var changed atomic.Bool
-	var queries atomic.Int32
 	resolverReady, resolverDone := make(chan struct{}), make(chan struct{})
 	resolver := &dns.Server{PacketConn: upstream, Handler: dns.HandlerFunc(func(w dns.ResponseWriter, request *dns.Msg) {
-		queries.Add(1)
 		address := "127.0.0.2"
 		if changed.Load() {
-			address = "127.0.0.3"
+			// The refreshed target must not be loopback: local addresses now
+			// deliberately bypass proxy rules to prevent recursive capture.
+			address = "192.0.2.3"
 		}
 		response := new(dns.Msg)
 		response.SetReply(request)
@@ -64,7 +69,8 @@ func TestSystemDNSFinalProxyExpiresKnownDirectAddress(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, response.Answer, 1)
 	fake := response.Answer[0].(*dns.A).A.String()
-	require.Zero(t, queries.Load(), "the initial domain-only proxy decision retains remote DNS")
+	_, initial := one.DNSSnapshot()
+	require.Nil(t, initial["rotating-default.example"].RealIP, "the initial domain-only proxy decision retains remote DNS")
 	_, port, _ := net.SplitHostPort(listener.Addr().String())
 	// Explicit UDP fallback learns real DNS data. Its earlier IP rule then
 	// selects direct even though the domain-only default remains a proxy.
@@ -91,18 +97,19 @@ func TestSystemDNSFinalProxyExpiresKnownDirectAddress(t *testing.T) {
 		require.Equal(t, expected, string(payload))
 	}
 	get("old direct connection")
-	before := queries.Load()
+	_, before := one.DNSSnapshot()
+	require.Equal(t, "127.0.0.2", before["rotating-default.example"].RealIP.String())
 	changed.Store(true)
 	time.Sleep(1100 * time.Millisecond)
 	get("old direct connection")
-	require.Equal(t, before, queries.Load(), "existing TCP connections retain their selected target")
+	require.Equal(t, int32(1), oldConnections.Load(), "TTL expiry and health probes must preserve the existing TCP connection")
 	transport.CloseIdleConnections()
-	// No intervening DNS query may mask stale evidence in the new-flow path.
+	// Background health may refresh the resolver cache. A new business flow
+	// must still replace its expired address evidence and apply the proxy rule.
 	get("new proxy connection")
-	require.Equal(t, before+1, queries.Load())
 	_, records := one.DNSSnapshot()
 	require.Equal(t, fake, records["rotating-default.example"].IP.String())
-	require.Equal(t, "127.0.0.3", records["rotating-default.example"].RealIP.String())
+	require.Equal(t, "192.0.2.3", records["rotating-default.example"].RealIP.String())
 	require.Equal(t, "office", records["rotating-default.example"].Proxy)
 	transport.CloseIdleConnections()
 	stop()

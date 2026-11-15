@@ -10,7 +10,7 @@ import (
 func SupportsSystemDNS() bool { return false }
 
 func CheckSystemDNS(_ context.Context, cfg DNSConfig) error {
-	if cfg.System {
+	if cfg.SystemEnabled() {
 		return errors.New("dns.system is supported on Linux with systemd-resolved, macOS and Windows")
 	}
 	return nil

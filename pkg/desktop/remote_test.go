@@ -302,12 +302,13 @@ func TestRemoteDiagnosticFinalReplyPreservesMeasuredZeroLatency(t *testing.T) {
 	remote, fake, _ := helperHarness(t, false)
 	done := startRemote(t, remote)
 	fake.mu.Lock()
-	fake.probe = func(context.Context, string, string, bool, uint64) (kone.DiagnosticResult, error) {
+	fake.probe = func(_ context.Context, _ string, target string, _ bool, _ uint64) (kone.DiagnosticResult, error) {
+		require.Equal(t, "example.invalid:80", target)
 		zero := int64(0)
 		return kone.DiagnosticResult{Status: "reachable", ConnectLatencyMS: &zero, ConnectLatencyMeasured: true}, nil
 	}
 	fake.mu.Unlock()
-	result, err := remote.ProbeDiagnosticVersion(t.Context(), kone.BuiltinDirect, "example.invalid:443", false, 7)
+	result, err := remote.ProbeDiagnosticVersion(t.Context(), kone.BuiltinDirect, "example.invalid", false, 7)
 	require.NoError(t, err)
 	require.True(t, result.ConnectLatencyMeasured)
 	require.NotNil(t, result.ConnectLatencyMS, "Gob omits zero pointer values, but measured zero is not an absent measurement")

@@ -137,10 +137,21 @@ func (c *callbacks) Device(identity DeviceIdentity, _ *Empty) error {
 	e.mu.Unlock()
 	return nil
 }
+func remoteSetupError(message, code string) error {
+	if message == "" {
+		return nil
+	}
+	err := errors.New(message)
+	if code != "" {
+		return &kone.CaptureSetupError{Code: code, Cause: err}
+	}
+	return err
+}
+
 func (c *callbacks) Finished(event FinishedEvent, _ *Empty) error {
 	var err error
 	if event.Error != "" {
-		err = errors.New(event.Error)
+		err = remoteSetupError(event.Error, event.Code)
 	}
 	if event.LogsDegraded {
 		c.engine.mu.Lock()
@@ -212,7 +223,7 @@ func (e *RemoteEngine) Run(parent context.Context) error {
 	e.mu.Unlock()
 	e.logEvent(slog.LevelInfo, "Network helper connected", slog.String("stage", "connection"))
 	go server.ServeConn(disconnectStream{ReadWriteCloser: events, disconnected: disconnect})
-	var reply Empty
+	var reply StartReply
 	request := StartRequest{TOML: config, Version: version}
 	if database != nil {
 		request.GeoIP = database.Bytes()
@@ -221,11 +232,13 @@ func (e *RemoteEngine) Run(parent context.Context) error {
 		request.GeoIPFormat = database.Metadata().Format
 		request.GeoIPProvider = database.Metadata().Provider
 	}
-	call := client.Go("Network.Start", request, &reply, make(chan *rpc.Call, 1))
+	call := client.Go("Network.StartDetailed", request, &reply, make(chan *rpc.Call, 1))
 	select {
 	case result := <-call.Done:
 		if result.Error != nil {
 			e.finish(result.Error)
+		} else if reply.Error != "" {
+			e.finish(remoteSetupError(reply.Error, reply.Code))
 		} else {
 			e.readyOnce.Do(func() { close(e.ready) })
 		}
@@ -509,6 +522,8 @@ func (e *RemoteEngine) ProbeDiagnosticRequestVersion(ctx context.Context, outbou
 	method := "Network.Probe"
 	if options.Protocol == "udp" {
 		method = "Network.ProbeUDP"
+	} else if options.Protocol == "dns" {
+		method = "Network.ProbeDNS"
 	}
 	call := client.Go(method, ProbeRequest{ID: id, Outbound: outbound, Target: target, TLS: options.TLS, Options: options, TimeoutMS: budget.Milliseconds(), ExpectedVersion: expectedVersion, Deadline: time.Now().Add(budget), ReportProgress: true}, &reply, make(chan *rpc.Call, 1))
 	select {

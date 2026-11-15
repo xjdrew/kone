@@ -29,10 +29,7 @@ func TestRuntimeLogsAuthorizationLatestPageAndIncrementalQueries(t *testing.T) {
 	}
 	require.Equal(t, 401, request(t, c, "", "GET", "/api/v1/logs", nil).Code)
 	owner(t, c)
-	pair, err := c.pair("read")
-	require.NoError(t, err)
-	token, session, err := c.claim("", pair.Code, true)
-	require.NoError(t, err)
+	token, session := roleSession(c, "read")
 	read := func(path string) runtimeLogs {
 		response := request(t, c, token, "GET", path, nil)
 		require.Equal(t, 200, response.Code, response.Body.String())

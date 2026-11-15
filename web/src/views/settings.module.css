@@ -1,0 +1,66 @@
+.settings {
+  padding: 24px;
+  max-width: 1000px;
+  width: 100%;
+  margin: 0 auto;
+  overflow: auto;
+}
+.settings > form,
+.settings > div,
+.settings > section {
+  max-width: 850px;
+}
+.sectionHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.dnsRule {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+.session {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.session > span:first-child {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.settings pre {
+  max-height: 300px;
+  overflow: auto;
+}
+.settings summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding: 10px 0;
+}
+.settings code {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 760px) {
+  .settings {
+    padding: 18px 12px;
+  }
+  .dnsRule {
+    grid-template-columns: 1fr;
+  }
+  .settings:global(+ *) {
+    min-width: 0;
+  }
+}

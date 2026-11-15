@@ -13,6 +13,7 @@ type observedConn struct {
 	flow    *ObservedFlow
 	upload  bool
 	onError func(error)
+	onRead  func()
 }
 
 func (c *observedConn) Write(data []byte) (int, error) {
@@ -35,6 +36,9 @@ func (c *observedConn) Write(data []byte) (int, error) {
 
 func (c *observedConn) Read(data []byte) (int, error) {
 	n, err := c.Conn.Read(data)
+	if n > 0 && c.onRead != nil {
+		c.onRead()
+	}
 	if err != nil && err != io.EOF {
 		c.flow.TransferError(err)
 		if c.onError != nil {

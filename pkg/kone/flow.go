@@ -114,6 +114,9 @@ func (h *flowHandler) destination(ctx context.Context, s *runtimeSnapshot, desti
 }
 
 func (h *flowHandler) resolveDestination(ctx context.Context, s *runtimeSnapshot, destination M.Socksaddr, udp bool, observation *ObservedFlow) (flowTarget, error) {
+	if s.rule.layered {
+		return h.resolveLayeredDestination(ctx, s, destination, udp, observation)
+	}
 	target := flowTarget{}
 	destination = destination.Unwrap()
 	if !destination.Addr.Is4() && (!destination.Addr.Is6() || h.one.dnsTable6 == nil) {
@@ -248,6 +251,7 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 	observation := h.startObservation(s, "tcp", source, destination)
 	defer func() {
 		h.logFlowFailure(ctx, s, "tcp", outbound, destinationText, stage, result)
+		h.one.observeHealthFlow(s, "tcp", destination, outbound, stage, result)
 		if onClose != nil {
 			onClose(result)
 		}
@@ -291,7 +295,11 @@ func (h *flowHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source
 	observation.Stage("transfer")
 	stage = "transfer"
 	remoteErrors := make(chan error, 1)
-	relayConnections(&observedConn{Conn: conn, flow: observation}, &observedConn{Conn: remote, flow: observation, upload: true, onError: func(err error) {
+	var onReply func()
+	if policy != BuiltinDirect {
+		onReply = sync.OnceFunc(func() { h.one.observeHealthSuccess(s, destination, policy) })
+	}
+	relayConnections(&observedConn{Conn: conn, flow: observation}, &observedConn{Conn: remote, flow: observation, upload: true, onRead: onReply, onError: func(err error) {
 		if reportableFlowError(err, "transfer") {
 			select {
 			case remoteErrors <- err:
@@ -315,6 +323,7 @@ func (h *flowHandler) NewPacketConnectionEx(ctx context.Context, conn N.PacketCo
 	observation := h.startObservation(s, "udp", source, destination)
 	defer func() {
 		h.logFlowFailure(ctx, s, "udp", outbound, destinationText, stage, result)
+		h.one.observeHealthFlow(s, "udp", destination, outbound, stage, result)
 		if onClose != nil {
 			onClose(result)
 		}

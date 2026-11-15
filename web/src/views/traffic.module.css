@@ -1,0 +1,65 @@
+.telemetry {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--line);
+}
+.telemetry > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.telemetry span {
+  font-size: var(--font-small);
+  color: var(--muted);
+}
+.telemetry strong {
+  font: 500 var(--font-body) var(--mono);
+  letter-spacing: -0.5px;
+}
+
+.paths {
+  padding: 16px 22px;
+  border-top: 1px solid var(--line);
+}
+.paths summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.group {
+  background: var(--surface);
+}
+@media (max-width: 760px) {
+  .telemetry {
+    gap: 14px 22px;
+    padding: 14px 12px;
+  }
+  .telemetry strong {
+    font-size: var(--font-body);
+  }
+  .telemetry > div:last-child {
+    margin-inline-start: 0;
+  }
+  .paths {
+    padding: 12px;
+  }
+}
+.graphHeading {
+  padding: 14px 22px 4px;
+}
+.graphHeading h2 {
+  margin: 0;
+  font-size: var(--font-body);
+}
+@media (max-width: 760px) {
+  .graphHeading {
+    padding-inline: 12px;
+  }
+}
+.graphEmpty {
+  padding: 18px 22px;
+  margin: 0;
+  color: var(--muted);
+}

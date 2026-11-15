@@ -1,0 +1,4 @@
+[test]
+preload = ["./test/dom.ts"]
+root = "test"
+timeout = 5000

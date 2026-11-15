@@ -12,6 +12,8 @@
 | macOS | `dist/Kone.app`、`dist/kone-cli` | amd64/arm64 PKG |
 | Windows | `dist/kone.exe`、`dist/kone-cli.exe` | amd64/arm64 ZIP，附 `install.ps1` |
 
+Linux 桌面按需授权依赖系统提供 `pkexec` 和已注册的 polkit 桌面认证代理，使用默认 pkexec 授权策略，不安装免密规则。构建不设置 setuid 或文件 capability；文件模式/无桌面服务由调用方授予网络管理权限。真实图形授权窗口需在目标桌面环境验收。参考 [polkit pkexec](https://www.freedesktop.org/software/polkit/docs/latest/pkexec.1.html)。
+
 包目前未签名，macOS 未公证。交叉编译仅证明构建成功；原生运行、驱动和干净机器安装需要对应环境的证据。
 
 ## 2. 本地构建与打包

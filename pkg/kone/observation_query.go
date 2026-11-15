@@ -73,6 +73,7 @@ func matchesTraffic(record *FlowRecord, query TrafficQuery) bool {
 }
 
 func cloneFlowRecord(record FlowRecord) FlowRecord {
+	record.AuthorizedCandidates = append([]string(nil), record.AuthorizedCandidates...)
 	if record.ProcessObservedAt != nil {
 		value := *record.ProcessObservedAt
 		record.ProcessObservedAt = &value
@@ -92,6 +93,14 @@ func (o *TrafficObserver) Snapshot(query TrafficQuery) TrafficSnapshot {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return o.snapshotLocked(query, o.now())
+}
+
+// Totals serves the global status strip without copying flow details or building
+// a graph. It uses the same counters and rate window as the traffic workspace.
+func (o *TrafficObserver) Totals() TrafficTotals {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.emptySnapshot(o.now(), "").Totals
 }
 
 func (o *TrafficObserver) snapshotLocked(query TrafficQuery, now time.Time) TrafficSnapshot {
