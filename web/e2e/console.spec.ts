@@ -680,6 +680,9 @@ test("@compat recovery explains eligibility and follows the task through reinspe
   page,
 }) => {
   const data = await fixture(page);
+  // Password-authenticated loopback administrators also have recovery access.
+  data.state.local_access = false;
+
   let report = {
     required: false,
     can_clear: false,

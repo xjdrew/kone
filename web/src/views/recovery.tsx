@@ -55,7 +55,7 @@ export function Recovery() {
     data?.capture_active ||
     ["running", "degraded", "starting", "pausing"].includes(context.state.data_state);
   const busy = submitting || operation?.status === "running";
-  const local = context.admin && context.state.local_access;
+  const local = context.admin && !context.state.remote_session;
   const blocker = report.error
     ? "inspection_failed"
     : active
