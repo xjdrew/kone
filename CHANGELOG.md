@@ -2,6 +2,7 @@
 
 ## Bugfixes
 
+- Report Web script errors with call stacks, page/build/runtime context and bounded response shapes while retaining workspace navigation.
 - Launch frontend tools through their official entrypoints across platforms, avoiding generated Windows executable shims; report task failures once without the duplicate colored wrapper message.
 
 - Recognize Bun shell launchers on Windows during initialization, dependency installation and builds.

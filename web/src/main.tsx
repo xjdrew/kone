@@ -1,6 +1,6 @@
 import { GlobalErrorScope } from "./components/ui";
 import "./startup";
-import React from "react";
+import React, { useMemo } from "react";
 import { createRoot } from "react-dom/client";
 import {
   createRootRoute,
@@ -10,15 +10,51 @@ import {
   RouterProvider,
   Navigate,
   useSearch,
+  type ErrorComponentProps,
 } from "@tanstack/react-router";
-import "./i18n";
+import i18n from "./i18n";
 import "./theme.css";
-import { Providers } from "./context";
+import { Providers, queryClient } from "./context";
+import type { RuntimeState } from "./model";
+import { scriptErrorReport } from "./script-errors";
+import uiStyles from "./components/ui.module.css";
 import { Shell } from "./shell";
 import { TrafficView } from "./views/traffic";
 import { OutboundsView } from "./views/outbounds";
 import { PolicyView } from "./views/policy";
 import { SettingsView } from "./views/settings";
+
+function errorReport(error: unknown, componentStack?: string) {
+  const state =
+    queryClient.getQueryData<RuntimeState>(["state"]) ??
+    queryClient.getQueryData<RuntimeState>(["session"]);
+  return scriptErrorReport(
+    error,
+    state && {
+      version: state.version,
+      data_state: state.data_state,
+      control_state: state.control_state,
+      saved_version: state.saved_version,
+      running_version: state.running_version,
+    },
+    componentStack,
+  );
+}
+function ScriptError({ error }: ErrorComponentProps) {
+  const report = useMemo(() => errorReport(error), [error]);
+  return (
+    <section role="alert" className={uiStyles.notice}>
+      <strong>{i18n.t("common.error")}</strong>
+      <pre>{report}</pre>
+    </section>
+  );
+}
+window.addEventListener("error", (event) => {
+  console.error(errorReport(event.error ?? new Error(event.message)));
+});
+window.addEventListener("unhandledrejection", (event) => {
+  console.error(errorReport(event.reason));
+});
 
 const rootRoute = createRootRoute({
   component: () => (
@@ -99,6 +135,9 @@ const router = createRouter({
   routeTree: rootRoute.addChildren([home, traffic, policy, outbounds, settings]),
   history: createHashHistory(),
   defaultPreload: "intent",
+  defaultErrorComponent: ScriptError,
+  defaultOnCatch: (error, info) =>
+    console.error(errorReport(error, info.componentStack ?? undefined)),
 });
 declare module "@tanstack/react-router" {
   interface Register {

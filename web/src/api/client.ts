@@ -1,5 +1,6 @@
 import { clearErrors, recordError } from "../error-history";
 import { newID } from "../browser";
+import { clearResponseContext, recordResponseContext } from "../script-errors";
 import type { Notice } from "../model";
 
 export class ApiError extends Error {
@@ -23,6 +24,7 @@ export function onSessionExpired(handler: () => void) {
 }
 export function clearSession() {
   clearErrors();
+  clearResponseContext();
   csrf = "";
   epoch++;
 }
@@ -90,6 +92,13 @@ export async function request<T>(
       );
     }
     if (started !== epoch) throw new ApiError("session_changed");
+    recordResponseContext(
+      method,
+      path,
+      response.status,
+      data,
+      response.headers.get("X-Request-ID") ?? undefined,
+    );
     if (!response.ok) {
       if (
         response.status === 401 &&

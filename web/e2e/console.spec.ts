@@ -1,5 +1,45 @@
 import { test, expect } from "@playwright/test";
 import { fixture } from "./fixture";
+import { trafficFixture } from "../test/factories";
+
+test("@compat script errors retain navigation and print diagnostic context without response values", async ({
+  page,
+}) => {
+  const data = await fixture(page);
+  data.document.config.outbounds[0]!.url = "http://alice:private-password@127.0.0.1:7078";
+  const reports: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    reports.push(message.text());
+  });
+  await page.route("**/api/v1/traffic?**", (route) => {
+    const response = trafficFixture();
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ ...response, sankey: { ...response.sankey, paths: null } }),
+    });
+  });
+  await page.goto("/#/traffic?view=overview&target=private.example");
+  const output = page.locator("main [role=alert] pre");
+  await expect(output).toContainText("[KONE Web] Script error: TypeError:");
+  const text = (await output.textContent())!;
+  const report = JSON.parse(text.split("Context:\n")[1]!);
+  expect(text).toMatch(/\n\n[^]+\/assets\/index-.*\.js:\d+:\d+/);
+  expect(report.runtime.version).toBe(data.state.version);
+  expect(
+    report.responses.some(
+      (response: { path: string; shape: Record<string, string> }) =>
+        response.path === "/traffic" && response.shape["sankey.paths"] === "null",
+    ),
+  ).toBe(true);
+  for (const secret of ["private-password", "fixture-csrf", "private.example"])
+    expect(text).not.toContain(secret);
+  await expect
+    .poll(() => reports.some((report) => report.includes("Component stack:\n")))
+    .toBe(true);
+  await page.getByRole("link", { name: "Outbounds", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Outbounds", exact: true })).toBeVisible();
+});
 
 test("@compat default direct routing starts immediately; only real blockers require recovery", async ({
   page,
